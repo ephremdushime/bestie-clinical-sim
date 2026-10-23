@@ -78,12 +78,16 @@ def test_cohort_assignment_progress_resume_and_tenant_scoped_csv(tmp_path, monke
             "learner": "Forged Name", "case_id": "malaria-001", "mode": "practice"})
         assert started.status_code == 200, started.text
         sid = started.json()["session_id"]
+        saved = client.put(f"/api/sessions/{sid}/draft", headers=learner, json={"differential": ["malaria", "viral illness"], "final_diagnosis": "", "management": ["follow-up"], "reflection": "Check results again"})
+        assert saved.status_code == 200, saved.text
         assert started.json()["patient"]["vitals"]
         resume = client.get(f"/api/sessions/{sid}/resume", headers=learner)
         assert resume.status_code == 200, resume.text
         assert resume.json()["session_id"] == sid
         assert resume.json()["case_id"] == "malaria-001"
         assert resume.json()["events"] == []
+        assert resume.json()["draft"]["differential"] == ["malaria", "viral illness"]
+        assert resume.json()["draft"]["reflection"] == "Check results again"
         assert client.get(f"/api/sessions/{sid}/resume", headers=learner_b).status_code == 403
 
         finished = client.post(f"/api/sessions/{sid}/finish", headers=learner, json={
