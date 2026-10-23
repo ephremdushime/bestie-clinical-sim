@@ -74,9 +74,10 @@ def init_db():
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT);
  CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);''');
- # Safe additive migration for databases created by earlier versions.
+ # Safe additive migrations; never rebuild or discard existing pilot data.
  cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
  if 'session_token_hash' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN session_token_hash TEXT')
+ if 'owner_user_id' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN owner_user_id TEXT')
  c.commit(); c.close()
 init_db()
 try:
@@ -90,37 +91,51 @@ def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def save_event(c,sid,event):
  row=c.execute('SELECT events FROM sessions WHERE id=?',(sid,)).fetchone(); ev=json.loads(row['events'] or '[]'); ev.append({'at':now(),**event}); c.execute('UPDATE sessions SET events=? WHERE id=?',(json.dumps(ev),sid))
 def check_access(request:Request, educator=False):
- if APP_ENV!='production': return
+ identity=current_identity_user(request)
  if educator:
-  # Educator actions use individual, revocable identity sessions rather than a shared secret.
-  authorization=request.headers.get('Authorization','')
-  scheme, separator, token=authorization.partition(' ')
-  if not separator or scheme.lower()!='bearer' or not token.strip():
-   raise HTTPException(401,'Valid educator bearer session required.')
-  from identity import init_identity_schema, resolve_session
-  db=conn()
-  try:
-   init_identity_schema(db)
-   user=resolve_session(db,token.strip())
-   db.commit()
-  finally:
-   db.close()
-  if not user or user['role'] not in ('educator','institution_admin','platform_admin'):
-   raise HTTPException(403,'An active educator or administrator account is required.')
-  request.state.identity_user={key:user[key] for key in ('user_id','institution_id','display_name','role')}
+  if identity:
+   if identity['role'] not in ('educator','institution_admin','platform_admin'):
+    raise HTTPException(403,'An active educator or administrator account is required.')
+   request.state.identity_user=identity
+   return
+  if APP_ENV=='production': raise HTTPException(401,'Valid educator bearer session required.')
+  # Local development can use the legacy path for backwards-compatible demos only.
   return
- expected=PILOT_TOKEN
+ if identity:
+  request.state.identity_user=identity
+  return
+ if APP_ENV!='production': return
  supplied=request.headers.get('X-Pilot-Token','')
- if not expected or not supplied or not hmac.compare_digest(expected,supplied):
+ if not PILOT_TOKEN or not supplied or not hmac.compare_digest(PILOT_TOKEN,supplied):
   raise HTTPException(401,'Valid access token required.')
 
 def educator_actor(request:Request, fallback_name:str='Educator') -> dict:
- user=getattr(request.state,'identity_user',None)
+ user=getattr(request.state,'identity_user',None) or current_identity_user(request)
  if user: return user
- # Development-only mode remains available for local demonstrations and tests.
+ # In production, reviewers must be attributable to a provisioned identity.
+ if APP_ENV=='production': raise HTTPException(401,'Verified educator identity required.')
  return {'user_id':None,'institution_id':None,'display_name':fallback_name,'role':'educator'}
+def current_identity_user(request:Request):
+ """Resolve an optional provisioned-account bearer token without trusting body identity."""
+ authorization=request.headers.get('Authorization','')
+ scheme, separator, token=authorization.partition(' ')
+ if not separator or scheme.lower()!='bearer' or not token.strip(): return None
+ from identity import init_identity_schema, resolve_session
+ db=conn()
+ try:
+  init_identity_schema(db); user=resolve_session(db,token.strip()); db.commit()
+  return ({key:user[key] for key in ('user_id','institution_id','display_name','role')} if user else None)
+ finally: db.close()
+
 def check_session_access(request:Request, session_row):
- # Per-session secret prevents another pilot user from guessing a numeric session ID.
+ # New identity-owned sessions require the same account; legacy pilot sessions retain their per-session secret.
+ owner=session_row['owner_user_id'] if 'owner_user_id' in session_row.keys() else None
+ identity=getattr(request.state,'identity_user',None) or current_identity_user(request)
+ if owner:
+  if not identity: raise HTTPException(401,'Sign in with the account that owns this session.')
+  if identity['user_id'] != owner and identity['role'] not in ('educator','institution_admin','platform_admin'):
+   raise HTTPException(403,'This learner session belongs to another account.')
+  return
  if APP_ENV!='production': return
  expected_hash=session_row['session_token_hash'] if 'session_token_hash' in session_row.keys() else None
  supplied=request.headers.get('X-Session-Token','')
@@ -145,6 +160,9 @@ def cases():
 @app.post('/api/sessions')
 def create_session(body:StartSession,request:Request):
  check_access(request)
+ identity=getattr(request.state,'identity_user',None) or current_identity_user(request)
+ if identity and identity['role'] not in ('learner','educator','institution_admin','platform_admin'):
+  raise HTTPException(403,'An active account is required.')
  if body.mode not in ('practice','exam'): raise HTTPException(400,'Mode must be practice or exam.')
  case_id=body.case_id; exam_id=None
  if body.mode=='exam':
@@ -154,7 +172,10 @@ def create_session(body:StartSession,request:Request):
  if case_id not in CASES: raise HTTPException(404,'Case not found.')
  session_token=secrets.token_urlsafe(32)
  session_token_hash=__import__('hashlib').sha256(session_token.encode('utf-8')).hexdigest()
- c=conn(); cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash) VALUES(?,?,?,?,?,?)',(body.learner.strip(),case_id,body.mode,exam_id,now(),session_token_hash)); sid=cur.lastrowid
+ # The authenticated account is authoritative for the learner label and session ownership.
+ learner_name=identity['display_name'] if identity and identity['role']=='learner' else body.learner.strip()
+ owner_user_id=identity['user_id'] if identity and identity['role']=='learner' else None
+ c=conn(); cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id) VALUES(?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id)); sid=cur.lastrowid
  opening=CASES[case_id]['opening']; save_event(c,sid,{'type':'session_started','mode':body.mode,'case_id':case_id}); c.commit(); c.close()
  # Never expose the hidden case identifier/title to a controlled-exam participant.
  return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':CASES[case_id]['age'],'sex':CASES[case_id]['sex'],'appearance':CASES[case_id]['appearance'],'vitals':CASES[case_id]['vitals'] if body.mode=='practice' else None}}
@@ -252,7 +273,8 @@ class EvidenceSearchRequest(BaseModel):
  query: str = Field(min_length=3,max_length=300)
  max_results: int = Field(default=8,ge=1,le=20)
 class CaseReviewRequest(BaseModel):
- reviewer: str = Field(min_length=2,max_length=100)
+ # Retained for local legacy clients only; production reviewer identity comes from auth.
+ reviewer: str = Field(default='Educator',min_length=2,max_length=100)
  review_notes: str = Field(default='',max_length=4000)
 
 async def retrieve_evidence(query: str, max_results: int=8) -> dict:
