@@ -33,6 +33,10 @@ def llm_configured() -> bool:
 app=FastAPI(title='Bestie Clinical Sim API',version='1.3.0')
 app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','http://localhost:5173,http://127.0.0.1:5173').split(','),allow_credentials=False,allow_methods=['GET','POST','OPTIONS'],allow_headers=['*','X-Pilot-Token','X-Educator-Token'])
 
+# Identity endpoints are additive; legacy route authorization is migrated separately.
+from auth_routes import router as auth_router
+app.include_router(auth_router)
+
 def validate_production_configuration() -> None:
  """Fail closed on common unsafe production configuration mistakes."""
  if APP_ENV != 'production':
