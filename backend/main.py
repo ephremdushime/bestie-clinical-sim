@@ -70,14 +70,18 @@ def conn():
 
 def init_db():
  c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT);
- CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT);
+ CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT, institution_id TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
- CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT);
+ CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT, institution_id TEXT);
  CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);''');
  # Safe additive migrations; never rebuild or discard existing pilot data.
  cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
  if 'session_token_hash' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN session_token_hash TEXT')
  if 'owner_user_id' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN owner_user_id TEXT')
+ exam_cols={row['name'] for row in c.execute('PRAGMA table_info(exams)')}
+ if 'institution_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN institution_id TEXT')
+ draft_cols={row['name'] for row in c.execute('PRAGMA table_info(case_drafts)')}
+ if 'institution_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN institution_id TEXT')
  c.commit(); c.close()
 init_db()
 try:
@@ -108,6 +112,13 @@ def check_access(request:Request, educator=False):
  supplied=request.headers.get('X-Pilot-Token','')
  if not PILOT_TOKEN or not supplied or not hmac.compare_digest(PILOT_TOKEN,supplied):
   raise HTTPException(401,'Valid access token required.')
+
+def scoped_institution(request:Request):
+ """Return authenticated institution scope; platform administrators are global by explicit role."""
+ user=getattr(request.state,'identity_user',None) or current_identity_user(request)
+ if APP_ENV == 'production' and user and user['role'] != 'platform_admin':
+  return user.get('institution_id')
+ return None
 
 def educator_actor(request:Request, fallback_name:str='Educator') -> dict:
  user=getattr(request.state,'identity_user',None) or current_identity_user(request)
@@ -166,7 +177,11 @@ def create_session(body:StartSession,request:Request):
  if body.mode not in ('practice','exam'): raise HTTPException(400,'Mode must be practice or exam.')
  case_id=body.case_id; exam_id=None
  if body.mode=='exam':
-  c=conn(); ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"',(body.exam_code or '',)).fetchone(); c.close()
+  c=conn(); if identity and APP_ENV == 'production' and identity['role'] != 'platform_admin':
+   ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open" AND institution_id=?',(body.exam_code or '',identity.get('institution_id'))).fetchone()
+  else:
+   ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"',(body.exam_code or '',)).fetchone()
+  c.close()
   if not ex: raise HTTPException(404,'Exam code is invalid or closed.')
   case_id=ex['case_id']; exam_id=ex['id']
  if case_id not in CASES: raise HTTPException(404,'Case not found.')
@@ -318,19 +333,32 @@ async def evidence_search(body: EvidenceSearchRequest, request: Request):
 
 @app.get('/api/educator/case-drafts')
 def list_case_drafts(request: Request):
- check_access(request,True); c=conn(); rows=c.execute('SELECT draft_id,topic,specialty,status,payload,created_at,updated_at FROM case_drafts ORDER BY id DESC LIMIT 100').fetchall(); c.close()
+ check_access(request,True); institution_id=scoped_institution(request); c=conn()
+ if APP_ENV == 'production' and institution_id:
+  rows=c.execute('SELECT draft_id,topic,specialty,status,payload,created_at,updated_at FROM case_drafts WHERE institution_id=? ORDER BY id DESC LIMIT 100',(institution_id,)).fetchall()
+ else:
+  rows=c.execute('SELECT draft_id,topic,specialty,status,payload,created_at,updated_at FROM case_drafts ORDER BY id DESC LIMIT 100').fetchall()
+ c.close()
  return {'drafts':[{'draft_id':r['draft_id'],'topic':r['topic'],'specialty':r['specialty'],'status':r['status'],'created_at':r['created_at'],'updated_at':r['updated_at'],'case':json.loads(r['payload'])} for r in rows]}
 
 @app.post('/api/educator/case-drafts/{draft_id}/review')
 def review_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
- check_access(request,True); c=conn(); row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
+ check_access(request,True); institution_id=scoped_institution(request); c=conn()
+ if APP_ENV == 'production' and institution_id:
+  row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=? AND institution_id=?',(draft_id,institution_id)).fetchone()
+ else:
+  row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
  actor=educator_actor(request,body.reviewer)
  d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
 
 @app.post('/api/educator/case-drafts/{draft_id}/approve-and-publish')
 def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
- check_access(request,True); c=conn(); row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
+ check_access(request,True); institution_id=scoped_institution(request); c=conn()
+ if APP_ENV == 'production' and institution_id:
+  row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=? AND institution_id=?',(draft_id,institution_id)).fetchone()
+ else:
+  row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
  d=json.loads(row['payload']); case=d.get('case',{})
  if not case.get('title') or not case.get('diagnosis') or not isinstance(case.get('investigations'),dict):
@@ -369,24 +397,43 @@ async def draft_case(body:CaseDraftRequest,request:Request):
   except Exception: generated['generation_note']='Language model did not return valid case JSON; a structured scaffold was returned instead.'
  case=normalize_generated_case(generated,body); case['source_references']=refs; case['evidence_search']=evidence; case['generation_mode']=mode
  draft={'draft_id':secrets.token_urlsafe(12),'status':'draft_requires_clinical_review','topic':body.topic,'specialty':body.specialty,'learner_level':body.learner_level,'learning_objectives':objectives,'case':case,'source_references':refs,'evidence_search':evidence,'generation_mode':mode,'validation':{'status':'not_clinically_validated','automated_checks':{'has_title':bool(case.get('title')),'has_hidden_diagnosis':bool(case.get('diagnosis')),'has_investigation_structure':bool(case.get('investigations')),'has_source_search':bool(evidence.get('results')),'rubric_present':bool(case.get('marking_rubric'))},'required_before_publish':['Clinical educator verifies source claims and current local guidance','Check history, examination, results and hidden diagnosis are internally consistent','Check age, pregnancy, medication and dose safety where applicable','Confirm image provenance/licensing and investigation indications','Approve rubric and critical-error rules']}}
- c=conn(); c.execute('INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',(draft['draft_id'],body.topic,body.specialty,draft['status'],json.dumps(draft),now(),now())); c.commit(); c.close(); return draft
+ actor=educator_actor(request); institution_id=scoped_institution(request)
+ c=conn(); c.execute('INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at,institution_id) VALUES(?,?,?,?,?,?,?,?)',(draft['draft_id'],body.topic,body.specialty,draft['status'],json.dumps(draft),now(),now(),institution_id)); c.commit(); c.close(); return draft
 
 @app.post('/api/educator/exams')
 def create_exam(body:ExamCreate,request:Request):
  check_access(request,True)
  if body.case_id not in CASES: raise HTTPException(404,'Case not found.')
+ actor=educator_actor(request); institution_id=scoped_institution(request)
+ if APP_ENV == 'production' and actor['role'] != 'platform_admin' and not institution_id:
+  raise HTTPException(403,'An institution-scoped account is required to create an examination.')
  code=secrets.token_urlsafe(5).replace('-','').replace('_','').upper()[:8]
- c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator) VALUES(?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),body.creator)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
+ c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,institution_id) VALUES(?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),actor['display_name'],institution_id)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
- check_access(request,True); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']; c.close()
+ check_access(request,True); institution_id=scoped_institution(request); c=conn()
+ if APP_ENV == 'production' and institution_id:
+  sessions=[dict(r) for r in c.execute('SELECT s.id,s.learner,s.case_id,s.mode,s.exam_id,s.created_at,s.status,s.events,s.report FROM sessions s LEFT JOIN users u ON u.user_id=s.owner_user_id LEFT JOIN exams e ON e.id=s.exam_id WHERE u.institution_id=? OR e.institution_id=? ORDER BY s.id DESC LIMIT 100',(institution_id,institution_id))]
+  exams=[dict(r) for r in c.execute('SELECT * FROM exams WHERE institution_id=? ORDER BY id DESC LIMIT 100',(institution_id,))]
+  total=c.execute('SELECT COUNT(*) n FROM sessions s LEFT JOIN users u ON u.user_id=s.owner_user_id LEFT JOIN exams e ON e.id=s.exam_id WHERE u.institution_id=? OR e.institution_id=?',(institution_id,institution_id)).fetchone()['n']
+  done=c.execute('SELECT COUNT(*) n FROM sessions s LEFT JOIN users u ON u.user_id=s.owner_user_id LEFT JOIN exams e ON e.id=s.exam_id WHERE (u.institution_id=? OR e.institution_id=?) AND s.status="completed"',(institution_id,institution_id)).fetchone()['n']
+ else:
+  sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']
+ c.close()
  for s in sessions:
   if s.get('report'): s['report']=json.loads(s['report'])
   if s.get('events'): s['events']=json.loads(s['events'])
  return {'total_sessions':total,'completed_sessions':done,'sessions':sessions,'exams':exams}
 @app.post('/api/educator/exams/{exam_id}/close')
 def close_exam(exam_id:int,request:Request):
- check_access(request,True); c=conn(); c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); c.close(); return {'closed':True}
+ check_access(request,True); institution_id=scoped_institution(request); c=conn()
+ if APP_ENV == 'production' and institution_id:
+  cur=c.execute('UPDATE exams SET status="closed" WHERE id=? AND institution_id=?',(exam_id,institution_id))
+ else:
+  cur=c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,))
+ c.commit(); c.close()
+ if cur.rowcount != 1: raise HTTPException(404,'Examination not found.')
+ return {'closed':True}
 
 # Lightweight collaboration chat; no case-state synchronization is implied.
 rooms={}
