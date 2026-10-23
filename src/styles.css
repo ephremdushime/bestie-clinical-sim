@@ -6,3 +6,21 @@
 .case-authoring{margin-bottom:15px}.generated-draft{margin-top:17px;border:1px solid #dce9df;border-radius:9px;overflow:hidden}.generated-header{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#eff7f1;padding:11px 13px}.generated-header b{font-size:10px;color:#34674a}.generated-draft pre{margin:0;padding:13px;max-height:420px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#fbfcfb;color:#465c4b;font-size:9px;line-height:1.65}
 .audit-pre{max-width:330px;max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:8px;line-height:1.5;color:#506a59;background:#f6f9f6;padding:8px;border-radius:6px}details summary{cursor:pointer;color:#277552;font-size:9px;font-weight:800}
 .imaging-preview{margin:10px 0 12px;padding:8px;border:1px solid #e1e9e3;background:#f5f8f5;border-radius:8px}.imaging-label{font-size:7px;letter-spacing:.1em;font-weight:800;color:#62806c;margin:2px 0 7px}.imaging-preview svg{display:block;width:100%;max-width:330px;margin:auto;border-radius:6px}.imaging-preview small{display:block;font-size:8px;line-height:1.5;color:#829087;margin-top:6px}
+
+
+/* Cross-headset WebXR clinical scene prototype */
+.xr-runtime { margin: 0 0 1.5rem; padding: 1rem; }
+.xr-runtime-copy, .xr-runtime-note { color: var(--muted, #64748b); line-height: 1.55; }
+.xr-runtime-canvas { display: block; width: 100%; height: clamp(240px, 38vw, 420px); border-radius: 14px; background: #0e171c; touch-action: pan-y; }
+.xr-runtime-controls { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-top: 1rem; }
+.xr-runtime-controls > div { display: grid; gap: .35rem; min-width: 0; }
+.xr-runtime-controls span { font-size: .88rem; color: var(--muted, #64748b); }
+.xr-runtime-note { font-size: .82rem; margin-bottom: 0; }
+.xr-runtime button:disabled { opacity: .55; cursor: not-allowed; }
+@media (max-width: 640px) {
+  .xr-runtime { padding: .75rem; }
+  .xr-runtime-controls button { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .xr-runtime-canvas { scroll-behavior: auto; }
+}
