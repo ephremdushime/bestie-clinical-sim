@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import hashlib
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +44,15 @@ def _db() -> sqlite3.Connection:
       )
     """)
     db.execute("CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_email_time ON auth_login_attempts(email_normalized, attempted_at)")
+    db.execute("""CREATE TABLE IF NOT EXISTS websocket_tickets (
+      ticket_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(user_id),
+      institution_id TEXT,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      consumed_at TEXT
+    )""")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_websocket_tickets_expiry ON websocket_tickets(expires_at)")
     db.commit()
     return db
 
@@ -147,5 +158,38 @@ def logout(authorization: str | None = Header(default=None)):
                           resource_id=None, outcome="success")
         db.commit()
         return {"logged_out": True}
+    finally:
+        db.close()
+
+
+@router.post("/ws-ticket")
+def create_websocket_ticket(authorization: str | None = Header(default=None)):
+    """Issue a single-use 60-second ticket for browser WebSocket authentication."""
+    from datetime import datetime, timedelta, timezone
+
+    token = _bearer(authorization)
+    db = _db()
+    try:
+        user = resolve_session(db, token)
+        if not user:
+            raise HTTPException(401, "Session is invalid, expired, revoked, or account disabled.")
+        now = datetime.now(timezone.utc)
+        db.execute("DELETE FROM websocket_tickets WHERE expires_at<? OR consumed_at IS NOT NULL",
+                   (now.isoformat(timespec="seconds"),))
+        ticket = secrets.token_urlsafe(32)
+        digest = hashlib.sha256(ticket.encode("utf-8")).hexdigest()
+        db.execute("""INSERT INTO websocket_tickets
+          (ticket_hash,user_id,institution_id,created_at,expires_at)
+          VALUES(?,?,?,?,?)""",
+          (digest, user["user_id"], user["institution_id"],
+           now.isoformat(timespec="seconds"),
+           (now + timedelta(seconds=60)).isoformat(timespec="seconds")))
+        write_audit_event(db, actor_user_id=user["user_id"],
+                          institution_id=user["institution_id"],
+                          action="auth.websocket_ticket_issued",
+                          resource_type="websocket_ticket", resource_id=None,
+                          outcome="success")
+        db.commit()
+        return {"ticket": ticket, "expires_in": 60}
     finally:
         db.close()
