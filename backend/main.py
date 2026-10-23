@@ -99,12 +99,16 @@ except Exception:
 def load_case(case_id: str, identity=None):
  # Built-in and legacy global approved cases are available to every institution.
  if case_id in CASES: return CASES[case_id]
- institution_id=identity.get('institution_id') if identity else None
- if not institution_id: return None
+ if not identity: return None
  c=conn()
  try:
-  row=c.execute('SELECT payload FROM approved_cases WHERE case_id=? AND institution_id=?',
-                (case_id,institution_id)).fetchone()
+  if identity.get('role')=='platform_admin':
+   row=c.execute('SELECT payload FROM approved_cases WHERE case_id=?',(case_id,)).fetchone()
+  else:
+   institution_id=identity.get('institution_id')
+   if not institution_id: return None
+   row=c.execute('SELECT payload FROM approved_cases WHERE case_id=? AND institution_id=?',
+                  (case_id,institution_id)).fetchone()
   return json.loads(row['payload']) if row else None
  finally: c.close()
 
