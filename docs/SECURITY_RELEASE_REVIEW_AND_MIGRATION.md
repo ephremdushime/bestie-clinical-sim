@@ -15,6 +15,7 @@
 | `POST/GET /api/educator/cohorts`, `POST /api/educator/cohorts/{id}/members` | Educator/institution administrator | Verify role, active learner and same institution; cross-tenant resource returns 404. |
 | `POST/GET /api/educator/assignments` | Educator/institution administrator | Exactly one learner/cohort target; target and case must belong to same institution. |
 | `GET /api/educator/reports.csv` | Educator/institution administrator | Tenant-filtered, bounded export; no event transcript export; response is non-cacheable. |
+| `GET /api/admin/users`, `PATCH /api/admin/users/{id}/status` | Institution/platform administrator | Lists minimal account metadata; disabling/locking revokes active sessions and records an audit event. Institution administrators are limited to learners/educators in their own institution. |
 | `POST /api/educator/evidence-search`, `POST /api/educator/case-draft`, `GET /api/educator/case-drafts`, review/publish routes | Educator/institution administrator | Verify identity, institution scope, review attribution, collision protection and no placeholder-only publication. |
 | `POST /api/educator/exams`, `GET /api/educator/dashboard`, `POST /api/educator/exams/{id}/close` | Educator/institution administrator | Tenant-filtered. Dashboard includes sensitive reports and must remain educator-only. |
 | `POST /api/auth/login`, `GET /api/auth/me`, `POST /api/auth/logout`, `POST /api/auth/ws-ticket` | Public login; other routes require bearer identity | Generic login errors, throttling, expiring/revocable sessions, short-lived one-use WS ticket. |
@@ -62,7 +63,7 @@ The tool opens SQLite in read-only mode and counts missing ownership/scope metad
 ## Remaining production gates
 
 - External security review, CSRF/origin policy review, rate limiting and abuse controls.
-- Institutional account provisioning/deactivation UX, password reset/MFA/SSO and audit review workflow.
+- User list and audited disable/reactivate controls are implemented for institution/platform administrators. New-user provisioning remains a guarded offline process; password reset/MFA/SSO and a dedicated audit-review workflow remain outstanding.
 - Backup/restore rehearsal, data retention/deletion policy, hosting region and privacy/legal approval.
 - Faculty review and validation of all cases/rubrics, learner accessibility/usability sessions and a documented pilot approval.
 - Real headset/controller acceptance test; browser capability checks do not certify hardware compatibility.
