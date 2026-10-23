@@ -339,9 +339,11 @@ def close_exam(exam_id:int,request:Request):
 rooms={}
 @app.websocket('/ws/rooms/{room}')
 async def room(ws:WebSocket,room:str):
+ # Do not expose a shared pilot secret in a WebSocket query string. Production
+ # collaboration stays disabled until individual identity, room membership,
+ # per-room authorization and message rate limits are implemented.
  if APP_ENV=='production':
-  tok=ws.query_params.get('token','')
-  if not PILOT_TOKEN or not hmac.compare_digest(tok,PILOT_TOKEN): await ws.close(code=1008); return
+  await ws.close(code=1008); return
  await ws.accept(); rooms.setdefault(room,[]).append(ws)
  try:
   await ws.send_json({'type':'history','messages':[]})
