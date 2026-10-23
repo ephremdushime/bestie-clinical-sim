@@ -110,6 +110,8 @@ def test_institution_boundaries_isolate_drafts_exams_and_dashboard(tmp_path, mon
     educator_b_id = create_user(db, email="educator@b.example", display_name="Educator B",
                                 password="educator-password-long", role="educator",
                                 institution_id="inst-b")
+    create_user(db, email="learner@b.example", display_name="Learner B",
+                password="learner-password-long", role="learner", institution_id="inst-b")
     db.commit()
     db.close()
     main.init_db()
@@ -119,9 +121,9 @@ def test_institution_boundaries_isolate_drafts_exams_and_dashboard(tmp_path, mon
     monkeypatch.setenv("CORS_ORIGINS", "https://sim.example.edu")
 
     with TestClient(main.app) as client:
-        def login(email):
+        def login(email, password="educator-password-long"):
             response = client.post("/api/auth/login", json={
-                "email": email, "password": "educator-password-long"})
+                "email": email, "password": password})
             assert response.status_code == 200, response.text
             return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
@@ -147,6 +149,15 @@ def test_institution_boundaries_isolate_drafts_exams_and_dashboard(tmp_path, mon
         assert client.post(f"/api/educator/exams/{exam.json()['id']}/close",
                            headers=headers_b).status_code == 404
         assert client.get("/api/educator/dashboard", headers=headers_b).json()["exams"] == []
+
+        learner_a = login("learner@a.example", "learner-password-long")
+        learner_b = login("learner@b.example", "learner-password-long")
+        owned = client.post("/api/sessions", headers=learner_a, json={
+            "learner": "Forged name", "case_id": "malaria-001", "mode": "practice"})
+        assert owned.status_code == 200, owned.text
+        session_id = owned.json()["session_id"]
+        assert client.post(f"/api/sessions/{session_id}/chat", headers=learner_b,
+                           json={"message": "Can I access another learner's case?"}).status_code == 403
 
 
 def test_production_websocket_uses_identity_and_tenant_room(tmp_path, monkeypatch):
