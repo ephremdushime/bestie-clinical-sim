@@ -196,7 +196,7 @@ def check_session_access(request:Request, session_row):
   if identity['user_id'] != owner and identity['role'] not in ('educator','institution_admin','platform_admin'):
    raise HTTPException(403,'This learner session belongs to another account.')
   resource_institution=session_row['institution_id'] if 'institution_id' in session_row.keys() else None
-  if identity['role'] != 'platform_admin' and resource_institution and identity.get('institution_id') != resource_institution:
+  if identity['role'] != 'platform_admin' and identity.get('institution_id') != resource_institution:
    raise HTTPException(404,'Session not found.')
   return
  if APP_ENV!='production': return
@@ -216,7 +216,9 @@ class SubmitExam(BaseModel): learner:str; session_id:int; report:dict
 class CaseDraftRequest(BaseModel): topic:str=Field(min_length=3,max_length=180); specialty:str=Field(default='General medicine',max_length=100); learner_level:str=Field(default='Clinical-year student',max_length=100); learning_objectives:list[str]=[]; source_notes:str=Field(default='',max_length=12000); source_references:list[str]=[]; auto_retrieve:bool=True
 
 @app.get('/api/health')
-def health(): return {'status':'ok','version':'1.3.0','cases':len(CASES),'llm_configured':llm_configured(),'database':'sqlite','environment':APP_ENV,'xr':'WebXR compatibility is checked in browser; device support varies'}
+def health():
+ if APP_ENV=='production': return {'status':'ok','version':'1.3.0','xr':'WebXR compatibility is checked in browser; device support varies'}
+ return {'status':'ok','version':'1.3.0','cases':len(CASES),'llm_configured':llm_configured(),'database':'sqlite','environment':APP_ENV,'xr':'WebXR compatibility is checked in browser; device support varies'}
 @app.get('/api/cases')
 def cases(request: Request):
  identity=current_identity_user(request); visible={c['id']:c for c in CASES.values()}
