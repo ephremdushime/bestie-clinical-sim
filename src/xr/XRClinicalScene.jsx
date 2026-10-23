@@ -72,9 +72,10 @@ export default function XRClinicalScene({ caseTitle = 'Fictional patient encount
   const [status, setStatus] = useState('Loading 3D scene…');
   const [xrAvailable, setXrAvailable] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [interactionStatus, setInteractionStatus] = useState('Desktop preview: use the buttons to focus a region; immersive controller select cycles focus.');
 
   useEffect(() => {
-    let disposed = false, raf = 0, session = null, gl, program, position, projection, view, model, color, objects = [];
+    let disposed = false, raf = 0, session = null, gl, program, position, projection, view, model, color, objects = [], focusIndex = 0;
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
     try {
@@ -104,6 +105,7 @@ export default function XRClinicalScene({ caseTitle = 'Fictional patient encount
         {mesh:sphereMesh, transform:matrix(-.18,-.5,-2.25,.17,.44,.18), tint:[.23,.53,.61,1]},
         {mesh:sphereMesh, transform:matrix(.18,-.5,-2.25,.17,.44,.18), tint:[.23,.53,.61,1]}
       ];
+      const updateFocus = (index) => { focusIndex = (index + 2) % 2; objects[3].tint = focusIndex === 0 ? [.18,.88,.58,1] : [.23,.53,.61,1]; objects[4].tint = focusIndex === 1 ? [.98,.82,.28,1] : [.76,.58,.45,1]; setInteractionStatus(focusIndex === 0 ? 'Focused region: torso · illustrative orientation only.' : 'Focused region: head · illustrative orientation only.'); };
       gl.enable(gl.DEPTH_TEST);
       gl.clearColor(.055,.085,.105,1);
       const draw = (proj, vmat, viewport) => {
@@ -132,7 +134,7 @@ export default function XRClinicalScene({ caseTitle = 'Fictional patient encount
         raf = requestAnimationFrame(renderDesktop);
       };
       renderDesktop();
-      runtimeRef.current = { gl, draw, renderDesktop, stop: () => cancelAnimationFrame(raf), resume: renderDesktop, session: null };
+      runtimeRef.current = { gl, draw, renderDesktop, stop: () => cancelAnimationFrame(raf), resume: renderDesktop, session: null, focus: updateFocus };
       if (navigator.xr?.isSessionSupported) {
         navigator.xr.isSessionSupported('immersive-vr').then(value => { if (!disposed) { setXrAvailable(!!value); setStatus(value ? '3D preview ready · immersive VR available' : '3D preview ready · immersive VR not reported'); } }).catch(() => { if (!disposed) setStatus('3D preview ready · XR capability unavailable'); });
       } else setStatus('3D preview ready · this browser does not expose WebXR');
@@ -175,7 +177,11 @@ export default function XRClinicalScene({ caseTitle = 'Fictional patient encount
           draw(eye.projectionMatrix,eye.transform.inverse.matrix,vp);
         }
       };
-      nextSession.addEventListener('end',() => { if (runtimeRef.current) { runtimeRef.current.session = null; runtimeRef.current.resume(); } setBusy(false); setStatus('VR session ended · 3D preview remains available'); },{once:true});
+      const onControllerSelect = () => updateFocus(focusIndex + 1);
+      const onControllerSqueeze = () => updateFocus(focusIndex - 1);
+      nextSession.addEventListener('select',onControllerSelect);
+      nextSession.addEventListener('squeeze',onControllerSqueeze);
+      nextSession.addEventListener('end',() => { nextSession.removeEventListener('select',onControllerSelect); nextSession.removeEventListener('squeeze',onControllerSqueeze); if (runtimeRef.current) { runtimeRef.current.session = null; runtimeRef.current.resume(); } setBusy(false); setStatus('VR session ended · 3D preview remains available'); },{once:true});
       nextSession.requestAnimationFrame(onFrame);
       setStatus('Immersive VR session active · use the headset controls to exit');
     } catch (error) {
@@ -189,6 +195,7 @@ export default function XRClinicalScene({ caseTitle = 'Fictional patient encount
     <div className="panel-heading"><div><small>INTERACTIVE 3D PROTOTYPE</small><h2>Clinical room preview</h2></div><span className="count-chip">Synthetic scene</span></div>
     <p className="xr-runtime-copy">A low-complexity 3D patient and examination bed rendered with WebGL. Clinical facts and scoring remain in the simulation API; this scene is illustrative only.</p>
     <canvas ref={canvasRef} className="xr-runtime-canvas" aria-label="Interactive 3D illustration of a fictional patient lying on an examination bed" />
+    <div className="xr-focus-controls"><span>{interactionStatus}</span><div><button className="secondary" onClick={()=>{const rt=runtimeRef.current;if(rt?.focus)rt.focus(0);else setInteractionStatus('Focus controls become active after the scene loads.')}}>Focus torso</button><button className="secondary" onClick={()=>{const rt=runtimeRef.current;if(rt?.focus)rt.focus(1);else setInteractionStatus('Focus controls become active after the scene loads.')}}>Focus head</button></div></div>
     <div className="xr-runtime-controls"><div><b>{caseTitle}</b><span>{status}</span></div><button className="primary" onClick={enterVR} disabled={!xrAvailable || busy}>{busy ? 'Starting VR…' : 'Enter immersive VR'}</button></div>
     {!xrAvailable && <p className="xr-runtime-note">Immersive entry requires a compatible WebXR browser, headset and HTTPS. Desktop 3D preview remains available here.</p>}
   </section>;
