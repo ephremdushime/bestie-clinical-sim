@@ -46,6 +46,35 @@ The current UI checks whether the browser reports support for `immersive-vr` and
 - Support seated mode, readable text, adjustable height/scale, comfort settings and a no-motion fallback. Avoid forced locomotion.
 - Test device/browser combinations in person. Browser API support alone does not confirm performance or usable controls.
 
+
+### Cross-headset architecture strategy
+
+**Design target: broad interoperability, not a claim of universal compatibility.** Headsets expose different operating systems, browsers, runtimes and controller capabilities. Support should be reported per tested device/browser combination.
+
+1. **Standards-first immersive client:** implement the scene with WebGL and the WebXR Device API, entered only after a user gesture. Prefer standards-based viewer poses, per-eye views, reference spaces and generic controller input over vendor-specific APIs.
+2. **Graceful capability tiers:**
+   - **Tier A — immersive VR:** supported WebXR browser + compatible headset; stereoscopic scene and controller interaction.
+   - **Tier B — desktop 3D:** ordinary browser with mouse/keyboard interaction.
+   - **Tier C — mobile/tablet 3D:** touch interaction and a reduced-complexity scene.
+   - **Tier D — standard clinical workflow:** accessible 2D case UI remains available when 3D/WebXR is unavailable.
+   Unsupported WebXR must never block core learning.
+3. **Avoid a single-vendor dependency:** keep the case/session API, clinical state, scoring and educator tools independent of the rendering engine. Do not require Meta-only, SteamVR-only or a vendor SDK for the baseline workflow. Optional platform-specific enhancements must be isolated behind adapters and feature detection.
+4. **Progressive rendering:** use a small, optimized base scene; load optional anatomy/room assets on demand; provide low-complexity settings for standalone headsets; avoid unnecessary post-processing and forced locomotion.
+5. **Input abstraction:** map select, back, confirm, recenter and menu actions to WebXR generic controller profiles where available, with desktop and touch alternatives. Do not assume every headset has identical buttons, hand tracking or haptics.
+6. **Secure runtime:** serve immersive features over HTTPS (localhost for development), request only necessary permissions, and never place access tokens or private case keys in 3D assets.
+7. **Compatibility policy:** publish a tested-device matrix with browser/runtime versions and known limitations. “Not tested” must be displayed distinctly from “unsupported.” Browser capability detection alone is not a compatibility certification.
+
+### Suggested initial test coverage
+
+Start with one readily available standalone headset for hands-on debugging, then expand to representative classes rather than attempting every device at once:
+- Standalone Android-based VR headset using its supported browser/WebXR runtime.
+- A second standalone headset family/runtime where available.
+- PC-tethered headset using a compatible desktop runtime/browser.
+- Desktop Chrome/Edge or Firefox where the relevant WebXR implementation is available, plus non-WebXR desktop fallback.
+- Android phone/tablet touch fallback and a standard laptop screen.
+
+Choose exact device models after confirming which hardware the university/testing partner can provide. Keep the architecture device-neutral from the beginning; do not advertise any model as supported until the acceptance matrix has been completed.
+
 ### Device validation matrix
 
 Record headset model, OS/firmware, browser and version, test date, connection/network, frame stability, session start/exit, controller mapping, seated comfort, accessibility and known defects. At minimum test:
