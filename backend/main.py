@@ -69,15 +69,22 @@ def conn():
  c=sqlite3.connect(DB_PATH,timeout=20); c.row_factory=sqlite3.Row; return c
 
 def init_db():
- c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT);
- CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT);
+ c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT, owner_user_id TEXT, institution_id TEXT);
+ CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT, institution_id TEXT, creator_user_id TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
- CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT);
+ CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT, institution_id TEXT, creator_user_id TEXT);
  CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);''');
  # Safe additive migrations; never rebuild or discard existing pilot data.
  cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
  if 'session_token_hash' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN session_token_hash TEXT')
  if 'owner_user_id' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN owner_user_id TEXT')
+ if 'institution_id' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN institution_id TEXT')
+ exam_cols={row['name'] for row in c.execute('PRAGMA table_info(exams)')}
+ if 'institution_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN institution_id TEXT')
+ if 'creator_user_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN creator_user_id TEXT')
+ draft_cols={row['name'] for row in c.execute('PRAGMA table_info(case_drafts)')}
+ if 'institution_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN institution_id TEXT')
+ if 'creator_user_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN creator_user_id TEXT')
  c.commit(); c.close()
 init_db()
 try:
@@ -90,6 +97,21 @@ except Exception:
 def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def save_event(c,sid,event):
  row=c.execute('SELECT events FROM sessions WHERE id=?',(sid,)).fetchone(); ev=json.loads(row['events'] or '[]'); ev.append({'at':now(),**event}); c.execute('UPDATE sessions SET events=? WHERE id=?',(json.dumps(ev),sid))
+def scoped_identity(request: Request):
+ return getattr(request.state, 'identity_user', None) or current_identity_user(request)
+
+def tenant_clause(identity, column='institution_id'):
+ # Legacy development records remain visible only in local development. Platform admins
+ # are intentionally cross-institution; every other provisioned account is tenant-bound.
+ if identity and identity.get('role') != 'platform_admin':
+  return f' AND {column}=?', (identity.get('institution_id'),)
+ return '', ()
+
+def require_same_institution(identity, resource_institution_id):
+ if not identity: return
+ if identity.get('role') != 'platform_admin' and identity.get('institution_id') != resource_institution_id:
+  raise HTTPException(404, 'Resource not found.')
+
 def check_access(request:Request, educator=False):
  identity=current_identity_user(request)
  if educator:
@@ -166,7 +188,7 @@ def create_session(body:StartSession,request:Request):
  if body.mode not in ('practice','exam'): raise HTTPException(400,'Mode must be practice or exam.')
  case_id=body.case_id; exam_id=None
  if body.mode=='exam':
-  c=conn(); ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"',(body.exam_code or '',)).fetchone(); c.close()
+  identity=scoped_identity(request); clause,params=tenant_clause(identity); c=conn(); ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"'+clause,(body.exam_code or '',*params)).fetchone(); c.close()
   if not ex: raise HTTPException(404,'Exam code is invalid or closed.')
   case_id=ex['case_id']; exam_id=ex['id']
  if case_id not in CASES: raise HTTPException(404,'Case not found.')
@@ -175,7 +197,7 @@ def create_session(body:StartSession,request:Request):
  # The authenticated account is authoritative for the learner label and session ownership.
  learner_name=identity['display_name'] if identity and identity['role']=='learner' else body.learner.strip()
  owner_user_id=identity['user_id'] if identity and identity['role']=='learner' else None
- c=conn(); cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id) VALUES(?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id)); sid=cur.lastrowid
+ c=conn(); cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id,institution_id) VALUES(?,?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id,identity.get('institution_id') if identity else (ex['institution_id'] if body.mode=='exam' and ex else None))); sid=cur.lastrowid
  opening=CASES[case_id]['opening']; save_event(c,sid,{'type':'session_started','mode':body.mode,'case_id':case_id}); c.commit(); c.close()
  # Never expose the hidden case identifier/title to a controlled-exam participant.
  return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':CASES[case_id]['age'],'sex':CASES[case_id]['sex'],'appearance':CASES[case_id]['appearance'],'vitals':CASES[case_id]['vitals'] if body.mode=='practice' else None}}
@@ -318,15 +340,15 @@ async def evidence_search(body: EvidenceSearchRequest, request: Request):
 
 @app.get('/api/educator/case-drafts')
 def list_case_drafts(request: Request):
- check_access(request,True); c=conn(); rows=c.execute('SELECT draft_id,topic,specialty,status,payload,created_at,updated_at FROM case_drafts ORDER BY id DESC LIMIT 100').fetchall(); c.close()
+ check_access(request,True); identity=scoped_identity(request); clause,params=tenant_clause(identity); c=conn(); rows=c.execute('SELECT draft_id,topic,specialty,status,payload,created_at,updated_at FROM case_drafts WHERE 1=1'+clause+' ORDER BY id DESC LIMIT 100',params).fetchall(); c.close()
  return {'drafts':[{'draft_id':r['draft_id'],'topic':r['topic'],'specialty':r['specialty'],'status':r['status'],'created_at':r['created_at'],'updated_at':r['updated_at'],'case':json.loads(r['payload'])} for r in rows]}
 
 @app.post('/api/educator/case-drafts/{draft_id}/review')
 def review_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
- check_access(request,True); c=conn(); row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
+ check_access(request,True); identity=scoped_identity(request); clause,params=tenant_clause(identity); c=conn(); row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?'+clause,(draft_id,*params)).fetchone()
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
  actor=educator_actor(request,body.reviewer)
- d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
+ d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?'+clause,(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
 
 @app.post('/api/educator/case-drafts/{draft_id}/approve-and-publish')
 def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
@@ -369,24 +391,28 @@ async def draft_case(body:CaseDraftRequest,request:Request):
   except Exception: generated['generation_note']='Language model did not return valid case JSON; a structured scaffold was returned instead.'
  case=normalize_generated_case(generated,body); case['source_references']=refs; case['evidence_search']=evidence; case['generation_mode']=mode
  draft={'draft_id':secrets.token_urlsafe(12),'status':'draft_requires_clinical_review','topic':body.topic,'specialty':body.specialty,'learner_level':body.learner_level,'learning_objectives':objectives,'case':case,'source_references':refs,'evidence_search':evidence,'generation_mode':mode,'validation':{'status':'not_clinically_validated','automated_checks':{'has_title':bool(case.get('title')),'has_hidden_diagnosis':bool(case.get('diagnosis')),'has_investigation_structure':bool(case.get('investigations')),'has_source_search':bool(evidence.get('results')),'rubric_present':bool(case.get('marking_rubric'))},'required_before_publish':['Clinical educator verifies source claims and current local guidance','Check history, examination, results and hidden diagnosis are internally consistent','Check age, pregnancy, medication and dose safety where applicable','Confirm image provenance/licensing and investigation indications','Approve rubric and critical-error rules']}}
- c=conn(); c.execute('INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',(draft['draft_id'],body.topic,body.specialty,draft['status'],json.dumps(draft),now(),now())); c.commit(); c.close(); return draft
+ c=conn(); identity=scoped_identity(request); c.execute('INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?)',(draft['draft_id'],body.topic,body.specialty,draft['status'],json.dumps(draft),now(),now(),identity.get('institution_id') if identity else None,identity.get('user_id') if identity else None)); c.commit(); c.close(); return draft
 
 @app.post('/api/educator/exams')
 def create_exam(body:ExamCreate,request:Request):
  check_access(request,True)
  if body.case_id not in CASES: raise HTTPException(404,'Case not found.')
  code=secrets.token_urlsafe(5).replace('-','').replace('_','').upper()[:8]
- c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator) VALUES(?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),body.creator)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
+ identity=scoped_identity(request)
+ creator=identity['display_name'] if identity else body.creator
+ c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),creator,identity.get('institution_id') if identity else None,identity.get('user_id') if identity else None)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
- check_access(request,True); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']; c.close()
+ check_access(request,True); identity=scoped_identity(request); clause,params=tenant_clause(identity); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions WHERE 1=1'+clause+' ORDER BY id DESC LIMIT 100',params)]; exams=[dict(r) for r in c.execute('SELECT * FROM exams WHERE 1=1'+clause+' ORDER BY id DESC LIMIT 100',params)]; total=c.execute('SELECT COUNT(*) n FROM sessions WHERE 1=1'+clause,params).fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"'+clause,params).fetchone()['n']; c.close()
  for s in sessions:
   if s.get('report'): s['report']=json.loads(s['report'])
   if s.get('events'): s['events']=json.loads(s['events'])
  return {'total_sessions':total,'completed_sessions':done,'sessions':sessions,'exams':exams}
 @app.post('/api/educator/exams/{exam_id}/close')
 def close_exam(exam_id:int,request:Request):
- check_access(request,True); c=conn(); c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); c.close(); return {'closed':True}
+ check_access(request,True); identity=scoped_identity(request); clause,params=tenant_clause(identity); c=conn(); cur=c.execute('UPDATE exams SET status="closed" WHERE id=?'+clause,(exam_id,*params)); c.commit(); c.close();
+ if cur.rowcount != 1: raise HTTPException(404,'Exam not found.')
+ return {'closed':True}
 
 # Lightweight collaboration chat; no case-state synchronization is implied.
 rooms={}
