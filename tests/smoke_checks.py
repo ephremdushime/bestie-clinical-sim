@@ -8,6 +8,7 @@ tmp.close()
 os.environ['CLINICAL_SIM_DB'] = tmp.name
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 import main
 
 client = TestClient(main.app)
@@ -55,6 +56,13 @@ main.PILOT_TOKEN = 'p' * 40
 main.EDUCATOR_TOKEN = 'e' * 40
 os.environ['CORS_ORIGINS'] = 'https://sim.example.edu'
 main.validate_production_configuration()
+# Production collaboration stays disabled until room membership and individual
+# identity checks exist; a shared token in a URL is not sufficient authorization.
+try:
+    with client.websocket_connect('/ws/rooms/security-test?token=' + ('p' * 40)):
+        raise AssertionError('Production collaboration WebSocket should reject connections')
+except WebSocketDisconnect as exc:
+    assert exc.code == 1008, exc.code
 assert client.post('/api/sessions', json={'learner':'No token','case_id':'malaria-001','mode':'practice'}).status_code == 401
 main.PILOT_TOKEN = 'test-pilot-secret'
 secure = client.post('/api/sessions', headers={'X-Pilot-Token':'test-pilot-secret'}, json={'learner':'Session owner','case_id':'malaria-001','mode':'practice'})
