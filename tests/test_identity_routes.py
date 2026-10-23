@@ -205,6 +205,7 @@ def test_production_websocket_uses_identity_and_tenant_room(tmp_path, monkeypatc
 
 def test_published_cases_are_visible_only_to_their_institution(tmp_path, monkeypatch):
     _provision(tmp_path / "published-cases.db", monkeypatch)
+    main.init_db()
     db = sqlite3.connect(tmp_path / "published-cases.db")
     db.row_factory = sqlite3.Row
     db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
