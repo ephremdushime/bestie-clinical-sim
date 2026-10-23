@@ -200,3 +200,62 @@ def test_production_websocket_uses_identity_and_tenant_room(tmp_path, monkeypatc
                 raise AssertionError("Cross-institution WebSocket connection unexpectedly succeeded")
         except WebSocketDisconnect:
             pass
+
+
+
+def test_published_cases_are_visible_only_to_their_institution(tmp_path, monkeypatch):
+    _provision(tmp_path / "published-cases.db", monkeypatch)
+    main.init_db()
+    db = sqlite3.connect(tmp_path / "published-cases.db")
+    db.row_factory = sqlite3.Row
+    db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+               ("inst-b", "Institution B", "2026-01-01T00:00:00+00:00"))
+    create_user(db, email="educator@b.example", display_name="Educator B",
+                password="educator-password-long", role="educator", institution_id="inst-b")
+    create_user(db, email="learner@b.example", display_name="Learner B",
+                password="learner-password-long", role="learner", institution_id="inst-b")
+    private_case = dict(main.CASES["malaria-001"])
+    private_case["id"] = "generated-inst-a-private"
+    private_case["title"] = "Institution A private teaching case"
+    db.execute("""INSERT INTO approved_cases
+        (case_id,version,payload,approved_by,approved_at,institution_id)
+        VALUES(?,?,?,?,?,?)""",
+        (private_case["id"], "1.0.0", __import__("json").dumps(private_case),
+         "Educator A", "2026-10-24T00:00:00+00:00", "inst-a"))
+    db.commit()
+    db.close()
+    main.init_db()
+    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setattr(main, "PILOT_TOKEN", "p" * 40)
+    monkeypatch.setattr(main, "EDUCATOR_TOKEN", "e" * 40)
+    monkeypatch.setenv("CORS_ORIGINS", "https://sim.example.edu")
+
+    with TestClient(main.app) as client:
+        def login(email, password):
+            response = client.post("/api/auth/login", json={"email": email, "password": password})
+            assert response.status_code == 200, response.text
+            return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+        educator_a = login("educator@a.example", "educator-password-long")
+        educator_b = login("educator@b.example", "educator-password-long")
+        learner_a = login("learner@a.example", "learner-password-long")
+        learner_b = login("learner@b.example", "learner-password-long")
+
+        catalog_a = client.get("/api/cases", headers=educator_a).json()["cases"]
+        catalog_b = client.get("/api/cases", headers=educator_b).json()["cases"]
+        assert private_case["id"] in [item["id"] for item in catalog_a]
+        assert private_case["id"] not in [item["id"] for item in catalog_b]
+
+        created = client.post("/api/educator/exams", headers=educator_a, json={
+            "title": "Institution private case exam", "case_id": private_case["id"]})
+        assert created.status_code == 200, created.text
+        denied_exam = client.post("/api/educator/exams", headers=educator_b, json={
+            "title": "Unauthorized private case exam", "case_id": private_case["id"]})
+        assert denied_exam.status_code == 404
+
+        started = client.post("/api/sessions", headers=learner_a, json={
+            "learner": "Learner A", "case_id": private_case["id"], "mode": "practice"})
+        assert started.status_code == 200, started.text
+        denied_session = client.post("/api/sessions", headers=learner_b, json={
+            "learner": "Learner B", "case_id": private_case["id"], "mode": "practice"})
+        assert denied_session.status_code == 404
