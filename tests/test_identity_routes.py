@@ -259,3 +259,38 @@ def test_published_cases_are_visible_only_to_their_institution(tmp_path, monkeyp
         denied_session = client.post("/api/sessions", headers=learner_b, json={
             "learner": "Learner B", "case_id": private_case["id"], "mode": "practice"})
         assert denied_session.status_code == 404
+
+
+
+def test_institution_educator_cannot_overwrite_global_case_identifier(tmp_path, monkeypatch):
+    _provision(tmp_path / "case-collision.db", monkeypatch)
+    main.init_db()
+    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setattr(main, "PILOT_TOKEN", "p" * 40)
+    monkeypatch.setattr(main, "EDUCATOR_TOKEN", "e" * 40)
+    monkeypatch.setenv("CORS_ORIGINS", "https://sim.example.edu")
+
+    with TestClient(main.app) as client:
+        login = client.post("/api/auth/login", json={
+            "email": "educator@a.example", "password": "educator-password-long"})
+        assert login.status_code == 200, login.text
+        headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+        draft = client.post("/api/educator/case-draft", headers=headers, json={
+            "topic": "Collision regression", "auto_retrieve": False})
+        assert draft.status_code == 200, draft.text
+        draft_id = draft.json()["draft_id"]
+        # Simulate a crafted or accidentally reused identifier in an otherwise complete case.
+        with sqlite3.connect(tmp_path / "case-collision.db") as db:
+            row = db.execute("SELECT payload FROM case_drafts WHERE draft_id=?", (draft_id,)).fetchone()
+            payload = __import__("json").loads(row[0])
+            payload["generation_mode"] = "reviewed_case"
+            payload["case"] = dict(main.CASES["malaria-001"])
+            payload["case"]["id"] = "malaria-001"
+            db.execute("UPDATE case_drafts SET payload=? WHERE draft_id=?",
+                       (__import__("json").dumps(payload), draft_id))
+            db.commit()
+        response = client.post(f"/api/educator/case-drafts/{draft_id}/approve-and-publish",
+            headers=headers, json={"reviewer": "Educator A", "review_notes": "Collision safety test"})
+        assert response.status_code == 409, response.text
+        assert "already owned" in response.json()["detail"]
+        assert main.CASES["malaria-001"]["title"] == "Fever and chills"
