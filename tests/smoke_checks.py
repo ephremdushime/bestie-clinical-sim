@@ -8,6 +8,7 @@ tmp.close()
 os.environ['CLINICAL_SIM_DB'] = tmp.name
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'backend'))
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 import main
 
 client = TestClient(main.app)
@@ -42,6 +43,7 @@ exam_finish = client.post(f"/api/sessions/{join.json()['session_id']}/finish", j
 assert exam_finish.status_code == 200, exam_finish.text
 assert exam_finish.json()['status'] == 'submitted_pending_educator_review'
 assert 'hidden_case_diagnosis' not in exam_finish.json() and 'score' not in exam_finish.json()
+assert 'case_id' not in exam_finish.json(), exam_finish.json()
 assert 'diagnosis' not in str(exam_finish.json()).lower()
 # Production mode must reject requests when the access secret is not configured/supplied.
 main.APP_ENV = 'production'
@@ -54,6 +56,13 @@ main.PILOT_TOKEN = 'p' * 40
 main.EDUCATOR_TOKEN = 'e' * 40
 os.environ['CORS_ORIGINS'] = 'https://sim.example.edu'
 main.validate_production_configuration()
+# Production collaboration stays disabled until room membership and individual
+# identity checks exist; a shared token in a URL is not sufficient authorization.
+try:
+    with client.websocket_connect('/ws/rooms/security-test?token=' + ('p' * 40)):
+        raise AssertionError('Production collaboration WebSocket should reject connections')
+except WebSocketDisconnect as exc:
+    assert exc.code == 1008, exc.code
 assert client.post('/api/sessions', json={'learner':'No token','case_id':'malaria-001','mode':'practice'}).status_code == 401
 main.PILOT_TOKEN = 'test-pilot-secret'
 secure = client.post('/api/sessions', headers={'X-Pilot-Token':'test-pilot-secret'}, json={'learner':'Session owner','case_id':'malaria-001','mode':'practice'})
@@ -83,6 +92,28 @@ assert client.post(f"/api/sessions/{expired_id}/chat", headers=expired_headers, 
 expired_submission = client.post(f"/api/sessions/{expired_id}/finish", headers=expired_headers, json={'differential':['trauma'],'final_diagnosis':'Trauma','management':['Urgent escalation'],'reflection':'Expiry test'})
 assert expired_submission.status_code == 200, expired_submission.text
 assert expired_submission.json()['time_expired'] is True
+# Production educator boundary: pilot credentials must never authorize educator APIs.
+main.APP_ENV = 'production'
+pilot_headers = {'X-Pilot-Token': 'test-pilot-secret'}
+educator_headers = {'X-Educator-Token': 'e' * 40}
+assert client.get('/api/educator/dashboard', headers=pilot_headers).status_code == 401
+assert client.post('/api/educator/exams', headers=pilot_headers, json={
+    'title':'Unauthorized exam creation', 'case_id':'malaria-001'
+}).status_code == 401
+assert client.get('/api/educator/dashboard', headers=educator_headers).status_code == 200
+assert client.post('/api/educator/exams', headers=educator_headers, json={
+    'title':'Authorized educator exam', 'case_id':'malaria-001'
+}).status_code == 200
+# Exam submissions must not reveal diagnosis, scoring, rubric feedback or pass-threshold state.
+assert exam_finish.json()['status'] == 'submitted_pending_educator_review'
+for forbidden in ('hidden_case_diagnosis', 'score', 'domains', 'critical_flags', 'threshold_status', 'demo_threshold'):
+    assert forbidden not in exam_finish.json(), (forbidden, exam_finish.json())
+assert 'diagnosis' not in str(exam_finish.json()).lower()
+# Session secrets are mandatory for both chat and investigation access in production.
+assert client.post(f"/api/sessions/{secure_data['session_id']}/investigations",
+                   headers={'X-Pilot-Token':'test-pilot-secret'},
+                   json={'test_id':'malaria-rdt','indication':'Fever in an endemic setting'}).status_code == 401
+main.APP_ENV = 'development'
 main.APP_ENV = 'development'
 
 case_draft = client.post('/api/educator/case-draft', json={'topic':'Pediatric dehydration','specialty':'Pediatrics','source_references':['educator supplied protocol']})

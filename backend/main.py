@@ -217,7 +217,7 @@ def finish(sid:int,body:Finish,request:Request):
  # Controlled exams retain the full report for educator review, but the student response
  # must not reveal the hidden diagnosis, score, rubric decisions or pass-threshold result.
  if s['mode']=='exam':
-  return {'status':'submitted_pending_educator_review','mode':'exam','case_id':s['case_id'],'learner':s['learner'],'submitted_at':report['submitted_at'],'time_expired':report['time_expired'],'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
+  return {'status':'submitted_pending_educator_review','mode':'exam','learner':s['learner'],'submitted_at':report['submitted_at'],'time_expired':report['time_expired'],'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
  return report
 class EvidenceSearchRequest(BaseModel):
  query: str = Field(min_length=3,max_length=300)
@@ -339,9 +339,11 @@ def close_exam(exam_id:int,request:Request):
 rooms={}
 @app.websocket('/ws/rooms/{room}')
 async def room(ws:WebSocket,room:str):
+ # Do not expose a shared pilot secret in a WebSocket query string. Production
+ # collaboration stays disabled until individual identity, room membership,
+ # per-room authorization and message rate limits are implemented.
  if APP_ENV=='production':
-  tok=ws.query_params.get('token','')
-  if not PILOT_TOKEN or not hmac.compare_digest(tok,PILOT_TOKEN): await ws.close(code=1008); return
+  await ws.close(code=1008); return
  await ws.accept(); rooms.setdefault(room,[]).append(ws)
  try:
   await ws.send_json({'type':'history','messages':[]})
