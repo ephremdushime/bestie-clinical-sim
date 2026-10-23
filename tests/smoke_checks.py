@@ -58,8 +58,9 @@ assert client.post('/api/sessions', json={'learner':'No token','case_id':'malari
 main.PILOT_TOKEN = 'test-pilot-secret'
 # Production educator routes must use individually provisioned identity sessions,
 # not the old shared educator token. Provision fixtures directly, as an offline admin would.
-from identity import create_user, issue_session
+from identity import create_user, issue_session, init_identity_schema
 identity_db = main.conn()
+init_identity_schema(identity_db)
 identity_db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
                     ('test-institution','Test Institution','2026-01-01T00:00:00+00:00'))
 learner_id = create_user(identity_db,email='learner@example.test',display_name='Test Learner',
