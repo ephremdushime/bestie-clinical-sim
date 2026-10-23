@@ -68,7 +68,7 @@ export default function CollaborationRoom({user}) {
         {messages.length?messages.map((m,i)=><article className="collab-message" key={m.id||i}><div><b>{m.name||m.display_name||'Room participant'}</b><small>{m.role||'member'}</small></div><p>{m.text||m.content||''}</p></article>):<div className="empty-state">No messages yet. Join the room to start a discussion.</div>}
         <div ref={endRef}/>
       </div>
-      <div className="composer collab-composer"><textarea rows={2} value={draft} onChange={e=>setDraft(e.target.value)} maxLength={2000} disabled={!connected} placeholder="Write a brief team message…"/><button className="primary" disabled={!connected||!draft.trim()} onClick={send}>Send ↗</button></div>
+      <div className="composer collab-composer"><textarea rows={2} value={draft} onChange={e=>setDraft(e.target.value)} maxLength={1200} disabled={!connected} placeholder="Write a brief team message…"/><button className="primary" disabled={!connected||!draft.trim()} onClick={send}>Send ↗</button></div>
     </section>
     <div className="notice"><b>Current scope:</b> text collaboration only. This room does not share live clinical-case state, patient simulation progress, examination answers or educator dashboards.</div>
   </div>;
