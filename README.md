@@ -105,7 +105,7 @@ Copy `.env.example` to `.env`, replace all example secrets, configure the exact 
 7. The current VR/AR scene is an early functional WebXR/WebGL prototype, not a validated immersive clinical environment; test on actual target headsets and implement controller-driven clinical tasks before claiming headset readiness.
 8. Draft pull requests must be reviewed and merged in dependency order before the complete stack exists on `main`. Passing GitHub CI confirms the tested backend and frontend build jobs only; it does not prove deployment, clinical validity, privacy/legal approval, load resilience, or headset acceptance.
 
-See `docs/PRODUCT_SPECIFICATION.md`, `docs/SECURITY_RELEASE_REVIEW_AND_MIGRATION.md`, `docs/DELIVERY_ROADMAP_AND_ACCEPTANCE.md`, `docs/AI_SOURCE_GOVERNANCE.md`, `docs/UNIPORT_VR_AR_TEST_PLAN.md`, and `docs/TEST_RESULTS.md`.
+See `docs/PRODUCT_SPECIFICATION.md`, `docs/SECURITY_RELEASE_REVIEW_AND_MIGRATION.md`, `docs/PILOT_VALIDATION_CHECKLIST.md`, `docs/DELIVERY_ROADMAP_AND_ACCEPTANCE.md`, `docs/AI_SOURCE_GOVERNANCE.md`, `docs/UNIPORT_VR_AR_TEST_PLAN.md`, and `docs/TEST_RESULTS.md`.
 
 
 ## AI Clinical Scenario Engine (1.1.1)
