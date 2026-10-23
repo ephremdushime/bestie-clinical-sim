@@ -292,5 +292,5 @@ def test_institution_educator_cannot_overwrite_global_case_identifier(tmp_path, 
         response = client.post(f"/api/educator/case-drafts/{draft_id}/approve-and-publish",
             headers=headers, json={"reviewer": "Educator A", "review_notes": "Collision safety test"})
         assert response.status_code == 409, response.text
-        assert "already owned" in response.json()["detail"]
+        assert "already exists" in response.json()["detail"]
         assert main.CASES["malaria-001"]["title"] == "Fever and chills"
