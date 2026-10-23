@@ -76,6 +76,7 @@ Copy `.env.example` to `.env`, replace all example secrets, configure the exact 
 - `POST/GET /api/educator/cohorts`; `POST /api/educator/cohorts/{id}/members` — manage institution cohorts
 - `POST/GET /api/educator/assignments` — create and list cohort/learner assignments
 - `GET /api/educator/reports.csv` — bounded tenant-scoped report export
+- `GET /api/admin/users` and `PATCH /api/admin/users/{id}/status` — role-gated account listing and session-revoking disable/reactivate
 - `GET /api/educator/dashboard`
 - `POST /api/educator/exams/{id}/close`
 - `POST /api/auth/ws-ticket` — issue a short-lived, single-use WebSocket ticket for the signed-in account\n- `WS /ws/rooms/{room}?ticket=...` — institution-scoped text collaboration
