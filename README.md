@@ -15,7 +15,7 @@ Bestie Clinical Sim is a clinical education simulation prototype for medical and
 - **AI patient role-play:** optional OpenAI-compatible chat-completions endpoint; the model receives case facts but not the hidden diagnosis. Case results remain controlled by the API.
 - **Collaboration:** institution-scoped WebSocket text room with provisioned-account identity, single-use 60-second connection tickets, one-time ticket consumption, tenant room checks and bounded message sizes. It does not synchronize clinical case state or exam actions.
 - **VR/AR:** an early WebXR/WebGL scene and browser capability checks are integrated. It remains a prototype: no clinically validated anatomy, controller-driven tasks, haptics, spatial competency assessment or real-headset acceptance testing has been completed. The Uniport headset collaboration is intended for compatibility testing.
-- **Learner continuity:** active sessions can be restored after a browser reload using the server-authorized resume endpoint; examination time remaining is calculated server-side. Learners have an account-scoped progress view and assignment list.
+- **Learner continuity:** active sessions can be restored after a browser reload using the server-authorized resume endpoint; private working notes autosave; examination time remaining is calculated server-side. Learners have an account-scoped progress view and assignment list.
 - **Security release review:** read-only legacy ownership inventory is available via `python backend/migration_review.py --database path/to/copy.db`; see `docs/SECURITY_RELEASE_REVIEW_AND_MIGRATION.md`. It never auto-assigns historical ownership.
 - **Privacy:** SQLite stores learner display names, fictional-case activity, and assessment event logs. Do not use real patient records.
 
@@ -72,6 +72,7 @@ Copy `.env.example` to `.env`, replace all example secrets, configure the exact 
 - `POST /api/educator/case-draft`
 - `POST /api/educator/exams`
 - `GET /api/sessions/{id}/resume` — restore owner-authorized state and server-derived remaining exam time
+- `PUT /api/sessions/{id}/draft` — autosave private working notes for reload recovery
 - `GET /api/learner/progress` and `GET /api/learner/assignments` — account-scoped learner activity
 - `POST/GET /api/educator/cohorts`; `POST /api/educator/cohorts/{id}/members` — manage institution cohorts
 - `POST/GET /api/educator/assignments` — create and list cohort/learner assignments
