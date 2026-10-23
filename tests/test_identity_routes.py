@@ -98,3 +98,81 @@ def test_authenticated_learner_session_is_bound_to_account(tmp_path, monkeypatch
         reply = client.post(f"/api/sessions/{data['session_id']}/chat", headers=headers,
                             json={"message": "When did it start?"})
         assert reply.status_code == 200, reply.text
+
+
+
+def test_institution_boundaries_isolate_drafts_exams_and_dashboard(tmp_path, monkeypatch):
+    _, educator_a_id = _provision(tmp_path / "tenants.db", monkeypatch)
+    db = sqlite3.connect(tmp_path / "tenants.db")
+    db.row_factory = sqlite3.Row
+    db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+               ("inst-b", "Institution B", "2026-01-01T00:00:00+00:00"))
+    educator_b_id = create_user(db, email="educator@b.example", display_name="Educator B",
+                                password="educator-password-long", role="educator",
+                                institution_id="inst-b")
+    db.commit()
+    db.close()
+    main.init_db()
+    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setattr(main, "PILOT_TOKEN", "p" * 40)
+    monkeypatch.setattr(main, "EDUCATOR_TOKEN", "e" * 40)
+    monkeypatch.setenv("CORS_ORIGINS", "https://sim.example.edu")
+
+    with TestClient(main.app) as client:
+        def login(email):
+            response = client.post("/api/auth/login", json={
+                "email": email, "password": "educator-password-long"})
+            assert response.status_code == 200, response.text
+            return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+        headers_a = login("educator@a.example")
+        headers_b = login("educator@b.example")
+        draft = client.post("/api/educator/case-draft", headers=headers_a, json={
+            "topic": "Tenant isolation test", "auto_retrieve": False})
+        assert draft.status_code == 200, draft.text
+        draft_id = draft.json()["draft_id"]
+        assert draft_id in [d["draft_id"] for d in client.get(
+            "/api/educator/case-drafts", headers=headers_a).json()["drafts"]]
+        assert draft_id not in [d["draft_id"] for d in client.get(
+            "/api/educator/case-drafts", headers=headers_b).json()["drafts"]]
+        denied = client.post(f"/api/educator/case-drafts/{draft_id}/review",
+                             headers=headers_b, json={"reviewer": "Fake", "review_notes": "no"})
+        assert denied.status_code == 404
+
+        exam = client.post("/api/educator/exams", headers=headers_a, json={
+            "title": "Tenant exam", "case_id": "malaria-001", "creator": "Forged Creator"})
+        assert exam.status_code == 200, exam.text
+        assert exam.json()["creator"] == "Educator A"
+        assert exam.json()["institution_id"] == "inst-a"
+        assert client.post(f"/api/educator/exams/{exam.json()['id']}/close",
+                           headers=headers_b).status_code == 404
+        assert client.get("/api/educator/dashboard", headers=headers_b).json()["exams"] == []
+
+
+def test_production_websocket_uses_identity_and_tenant_room(tmp_path, monkeypatch):
+    _provision(tmp_path / "ws.db", monkeypatch)
+    main.init_db()
+    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setattr(main, "PILOT_TOKEN", "p" * 40)
+    monkeypatch.setattr(main, "EDUCATOR_TOKEN", "e" * 40)
+    monkeypatch.setenv("CORS_ORIGINS", "https://sim.example.edu")
+
+    with TestClient(main.app) as client:
+        login = client.post("/api/auth/login", json={
+            "email": "educator@a.example", "password": "educator-password-long"})
+        assert login.status_code == 200, login.text
+        token = login.json()["access_token"]
+        with client.websocket_connect(f"/ws/rooms/inst-a?token={token}") as websocket:
+            assert websocket.receive_json()["type"] == "history"
+            websocket.send_json({"name": "Impersonated Admin", "role": "platform_admin",
+                                 "text": "Hello colleagues"})
+            message = websocket.receive_json()
+            assert message["name"] == "Educator A"
+            assert message["role"] == "educator"
+            assert message["text"] == "Hello colleagues"
+        from starlette.websockets import WebSocketDisconnect
+        try:
+            with client.websocket_connect(f"/ws/rooms/inst-b?token={token}"):
+                raise AssertionError("Cross-institution WebSocket connection unexpectedly succeeded")
+        except WebSocketDisconnect:
+            pass
