@@ -2,12 +2,16 @@
 
 This checklist is a release blocker, not optional advice. Mark an item complete only when evidence (build log, test result, signed review, or operational record) is attached to the project.
 
+The identity/RBAC migration design is documented in [Identity, authorization and audit implementation plan](IDENTITY_AUTHORIZATION_AND_AUDIT_PLAN.md). That document is a proposal, not evidence of implementation.
+
 ## Engineering
 - [ ] Frontend dependencies install reproducibly from a committed lockfile (`npm ci`).
 - [ ] `npm run build` succeeds in CI.
 - [ ] Browser end-to-end tests cover practice, investigations, report, exam join, exam expiry, exam submission and educator review.
 - [ ] Individual accounts and role-based authorization replace shared access tokens.
 - [ ] Every session endpoint verifies session ownership; educator-only endpoints require individual educator role.
+- [ ] Reviewer identity is derived from verified authentication, not a request-body field.
+- [ ] Production collaboration remains disabled until identity, room authorization, rate limits and monitoring are implemented and tested.
 - [ ] Rate limits, audit logs, monitoring, alerts, secret rotation and dependency scanning are enabled.
 - [ ] Database migration, backup and restore drills pass.
 
