@@ -162,7 +162,11 @@ def test_production_websocket_uses_identity_and_tenant_room(tmp_path, monkeypatc
             "email": "educator@a.example", "password": "educator-password-long"})
         assert login.status_code == 200, login.text
         token = login.json()["access_token"]
-        with client.websocket_connect(f"/ws/rooms/inst-a?token={token}") as websocket:
+        ticket_response = client.post("/api/auth/ws-ticket",
+                                      headers={"Authorization": f"Bearer {token}"})
+        assert ticket_response.status_code == 200, ticket_response.text
+        ticket = ticket_response.json()["ticket"]
+        with client.websocket_connect(f"/ws/rooms/inst-a?ticket={ticket}") as websocket:
             assert websocket.receive_json()["type"] == "history"
             websocket.send_json({"name": "Impersonated Admin", "role": "platform_admin",
                                  "text": "Hello colleagues"})
@@ -172,7 +176,16 @@ def test_production_websocket_uses_identity_and_tenant_room(tmp_path, monkeypatc
             assert message["text"] == "Hello colleagues"
         from starlette.websockets import WebSocketDisconnect
         try:
-            with client.websocket_connect(f"/ws/rooms/inst-b?token={token}"):
+            with client.websocket_connect(f"/ws/rooms/inst-a?ticket={ticket}"):
+                raise AssertionError("Reused WebSocket ticket unexpectedly succeeded")
+        except WebSocketDisconnect:
+            pass
+        ticket_response = client.post("/api/auth/ws-ticket",
+                                      headers={"Authorization": f"Bearer {token}"})
+        assert ticket_response.status_code == 200, ticket_response.text
+        other_ticket = ticket_response.json()["ticket"]
+        try:
+            with client.websocket_connect(f"/ws/rooms/inst-b?ticket={other_ticket}"):
                 raise AssertionError("Cross-institution WebSocket connection unexpectedly succeeded")
         except WebSocketDisconnect:
             pass
