@@ -122,9 +122,11 @@ def create_user(
 def verify_password(db: sqlite3.Connection, email: str, password: str) -> sqlite3.Row | None:
     """Return active user row on success; generic None for unknown/disabled/wrong password."""
     row = db.execute(
-        "SELECT * FROM users WHERE email_normalized=?", (email.strip().casefold(),)
+        """SELECT u.*, i.status AS institution_status
+           FROM users u LEFT JOIN institutions i ON i.institution_id=u.institution_id
+           WHERE u.email_normalized=?""", (email.strip().casefold(),)
     ).fetchone()
-    if not row or row["status"] != "active":
+    if not row or row["status"] != "active" or (row["role"] != "platform_admin" and row["institution_status"] != "active"):
         # Spend a hash operation for unknown/disabled accounts to reduce timing leakage.
         _password_record(password if len(password) >= 12 else "invalid-password-placeholder", b"\0" * 16)
         return None
