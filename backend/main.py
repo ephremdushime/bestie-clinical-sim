@@ -417,6 +417,11 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  actor=educator_actor(request,body.reviewer)
  case['version']='1.0.0'; case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
  case_institution=identity.get('institution_id') if identity and identity.get('role')!='platform_admin' else None
+ # Never let an institution educator replace a built-in/global case or another tenant's case by reusing its ID.
+ existing=c.execute('SELECT institution_id FROM approved_cases WHERE case_id=?',(case['id'],)).fetchone()
+ if identity and identity.get('role')!='platform_admin':
+  if case['id'] in CASES or existing is not None:
+   c.close(); raise HTTPException(409,'This case identifier already exists and cannot be replaced through the publish workflow. Choose a new case identifier.')
  c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at,institution_id) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at'],case_institution))
  d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?'+clause,(d['status'],json.dumps(d),now(),draft_id,*params)); c.commit(); c.close()
  if case_institution is None: CASES[case['id']]=case

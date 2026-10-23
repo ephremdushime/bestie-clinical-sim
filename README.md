@@ -7,14 +7,14 @@ Bestie Clinical Sim is a clinical education simulation prototype for medical and
 ## Included capabilities
 
 - **Practice mode:** patient dialogue, adjustable browser speech synthesis, optional browser dictation where supported, hints, investigations with a required clinical indication, case-configured results, management checklist, reflection and formative report.
-- **Examination mode:** teacher creates an exam with a hidden case and shareable code; the API enforces time limits on chat/investigation actions; the student-facing submission response does not reveal the hidden diagnosis, score, rubric decisions or threshold result. Full reports remain in the educator dashboard. This is still shared-token access, not per-user authentication.
+- **Examination mode:** teacher creates an exam with a hidden case and shareable code; the API enforces time limits on chat/investigation actions; the student-facing submission response does not reveal the hidden diagnosis, score, rubric decisions or threshold result. Full reports remain in the educator dashboard. Controlled-exam confidentiality remains a release gate; the current identity-backed routes bind authenticated learners to their own sessions and keep reports educator-only.
 - **Case library:** malaria, severe respiratory presentation, burns with possible inhalation injury, road-traffic trauma, pregnancy with severe headache, and pediatric fever/fast breathing.
 - **Investigations:** case-specific fixed results for configured tests; unsupported tests do not receive invented findings. A test's indication is recorded. Synthetic imaging schematics are explicitly labeled as illustrations, not diagnostic-quality images.
 - **Educator console:** exam builder, exam codes, close-exam control, recent sessions, reports and event/decision logs.
 - **AI case drafting:** educator-only draft endpoint. If an OpenAI-compatible model is configured, it can propose a structured case draft; otherwise it returns a structured template. Drafts are never automatically published and must be source-checked and educator-approved.
 - **AI patient role-play:** optional OpenAI-compatible chat-completions endpoint; the model receives case facts but not the hidden diagnosis. Case results remain controlled by the API.
-- **Collaboration:** basic WebSocket text room. It does not synchronize clinical case state or exam actions.
-- **VR/AR roadmap:** browser capability check for WebXR and a headset-oriented interface scaffold. There is no production 3D avatar, controller/haptic integration, spatial tracking, or real WebXR session implementation yet. The Uniport headset collaboration is intended for compatibility testing.
+- **Collaboration:** institution-scoped WebSocket text room with provisioned-account identity, single-use 60-second connection tickets, one-time ticket consumption, tenant room checks and bounded message sizes. It does not synchronize clinical case state or exam actions.
+- **VR/AR:** an early WebXR/WebGL scene and browser capability checks are integrated. It remains a prototype: no clinically validated anatomy, controller-driven tasks, haptics, spatial competency assessment or real-headset acceptance testing has been completed. The Uniport headset collaboration is intended for compatibility testing.
 - **Privacy:** SQLite stores learner display names, fictional-case activity, and assessment event logs. Do not use real patient records.
 
 ## Local development
@@ -41,7 +41,7 @@ npm run dev
 
 Open the Vite URL shown in the terminal (normally `http://localhost:5173`). Vite proxies `/api` and `/ws` to `localhost:8000`.
 
-In development, token gates are open unless environment variables are set. For a controlled pilot, use separate strong `PILOT_ACCESS_TOKEN` and `EDUCATOR_ACCESS_TOKEN` values and set `APP_ENV=production`. These are shared pilot tokens, **not** per-user accounts or institutional SSO.
+Provisioned account login is available through `/api/auth/login`, `/api/auth/me` and `/api/auth/logout`; accounts must be created through the guarded offline administrator bootstrap/provisioning process. There is no public registration or self-service role assignment. Production educator endpoints require verified identity and role, and institution-owned content is scoped to the authenticated institution. Legacy pilot-token access is retained for compatibility; do not treat it as a substitute for account identity or institutional SSO. Review the identity migration and deployment guides before any real pilot.
 
 ## Optional language model
 
@@ -71,7 +71,7 @@ Copy `.env.example` to `.env`, replace all example secrets, configure the exact 
 - `POST /api/educator/exams`
 - `GET /api/educator/dashboard`
 - `POST /api/educator/exams/{id}/close`
-- `WS /ws/rooms/{room}` — basic text collaboration
+- `POST /api/auth/ws-ticket` — issue a short-lived, single-use WebSocket ticket for the signed-in account\n- `WS /ws/rooms/{room}?ticket=...` — institution-scoped text collaboration
 
 ## Release 1.3.0 changes
 
@@ -88,16 +88,16 @@ Copy `.env.example` to `.env`, replace all example secrets, configure the exact 
 
 ## Known limitations and next steps
 
-1. No individual student/educator accounts, password reset, institutional SSO, identity verification, or per-user educator audit attribution; shared pilot/educator secrets remain a controlled-pilot mechanism, not a production identity system.
+1. Provisioned individual learner/educator accounts, bearer sessions, role checks, institution boundaries and identity-backed audit attribution are implemented in the current draft security stack. Account recovery/password reset, institutional SSO, MFA, account administration UX, security review and deployment-secret/backup/restore validation remain outstanding.
 2. Scoring is based on transparent but limited demonstration checks; it is not validated against faculty marking or OSCE performance.
 3. Exam settings include duration and pass mark; pass/fail decisions must be reviewed and formally validated before operational use.
 4. The case registry is loaded from built-in cases plus educator-approved cases persisted in SQLite. Case approval/publishing remains an educator attestation and is not independent clinical certification.
 5. The source workflow accepts references and notes but does not crawl Google or external platforms, perform retrieval-augmented generation, verify URLs, or establish clinical evidence automatically.
 6. Imaging schematics are not real radiographs/CTs/ultrasounds. A validated synthetic image library and specialist review are required.
-7. The current VR/AR workspace is a compatibility scaffold, not a functional immersive clinical environment.
-8. No deployment or institutional approval has been completed. Frontend production compilation could not be verified because the npm registry was unreachable from this environment; the Docker frontend image is therefore not yet release-verified.
+7. The current VR/AR scene is an early functional WebXR/WebGL prototype, not a validated immersive clinical environment; test on actual target headsets and implement controller-driven clinical tasks before claiming headset readiness.
+8. Draft pull requests must be reviewed and merged in dependency order before the complete stack exists on `main`. Passing GitHub CI confirms the tested backend and frontend build jobs only; it does not prove deployment, clinical validity, privacy/legal approval, load resilience, or headset acceptance.
 
-See `docs/PRODUCT_SPECIFICATION.md`, `docs/AI_SOURCE_GOVERNANCE.md`, `docs/UNIPORT_VR_AR_TEST_PLAN.md`, and `docs/TEST_RESULTS.md`.
+See `docs/PRODUCT_SPECIFICATION.md`, `docs/DELIVERY_ROADMAP_AND_ACCEPTANCE.md`, `docs/AI_SOURCE_GOVERNANCE.md`, `docs/UNIPORT_VR_AR_TEST_PLAN.md`, and `docs/TEST_RESULTS.md`.
 
 
 ## AI Clinical Scenario Engine (1.1.1)
