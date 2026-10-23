@@ -641,7 +641,7 @@ def export_reports(request: Request):
  writer.writerow(['session_id','learner','case_id','mode','exam_id','created_at','status','score','rubric_version','critical_flags'])
  def csv_cell(value):
   text_value=str(value if value is not None else '')
-  return "'"+text_value if text_value.startswith(('=','+','-','@','\\t','\\r')) else text_value
+  return "'"+text_value if text_value.startswith(('=','+','-','@','\t','\r')) else text_value
  for row in rows:
   report=json.loads(row['report'] or '{}')
   # CSV contains only sessions within the caller's tenant and does not export event logs.
