@@ -78,6 +78,8 @@ def test_authenticated_learner_session_is_bound_to_account(tmp_path, monkeypatch
     monkeypatch.setenv("CORS_ORIGINS", "https://sim.example.edu")
 
     with TestClient(main.app) as client:
+        # Startup/test-client ordering must not leave the isolated DB without simulation tables.
+        main.init_db()
         login = client.post("/api/auth/login", json={
             "email": "learner@a.example", "password": "learner-password-long"})
         token = login.json()["access_token"]
