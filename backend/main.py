@@ -77,7 +77,7 @@ def init_db():
  CREATE TABLE IF NOT EXISTS cohorts(cohort_id TEXT PRIMARY KEY, name TEXT NOT NULL, institution_id TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS cohort_members(cohort_id TEXT NOT NULL REFERENCES cohorts(cohort_id) ON DELETE CASCADE, learner_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, added_at TEXT NOT NULL, PRIMARY KEY(cohort_id,learner_user_id));
  CREATE TABLE IF NOT EXISTS assignments(assignment_id TEXT PRIMARY KEY, title TEXT NOT NULL, institution_id TEXT NOT NULL, case_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('practice','exam')), cohort_id TEXT REFERENCES cohorts(cohort_id), learner_user_id TEXT REFERENCES users(user_id), due_at TEXT, rubric_version TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','closed')));
- CREATE TABLE IF NOT EXISTS rubric_versions(rubric_version TEXT PRIMARY KEY, institution_id TEXT, name TEXT NOT NULL, rubric_json TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS rubric_versions(rubric_id TEXT PRIMARY KEY, rubric_version TEXT NOT NULL, institution_id TEXT, name TEXT NOT NULL, rubric_json TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL);
  ''');
  # Safe additive migrations; never rebuild or discard existing pilot data.
  cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
@@ -244,7 +244,10 @@ def create_session(body:StartSession,request:Request):
  if body.mode not in ('practice','exam'): raise HTTPException(400,'Mode must be practice or exam.')
  case_id=body.case_id; exam_id=None
  if body.mode=='exam':
-  identity=scoped_identity(request); clause,params=tenant_clause(identity); c=conn(); ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"'+clause,(body.exam_code or '',*params)).fetchone(); c.close()
+  identity=scoped_identity(request)
+  if APP_ENV=='production' and (not identity or identity.get('role')!='learner'):
+   raise HTTPException(401,'Sign in with a provisioned learner account to join an examination.')
+  clause,params=tenant_clause(identity); c=conn(); ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"'+clause,(body.exam_code or '',*params)).fetchone(); c.close()
   if not ex: raise HTTPException(404,'Exam code is invalid or closed.')
   case_id=ex['case_id']; exam_id=ex['id']
  case_data=load_case(case_id,identity)
@@ -495,7 +498,7 @@ def create_exam(body:ExamCreate,request:Request):
  creator=identity['display_name'] if identity else body.creator
  rubric_version='rubric-v1.0.0'
  rubric={'version':rubric_version,'domains':['Communication and history','Severity and examination','Investigation selection and indication','Result interpretation','Differential diagnosis','Final diagnosis','Management and safety','Referral and follow-up'],'scoring_method':'formative keyword/evidence checks; not clinically validated','critical_flags_weighted_separately':True}
- c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,institution_id,creator_user_id,rubric_version) VALUES(?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),creator,identity.get('institution_id') if identity else None,identity.get('user_id') if identity else None,rubric_version)); c.execute('INSERT OR IGNORE INTO rubric_versions(rubric_version,institution_id,name,rubric_json,created_by_user_id,created_at) VALUES(?,?,?,?,?,?)',(rubric_version,identity.get('institution_id') if identity else None,'Default formative rubric v1.0.0',json.dumps(rubric),identity.get('user_id') if identity else 'legacy-development',now())); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
+ c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,institution_id,creator_user_id,rubric_version) VALUES(?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),creator,identity.get('institution_id') if identity else None,identity.get('user_id') if identity else None,rubric_version)); c.execute('INSERT OR IGNORE INTO rubric_versions(rubric_id,rubric_version,institution_id,name,rubric_json,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?)',((identity.get('institution_id') or 'legacy-development')+':'+rubric_version,rubric_version,identity.get('institution_id') if identity else None,'Default formative rubric v1.0.0',json.dumps(rubric),identity.get('user_id') if identity else 'legacy-development',now())); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
 @app.get('/api/learner/progress')
 def learner_progress(request: Request):
  check_access(request)
@@ -593,10 +596,13 @@ def export_reports(request: Request):
  c=conn(); rows=c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,report FROM sessions WHERE status="completed"'+clause+' ORDER BY id DESC LIMIT 1000',params).fetchall(); c.close()
  output=io.StringIO(newline=''); writer=csv.writer(output)
  writer.writerow(['session_id','learner','case_id','mode','exam_id','created_at','status','score','rubric_version','critical_flags'])
+ def csv_cell(value):
+  text_value=str(value if value is not None else '')
+  return "'"+text_value if text_value.startswith(('=','+','-','@','\\t','\\r')) else text_value
  for row in rows:
   report=json.loads(row['report'] or '{}')
   # CSV contains only sessions within the caller's tenant and does not export event logs.
-  writer.writerow([row['id'],row['learner'],row['case_id'],row['mode'],row['exam_id'],row['created_at'],row['status'],report.get('score',''),report.get('rubric_version','rubric-v1.0.0'),'; '.join(report.get('critical_flags',[]))])
+  writer.writerow([csv_cell(row['id']),csv_cell(row['learner']),csv_cell(row['case_id']),csv_cell(row['mode']),csv_cell(row['exam_id']),csv_cell(row['created_at']),csv_cell(row['status']),csv_cell(report.get('score','')),csv_cell(report.get('rubric_version','rubric-v1.0.0')),csv_cell('; '.join(report.get('critical_flags',[])))])
  return Response(content=output.getvalue(),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="bestie-clinical-sim-reports.csv"','Cache-Control':'no-store'})
 
 @app.get('/api/educator/dashboard')
