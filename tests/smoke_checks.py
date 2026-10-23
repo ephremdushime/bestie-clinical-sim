@@ -55,6 +55,9 @@ main.EDUCATOR_TOKEN = 'e' * 40
 os.environ['CORS_ORIGINS'] = 'https://sim.example.edu'
 main.validate_production_configuration()
 assert client.post('/api/sessions', json={'learner':'No token','case_id':'malaria-001','mode':'practice'}).status_code == 401
+assert client.get('/api/educator/dashboard').status_code == 401
+assert client.get('/api/educator/dashboard', headers={'X-Pilot-Token':'p' * 40}).status_code == 401
+assert client.get('/api/educator/dashboard', headers={'X-Educator-Token':'e' * 40}).status_code == 200
 main.PILOT_TOKEN = 'test-pilot-secret'
 secure = client.post('/api/sessions', headers={'X-Pilot-Token':'test-pilot-secret'}, json={'learner':'Session owner','case_id':'malaria-001','mode':'practice'})
 assert secure.status_code == 200, secure.text
