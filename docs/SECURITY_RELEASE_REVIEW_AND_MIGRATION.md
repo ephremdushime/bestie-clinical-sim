@@ -8,6 +8,7 @@
 | `GET /api/cases` | Public-safe built-in summaries; authenticated users additionally see global and same-institution approved cases | No diagnosis, fixed facts or rubric in summary. Test institution visibility. |
 | `POST /api/sessions` | Learner/pilot access; exam code checked against institution | Exam response omits hidden case ID/title and vital-sign detail. Legacy pilot-token compatibility remains a migration risk. |
 | `GET /api/sessions/{id}/resume` | Session owner; educator access is subject to same-institution scope | Returns safe session state; controlled-exam response is redacted. |
+| `PUT /api/sessions/{id}/draft` | Active session owner only | Private work-in-progress autosave; blocked after submission or exam expiry and never returned to another learner/educator. |
 | `POST /api/sessions/{id}/chat` | Session owner | Must reject inactive, expired or foreign sessions; no hidden diagnosis passed to the patient model. |
 | `POST /api/sessions/{id}/investigations` | Session owner | Fixed server-side results only; unsupported tests do not fabricate findings. |
 | `POST /api/sessions/{id}/finish` | Session owner | Exam returns a pending-review receipt only; full report stays server-side. |
