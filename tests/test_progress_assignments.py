@@ -133,3 +133,15 @@ def test_exam_resume_does_not_return_hidden_diagnosis_or_report(tmp_path, monkey
         assert "uncomplicated malaria" not in serialized
         assert "hidden_case_diagnosis" not in serialized
         assert "score" not in resumed.json().get("report", {})
+
+
+def test_suspended_institution_invalidates_existing_bearer_sessions(tmp_path, monkeypatch):
+    _, _, _, _ = provision(tmp_path / "suspended.db", monkeypatch)
+    with TestClient(main.app) as client:
+        learner = login(client, "learner@a.example", "learner-password-long")
+        assert client.get("/api/auth/me", headers=learner).status_code == 200
+        with sqlite3.connect(tmp_path / "suspended.db") as db:
+            db.execute("UPDATE institutions SET status='suspended' WHERE institution_id='inst-a'")
+            db.commit()
+        assert client.get("/api/auth/me", headers=learner).status_code == 401
+        assert client.get("/api/learner/progress", headers=learner).status_code == 401
