@@ -211,9 +211,13 @@ def health(): return {'status':'ok','version':'1.3.0','cases':len(CASES),'llm_co
 def cases(request: Request):
  identity=current_identity_user(request); visible={c['id']:c for c in CASES.values()}
  if identity:
-  clause,params=tenant_clause(identity)
+  if identity.get('role')=='platform_admin':
+   query='SELECT payload FROM approved_cases'; params=()
+  else:
+   query='SELECT payload FROM approved_cases WHERE institution_id IS NULL OR institution_id=?'
+   params=(identity.get('institution_id'),)
   c=conn()
-  rows=c.execute('SELECT payload FROM approved_cases WHERE institution_id IS NULL'+(' OR institution_id=?' if clause else ''),params).fetchall()
+  rows=c.execute(query,params).fetchall()
   c.close()
   for row in rows:
    item=json.loads(row['payload']); visible[item['id']]=item
