@@ -91,9 +91,34 @@ def save_event(c,sid,event):
  row=c.execute('SELECT events FROM sessions WHERE id=?',(sid,)).fetchone(); ev=json.loads(row['events'] or '[]'); ev.append({'at':now(),**event}); c.execute('UPDATE sessions SET events=? WHERE id=?',(json.dumps(ev),sid))
 def check_access(request:Request, educator=False):
  if APP_ENV!='production': return
- expected=EDUCATOR_TOKEN if educator else PILOT_TOKEN
- supplied=request.headers.get('X-Educator-Token' if educator else 'X-Pilot-Token','')
- if not expected or not supplied or not hmac.compare_digest(expected,supplied): raise HTTPException(401,'Valid access token required.')
+ if educator:
+  # Educator actions use individual, revocable identity sessions rather than a shared secret.
+  authorization=request.headers.get('Authorization','')
+  scheme, separator, token=authorization.partition(' ')
+  if not separator or scheme.lower()!='bearer' or not token.strip():
+   raise HTTPException(401,'Valid educator bearer session required.')
+  from identity import init_identity_schema, resolve_session
+  db=conn()
+  try:
+   init_identity_schema(db)
+   user=resolve_session(db,token.strip())
+   db.commit()
+  finally:
+   db.close()
+  if not user or user['role'] not in ('educator','institution_admin','platform_admin'):
+   raise HTTPException(403,'An active educator or administrator account is required.')
+  request.state.identity_user={key:user[key] for key in ('user_id','institution_id','display_name','role')}
+  return
+ expected=PILOT_TOKEN
+ supplied=request.headers.get('X-Pilot-Token','')
+ if not expected or not supplied or not hmac.compare_digest(expected,supplied):
+  raise HTTPException(401,'Valid access token required.')
+
+def educator_actor(request:Request, fallback_name:str='Educator') -> dict:
+ user=getattr(request.state,'identity_user',None)
+ if user: return user
+ # Development-only mode remains available for local demonstrations and tests.
+ return {'user_id':None,'institution_id':None,'display_name':fallback_name,'role':'educator'}
 def check_session_access(request:Request, session_row):
  # Per-session secret prevents another pilot user from guessing a numeric session ID.
  if APP_ENV!='production': return
@@ -278,7 +303,8 @@ def list_case_drafts(request: Request):
 def review_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
  check_access(request,True); c=conn(); row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
- d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':body.reviewer,'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
+ actor=educator_actor(request,body.reviewer)
+ d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
 
 @app.post('/api/educator/case-drafts/{draft_id}/approve-and-publish')
 def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
@@ -295,9 +321,10 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  if any(any(p in str(test.get(field,'')).lower() for p in placeholders) for test in case['investigations'].values() for field in ('result','interpretation')):
   c.close(); raise HTTPException(422,'Investigation results and interpretations contain placeholders. Complete them before publishing.')
  if not body.review_notes.strip(): c.close(); raise HTTPException(422,'A clinical review note is required.')
- case['version']='1.0.0'; case['status']='educator_approved'; case['approved_by']=body.reviewer; case['approved_at']=now(); case['review_notes']=body.review_notes
- c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),body.reviewer,case['approved_at']))
- d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':body.reviewer,'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
+ actor=educator_actor(request,body.reviewer)
+ case['version']='1.0.0'; case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
+ c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at']))
+ d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
  return {'status':d['status'],'case_id':case['id'],'version':case['version'],'message':'Published following educator attestation; this is not independent clinical certification.'}
 
 @app.post('/api/educator/case-draft')
