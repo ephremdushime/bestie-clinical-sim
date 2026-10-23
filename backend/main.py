@@ -157,6 +157,9 @@ def check_session_access(request:Request, session_row):
   if not identity: raise HTTPException(401,'Sign in with the account that owns this session.')
   if identity['user_id'] != owner and identity['role'] not in ('educator','institution_admin','platform_admin'):
    raise HTTPException(403,'This learner session belongs to another account.')
+  resource_institution=session_row['institution_id'] if 'institution_id' in session_row.keys() else None
+  if identity['role'] != 'platform_admin' and resource_institution and identity.get('institution_id') != resource_institution:
+   raise HTTPException(404,'Session not found.')
   return
  if APP_ENV!='production': return
  expected_hash=session_row['session_token_hash'] if 'session_token_hash' in session_row.keys() else None
@@ -352,7 +355,7 @@ def review_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
 
 @app.post('/api/educator/case-drafts/{draft_id}/approve-and-publish')
 def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
- check_access(request,True); c=conn(); row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
+ check_access(request,True); identity=scoped_identity(request); clause,params=tenant_clause(identity); c=conn(); row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?'+clause,(draft_id,*params)).fetchone()
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
  d=json.loads(row['payload']); case=d.get('case',{})
  if not case.get('title') or not case.get('diagnosis') or not isinstance(case.get('investigations'),dict):
@@ -368,7 +371,7 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  actor=educator_actor(request,body.reviewer)
  case['version']='1.0.0'; case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
  c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at']))
- d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
+ d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?'+clause,(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
  return {'status':d['status'],'case_id':case['id'],'version':case['version'],'message':'Published following educator attestation; this is not independent clinical certification.'}
 
 @app.post('/api/educator/case-draft')
@@ -418,17 +421,43 @@ def close_exam(exam_id:int,request:Request):
 rooms={}
 @app.websocket('/ws/rooms/{room}')
 async def room(ws:WebSocket,room:str):
+ identity=None
  if APP_ENV=='production':
-  tok=ws.query_params.get('token','')
-  if not PILOT_TOKEN or not hmac.compare_digest(tok,PILOT_TOKEN): await ws.close(code=1008); return
+  # Browser WebSockets cannot set Authorization headers. Accept a provisioned bearer
+  # session in the query string, but never log or echo it. Room names are tenant IDs.
+  token=ws.query_params.get('token','')
+  if not token or len(token)>512:
+   await ws.close(code=1008); return
+  db=conn()
+  try:
+   from identity import init_identity_schema, resolve_session
+   init_identity_schema(db); resolved=resolve_session(db,token); db.commit()
+   identity=({key:resolved[key] for key in ('user_id','institution_id','display_name','role')} if resolved else None)
+  finally: db.close()
+  if not identity or not identity.get('institution_id') and identity.get('role')!='platform_admin':
+   await ws.close(code=1008); return
+  if identity['role']!='platform_admin' and room!=identity.get('institution_id'):
+   await ws.close(code=1008); return
+  if identity['role'] not in ('learner','educator','institution_admin','platform_admin'):
+   await ws.close(code=1008); return
+ elif room not in ('pilot','demo') and not room.replace('-','').replace('_','').isalnum():
+  await ws.close(code=1008); return
+ if len(room)>80 or len(rooms.get(room,[]))>=100:
+  await ws.close(code=1013); return
  await ws.accept(); rooms.setdefault(room,[]).append(ws)
  try:
   await ws.send_json({'type':'history','messages':[]})
   while True:
-   data=await ws.receive_json(); msg={'type':'message','name':str(data.get('name','Participant'))[:80],'role':str(data.get('role','student'))[:20],'text':str(data.get('text',''))[:1200],'created_at':now()}
+   data=await ws.receive_json()
+   if not isinstance(data,dict): continue
+   text_value=str(data.get('text','')).strip()
+   if not text_value: continue
+   if len(text_value)>1200: text_value=text_value[:1200]
+   msg={'type':'message','name':(identity['display_name'] if identity else str(data.get('name','Participant')))[:80], 'role':(identity['role'] if identity else str(data.get('role','student')))[:20], 'text':text_value,'created_at':now()}
    for peer in list(rooms.get(room,[])):
     try: await peer.send_json(msg)
     except Exception: pass
  except WebSocketDisconnect: pass
  finally:
   if ws in rooms.get(room,[]): rooms[room].remove(ws)
+  if not rooms.get(room): rooms.pop(room,None)
