@@ -180,3 +180,27 @@ def test_csv_export_neutralizes_spreadsheet_formula_prefixes(tmp_path, monkeypat
         assert response.status_code == 200
         assert "'=HYPERLINK(" in response.text
         assert '=HYPERLINK(' not in response.text
+
+def test_exam_assignment_creates_code_for_assigned_cohort(tmp_path, monkeypatch):
+    learner_id, _, _, _ = provision(tmp_path / "assignment-exam.db", monkeypatch)
+    with TestClient(main.app) as client:
+        educator = login(client, "educator@a.example", "educator-password-long")
+        learner = login(client, "learner@a.example", "learner-password-long")
+        cohort = client.post("/api/educator/cohorts", headers=educator, json={"name": "Assessment cohort"})
+        assert cohort.status_code == 200, cohort.text
+        added = client.post("/api/educator/cohorts/" + cohort.json()["cohort_id"] + "/members",
+                            headers=educator, json={"learner_user_id": learner_id})
+        assert added.status_code == 200, added.text
+        assignment = client.post("/api/educator/assignments", headers=educator, json={
+            "title": "Controlled assessment", "case_id": "malaria-001",
+            "mode": "exam", "cohort_id": cohort.json()["cohort_id"]})
+        assert assignment.status_code == 200, assignment.text
+        code = assignment.json()["exam_code"]
+        assert code
+        rows = client.get("/api/learner/assignments", headers=learner).json()["assignments"]
+        visible = next(row for row in rows if row["assignment_id"] == assignment.json()["assignment_id"])
+        assert visible["exam_code"] == code
+        joined = client.post("/api/sessions", headers=learner, json={
+            "learner": "Learner A", "case_id": "malaria-001", "mode": "exam", "exam_code": code})
+        assert joined.status_code == 200, joined.text
+        assert joined.json().get("case_id") is None
