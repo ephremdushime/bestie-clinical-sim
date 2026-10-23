@@ -120,14 +120,14 @@ export default function XRClinicalScene({ caseTitle = 'Fictional patient encount
       const desktopView = new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
       const desktopProjection = new Float32Array([1.1,0,0,0, 0,1.5,0,0, 0,0,-1.002,-1, 0,0,-.201,0]);
       const renderDesktop = () => {
-        if (disposed || session) return;
+        if (disposed || runtimeRef.current?.session) return;
         const width = Math.max(1,canvas.clientWidth), height = Math.max(1,canvas.clientHeight);
         if (canvas.width !== width || canvas.height !== height) { canvas.width=width; canvas.height=height; }
         draw(desktopProjection,desktopView,{x:0,y:0,width:canvas.width,height:canvas.height});
         raf = requestAnimationFrame(renderDesktop);
       };
       renderDesktop();
-      runtimeRef.current = { gl, draw, renderDesktop };
+      runtimeRef.current = { gl, draw, renderDesktop, stop: () => cancelAnimationFrame(raf), resume: renderDesktop, session: null };
       if (navigator.xr?.isSessionSupported) {
         navigator.xr.isSessionSupported('immersive-vr').then(value => { if (!disposed) { setXrAvailable(!!value); setStatus(value ? '3D preview ready · immersive VR available' : '3D preview ready · immersive VR not reported'); } }).catch(() => { if (!disposed) setStatus('3D preview ready · XR capability unavailable'); });
       } else setStatus('3D preview ready · this browser does not expose WebXR');
@@ -139,7 +139,7 @@ export default function XRClinicalScene({ caseTitle = 'Fictional patient encount
     }
     return () => {
       disposed = true; cancelAnimationFrame(raf);
-      if (session) session.end().catch(()=>{});
+      if (runtimeRef.current?.session) runtimeRef.current.session.end().catch(()=>{});
       runtimeRef.current?.cleanup?.();
       runtimeRef.current = null;
     };
@@ -153,6 +153,9 @@ export default function XRClinicalScene({ caseTitle = 'Fictional patient encount
       const gl = runtimeRef.current?.gl, draw = runtimeRef.current?.draw;
       if (!gl || !draw) throw new Error('The 3D renderer is not ready yet.');
       const nextSession = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor','bounded-floor','hand-tracking'] });
+      runtimeRef.current.session = nextSession;
+      runtimeRef.current.stop();
+      await gl.makeXRCompatible();
       const layer = new XRWebGLLayer(nextSession,gl);
       await nextSession.updateRenderState({ baseLayer: layer });
       const refSpace = await nextSession.requestReferenceSpace('local-floor').catch(() => nextSession.requestReferenceSpace('local'));
@@ -167,11 +170,11 @@ export default function XRClinicalScene({ caseTitle = 'Fictional patient encount
           draw(eye.projectionMatrix,eye.transform.inverse.matrix,vp);
         }
       };
-      nextSession.addEventListener('end',() => { setBusy(false); setStatus('VR session ended · 3D preview remains available'); },{once:true});
-      nextSession.addEventListener('end',() => { if (runtimeRef.current) { /* lifecycle event: render loop resumes on next frame */ } },{once:true});
+      nextSession.addEventListener('end',() => { if (runtimeRef.current) { runtimeRef.current.session = null; runtimeRef.current.resume(); } setBusy(false); setStatus('VR session ended · 3D preview remains available'); },{once:true});
       nextSession.requestAnimationFrame(onFrame);
       setStatus('Immersive VR session active · use the headset controls to exit');
     } catch (error) {
+      if (runtimeRef.current?.session) { runtimeRef.current.session.end().catch(()=>{}); runtimeRef.current.session = null; runtimeRef.current.resume?.(); }
       setStatus(error.message || 'Could not start the immersive VR session.');
       setBusy(false);
     }
