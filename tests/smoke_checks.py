@@ -83,6 +83,28 @@ assert client.post(f"/api/sessions/{expired_id}/chat", headers=expired_headers, 
 expired_submission = client.post(f"/api/sessions/{expired_id}/finish", headers=expired_headers, json={'differential':['trauma'],'final_diagnosis':'Trauma','management':['Urgent escalation'],'reflection':'Expiry test'})
 assert expired_submission.status_code == 200, expired_submission.text
 assert expired_submission.json()['time_expired'] is True
+# Production educator boundary: pilot credentials must never authorize educator APIs.
+main.APP_ENV = 'production'
+pilot_headers = {'X-Pilot-Token': 'test-pilot-secret'}
+educator_headers = {'X-Educator-Token': 'e' * 40}
+assert client.get('/api/educator/dashboard', headers=pilot_headers).status_code == 401
+assert client.post('/api/educator/exams', headers=pilot_headers, json={
+    'title':'Unauthorized exam creation', 'case_id':'malaria-001'
+}).status_code == 401
+assert client.get('/api/educator/dashboard', headers=educator_headers).status_code == 200
+assert client.post('/api/educator/exams', headers=educator_headers, json={
+    'title':'Authorized educator exam', 'case_id':'malaria-001'
+}).status_code == 200
+# Exam submissions must not reveal diagnosis, scoring, rubric feedback or pass-threshold state.
+assert exam_finish.json()['status'] == 'submitted_pending_educator_review'
+for forbidden in ('hidden_case_diagnosis', 'score', 'domains', 'critical_flags', 'threshold_status', 'demo_threshold'):
+    assert forbidden not in exam_finish.json(), (forbidden, exam_finish.json())
+assert 'diagnosis' not in str(exam_finish.json()).lower()
+# Session secrets are mandatory for both chat and investigation access in production.
+assert client.post(f"/api/sessions/{secure_data['session_id']}/investigations",
+                   headers={'X-Pilot-Token':'test-pilot-secret'},
+                   json={'test_id':'malaria-rdt','indication':'Fever in an endemic setting'}).status_code == 401
+main.APP_ENV = 'development'
 main.APP_ENV = 'development'
 
 case_draft = client.post('/api/educator/case-draft', json={'topic':'Pediatric dehydration','specialty':'Pediatrics','source_references':['educator supplied protocol']})
