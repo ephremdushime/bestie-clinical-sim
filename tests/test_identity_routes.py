@@ -36,6 +36,7 @@ def test_educator_routes_require_provisioned_educator_identity(tmp_path, monkeyp
     monkeypatch.setattr(main, "PILOT_TOKEN", "p" * 40)
     monkeypatch.setattr(main, "EDUCATOR_TOKEN", "e" * 40)
     monkeypatch.setenv("CORS_ORIGINS", "https://sim.example.edu")
+    main.init_db()
 
     with TestClient(main.app) as client:
         learner_login = client.post("/api/auth/login", json={
