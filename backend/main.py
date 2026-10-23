@@ -359,7 +359,8 @@ def finish(sid:int,body:Finish,request:Request):
  if s['status']!='active': c.close(); raise HTTPException(409,'Session already submitted.')
  events=json.loads(s['events'] or '[]'); report=make_report(case_for_session(s),events,body); report['mode']=s['mode']; report['case_id']=s['case_id']; report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
  if s['mode']=='exam' and s['exam_id']:
-  ex=c.execute('SELECT pass_mark FROM exams WHERE id=?',(s['exam_id'],)).fetchone(); report['demo_threshold']=int(ex['pass_mark']) if ex else None; report['threshold_status']=('critical_review_required' if report['critical_flags'] else ('meets_demo_threshold' if report['score']>=int(ex['pass_mark']) else 'below_demo_threshold')) if ex else 'not_set'
+  ex=c.execute('SELECT pass_mark,rubric_version FROM exams WHERE id=?',(s['exam_id'],)).fetchone(); report['rubric_version']=ex['rubric_version'] if ex else 'rubric-v1.0.0'; report['demo_threshold']=int(ex['pass_mark']) if ex else None; report['threshold_status']=('critical_review_required' if report['critical_flags'] else ('meets_demo_threshold' if report['score']>=int(ex['pass_mark']) else 'below_demo_threshold')) if ex else 'not_set'
+ else: report['rubric_version']='rubric-v1.0.0'
  c.execute('UPDATE sessions SET status="completed",report=? WHERE id=?',(json.dumps(report),sid)); save_event(c,sid,{'type':'session_finished','score':report['score']}); c.commit(); c.close()
  # Controlled exams retain the full report for educator review, but the student response
  # must not reveal the hidden diagnosis, score, rubric decisions or pass-threshold result.
@@ -483,7 +484,9 @@ def create_exam(body:ExamCreate,request:Request):
  code=secrets.token_urlsafe(5).replace('-','').replace('_','').upper()[:8]
  identity=scoped_identity(request)
  creator=identity['display_name'] if identity else body.creator
- c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),creator,identity.get('institution_id') if identity else None,identity.get('user_id') if identity else None)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
+ rubric_version='rubric-v1.0.0'
+ rubric={'version':rubric_version,'domains':['Communication and history','Severity and examination','Investigation selection and indication','Result interpretation','Differential diagnosis','Final diagnosis','Management and safety','Referral and follow-up'],'scoring_method':'formative keyword/evidence checks; not clinically validated','critical_flags_weighted_separately':True}
+ c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,institution_id,creator_user_id,rubric_version) VALUES(?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),creator,identity.get('institution_id') if identity else None,identity.get('user_id') if identity else None,rubric_version)); c.execute('INSERT OR IGNORE INTO rubric_versions(rubric_version,institution_id,name,rubric_json,created_by_user_id,created_at) VALUES(?,?,?,?,?,?)',(rubric_version,identity.get('institution_id') if identity else None,'Default formative rubric v1.0.0',json.dumps(rubric),identity.get('user_id') if identity else 'legacy-development',now())); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
 @app.get('/api/learner/progress')
 def learner_progress(request: Request):
  check_access(request)
