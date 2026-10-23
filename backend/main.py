@@ -76,7 +76,7 @@ def init_db():
  CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT, institution_id TEXT);
  CREATE TABLE IF NOT EXISTS cohorts(cohort_id TEXT PRIMARY KEY, name TEXT NOT NULL, institution_id TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL);
  CREATE TABLE IF NOT EXISTS cohort_members(cohort_id TEXT NOT NULL REFERENCES cohorts(cohort_id) ON DELETE CASCADE, learner_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, added_at TEXT NOT NULL, PRIMARY KEY(cohort_id,learner_user_id));
- CREATE TABLE IF NOT EXISTS assignments(assignment_id TEXT PRIMARY KEY, title TEXT NOT NULL, institution_id TEXT NOT NULL, case_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('practice','exam')), cohort_id TEXT REFERENCES cohorts(cohort_id), learner_user_id TEXT REFERENCES users(user_id), due_at TEXT, rubric_version TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','closed')));
+ CREATE TABLE IF NOT EXISTS assignments(assignment_id TEXT PRIMARY KEY, title TEXT NOT NULL, institution_id TEXT NOT NULL, case_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('practice','exam')), cohort_id TEXT REFERENCES cohorts(cohort_id), learner_user_id TEXT REFERENCES users(user_id), exam_id INTEGER REFERENCES exams(id), due_at TEXT, rubric_version TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','closed')));
  CREATE TABLE IF NOT EXISTS rubric_versions(rubric_id TEXT PRIMARY KEY, rubric_version TEXT NOT NULL, institution_id TEXT, name TEXT NOT NULL, rubric_json TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL);
  ''');
  # Safe additive migrations; never rebuild or discard existing pilot data.
@@ -91,6 +91,8 @@ def init_db():
  draft_cols={row['name'] for row in c.execute('PRAGMA table_info(case_drafts)')}
  if 'institution_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN institution_id TEXT')
  if 'creator_user_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN creator_user_id TEXT')
+ assignment_cols={row['name'] for row in c.execute('PRAGMA table_info(assignments)')}
+ if 'exam_id' not in assignment_cols: c.execute('ALTER TABLE assignments ADD COLUMN exam_id INTEGER')
  approved_cols={row['name'] for row in c.execute('PRAGMA table_info(approved_cases)')}
  if 'institution_id' not in approved_cols: c.execute('ALTER TABLE approved_cases ADD COLUMN institution_id TEXT')
  c.commit(); c.close()
@@ -510,9 +512,9 @@ def learner_progress(request: Request):
  completed=[r for r in rows if r['status']=='completed']
  practice=sum(1 for r in completed if r['mode']=='practice')
  exams=sum(1 for r in completed if r['mode']=='exam')
- assignments=c.execute('''SELECT a.assignment_id,a.title,a.case_id,a.mode,a.due_at,a.rubric_version,a.created_at,a.status,
-   (SELECT COUNT(*) FROM sessions s WHERE s.owner_user_id=? AND s.case_id=a.case_id AND s.status='completed' AND s.mode=a.mode) AS completed
-   FROM assignments a LEFT JOIN cohort_members cm ON cm.cohort_id=a.cohort_id
+ assignments=c.execute('''SELECT a.assignment_id,a.title,a.case_id,a.mode,a.due_at,a.rubric_version,a.created_at,a.status,e.code AS exam_code,
+   (SELECT COUNT(*) FROM sessions s WHERE s.owner_user_id=? AND s.case_id=a.case_id AND s.status='completed' AND s.mode=a.mode AND s.created_at>=a.created_at) AS completed
+   FROM assignments a LEFT JOIN cohort_members cm ON cm.cohort_id=a.cohort_id LEFT JOIN exams e ON e.id=a.exam_id
    WHERE a.institution_id=? AND a.status='active' AND (a.learner_user_id=? OR cm.learner_user_id=?)
    ORDER BY a.created_at DESC LIMIT 100''',(identity['user_id'],identity.get('institution_id'),identity['user_id'],identity['user_id'])).fetchall()
  c.close()
@@ -575,10 +577,16 @@ def create_assignment(body: dict, request: Request):
   target=c.execute("SELECT user_id FROM users WHERE user_id=? AND institution_id=? AND role='learner' AND status='active'",(learner_id,inst)).fetchone()
  if not target: c.close(); raise HTTPException(404,'Assignment target not found in this institution.')
  rubric_version='rubric-v1.0.0'
- assignment_id='assignment-'+secrets.token_hex(8)
- c.execute('INSERT INTO assignments(assignment_id,title,institution_id,case_id,mode,cohort_id,learner_user_id,due_at,rubric_version,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(assignment_id,title,inst,case_id,mode,cohort_id,learner_id,due_at,rubric_version,identity['user_id'],now()))
+ assignment_id='assignment-'+secrets.token_hex(8); exam_id=None; exam_code=None
+ if mode=='exam':
+  if len(title)>120: c.close(); raise HTTPException(422,'Exam assignment titles must be at most 120 characters.')
+  exam_code=secrets.token_urlsafe(5).replace('-','').replace('_','').upper()[:8]
+  cur=c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,institution_id,creator_user_id,rubric_version) VALUES(?,?,?,?,?,?,?,?,?,?)',(exam_code,title,case_id,20,70,now(),identity['display_name'],inst,identity['user_id'],rubric_version)); exam_id=cur.lastrowid
+  rubric={'version':rubric_version,'domains':['Communication and history','Severity and examination','Investigation selection and indication','Result interpretation','Differential diagnosis','Final diagnosis','Management and safety','Referral and follow-up'],'scoring_method':'formative keyword/evidence checks; not clinically validated','critical_flags_weighted_separately':True}
+  c.execute('INSERT OR IGNORE INTO rubric_versions(rubric_id,rubric_version,institution_id,name,rubric_json,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?)',(inst+':'+rubric_version,rubric_version,inst,'Default formative rubric v1.0.0',json.dumps(rubric),identity['user_id'],now()))
+ c.execute('INSERT INTO assignments(assignment_id,title,institution_id,case_id,mode,cohort_id,learner_user_id,exam_id,due_at,rubric_version,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(assignment_id,title,inst,case_id,mode,cohort_id,learner_id,exam_id,due_at,rubric_version,identity['user_id'],now()))
  c.commit(); c.close()
- return {'assignment_id':assignment_id,'title':title,'institution_id':inst,'case_id':case_id,'mode':mode,'cohort_id':cohort_id,'learner_user_id':learner_id,'due_at':due_at,'rubric_version':rubric_version,'status':'active'}
+ return {'assignment_id':assignment_id,'title':title,'institution_id':inst,'case_id':case_id,'mode':mode,'cohort_id':cohort_id,'learner_user_id':learner_id,'exam_id':exam_id,'exam_code':exam_code,'due_at':due_at,'rubric_version':rubric_version,'status':'active'}
 
 @app.get('/api/educator/assignments')
 def list_assignments(request: Request):
