@@ -525,6 +525,41 @@ def learner_assignments(request: Request):
  result=learner_progress(request)
  return {'assignments':result['assignments']}
 
+@app.get('/api/admin/users')
+def admin_list_users(request: Request):
+ check_access(request,True); identity=scoped_identity(request)
+ if not identity or identity.get('role') not in ('institution_admin','platform_admin'):
+  raise HTTPException(403,'Institution or platform administrator account required.')
+ clause,params=tenant_clause(identity,'institution_id')
+ db=conn()
+ rows=db.execute('SELECT user_id,institution_id,display_name,role,status,created_at,updated_at FROM users WHERE 1=1'+clause+' ORDER BY display_name LIMIT 500',params).fetchall()
+ db.close()
+ return {'users':[dict(row) for row in rows]}
+
+@app.patch('/api/admin/users/{target_user_id}/status')
+def admin_set_user_status(target_user_id: str, body: dict, request: Request):
+ check_access(request,True); actor=scoped_identity(request)
+ if not actor or actor.get('role') not in ('institution_admin','platform_admin'):
+  raise HTTPException(403,'Institution or platform administrator account required.')
+ status=str(body.get('status','')).strip()
+ if status not in ('active','disabled','locked'):
+  raise HTTPException(422,'Status must be active, disabled, or locked.')
+ if target_user_id==actor['user_id'] and status!='active':
+  raise HTTPException(409,'Administrators cannot disable their own account in this workflow.')
+ db=conn(); target=db.execute('SELECT user_id,institution_id,role,status FROM users WHERE user_id=?',(target_user_id,)).fetchone()
+ if not target:
+  db.close(); raise HTTPException(404,'User not found.')
+ if actor['role']=='institution_admin':
+  if target['institution_id']!=actor.get('institution_id') or target['role'] not in ('learner','educator'):
+   db.close(); raise HTTPException(404,'User not found.')
+ from identity import write_audit_event
+ db.execute('UPDATE users SET status=?,updated_at=? WHERE user_id=?',(status,now(),target_user_id))
+ if status!='active':
+  db.execute('UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL',(now(),target_user_id))
+ write_audit_event(db,actor_user_id=actor['user_id'],institution_id=target['institution_id'],action='admin.user_status_changed',resource_type='user',resource_id=target_user_id,outcome='success',metadata_json=json.dumps({'previous_status':target['status'],'new_status':status}))
+ db.commit(); db.close()
+ return {'user_id':target_user_id,'status':status,'sessions_revoked':status!='active'}
+
 @app.post('/api/educator/cohorts')
 def create_cohort(body: dict, request: Request):
  check_access(request,True); identity=scoped_identity(request)
