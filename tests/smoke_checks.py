@@ -1,4 +1,4 @@
-"""Backend API smoke tests. Run from backend/: python ../tests/smoke_test.py"""
+"""Backend API smoke tests. Run from the repository root: python tests/smoke_checks.py"""
 import os, tempfile, sys
 from pathlib import Path
 
