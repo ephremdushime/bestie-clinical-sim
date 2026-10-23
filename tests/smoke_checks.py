@@ -42,6 +42,7 @@ exam_finish = client.post(f"/api/sessions/{join.json()['session_id']}/finish", j
 assert exam_finish.status_code == 200, exam_finish.text
 assert exam_finish.json()['status'] == 'submitted_pending_educator_review'
 assert 'hidden_case_diagnosis' not in exam_finish.json() and 'score' not in exam_finish.json()
+assert 'case_id' not in exam_finish.json(), exam_finish.json()
 assert 'diagnosis' not in str(exam_finish.json()).lower()
 # Production mode must reject requests when the access secret is not configured/supplied.
 main.APP_ENV = 'production'
