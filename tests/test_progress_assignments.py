@@ -178,7 +178,7 @@ def test_csv_export_neutralizes_spreadsheet_formula_prefixes(tmp_path, monkeypat
             "management": ["follow-up", "urgent referral"], "reflection": "review results"})
         response = client.get("/api/educator/reports.csv", headers=educator)
         assert response.status_code == 200
-        assert "\n'=HYPERLINK(" in response.text
+        assert ",'=HYPERLINK(" in response.text
 
 def test_exam_assignment_creates_code_for_assigned_cohort(tmp_path, monkeypatch):
     learner_id, _, _, _ = provision(tmp_path / "assignment-exam.db", monkeypatch)
