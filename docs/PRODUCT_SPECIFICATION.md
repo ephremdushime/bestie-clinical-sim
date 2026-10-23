@@ -21,7 +21,7 @@ An interactive clinical education and assessment platform that helps learners pr
 - The public case list contains no hidden diagnosis or fixed case facts.
 - No hints are offered in exam mode. Initial vitals are not displayed in the patient panel; learners may ask for information through the encounter.
 - The API refuses new chat/investigation actions after the exam duration elapses. Learners can submit their current work after time expires.
-- The educator dashboard lists sessions, reports and event logs. This is a prototype gate and not a secure exam platform: shared codes/tokens can be passed to others, and identity is not verified.
+- The educator dashboard lists institution-scoped sessions, reports and event logs. Provisioned account identity, role checks, institution boundaries and learner session ownership are implemented in the current draft security stack; controlled-exam confidentiality and migration acceptance tests remain release gates. Shared exam codes can still be passed to others, so the platform does not yet establish the student's real-world identity.
 
 ## Clinical encounter flow
 
@@ -55,12 +55,12 @@ Communication/history, severity/examination, investigation choice and indication
 
 ## Immersive roadmap
 
-The current WebXR capability check and headset-style interface are scaffolding only. Future work with Uniport should validate browser/headset compatibility, controller input, patient avatar representation, accessibility, motion comfort, performance, and offline/network behavior. Clinical content should remain presentation-independent so browser, VR and AR clients share the same case facts and scoring engine.
+The current build integrates an illustrative WebGL/WebXR scene with a desktop fallback and browser capability checks. It remains a prototype, not a validated immersive clinical environment. Future work with Uniport must validate browser/headset compatibility, actual immersive session entry, controller input, patient avatar representation, accessibility, motion comfort, performance, and offline/network behavior. Clinical content should remain presentation-independent so browser, VR and AR clients share the same case facts and scoring engine.
 
 ## Acceptance criteria for a supervised pilot
 
 - Educator reviews and signs off each case and rubric version.
-- No diagnosis/facts leak through public case listing or learner-side code.
+- No diagnosis/facts leak through public case listing or learner-side code; automated tenant and controlled-exam confidentiality regressions pass.
 - All test orders record indication and produce only configured results.
 - Exam code assigns the educator-selected case; exam duration is enforced server-side for new actions.
 - Reports and event logs are retrievable by an authorized educator.
