@@ -203,3 +203,39 @@ def test_exam_assignment_creates_code_for_assigned_cohort(tmp_path, monkeypatch)
             "learner": "Learner A", "case_id": "malaria-001", "mode": "exam", "exam_code": code})
         assert joined.status_code == 200, joined.text
         assert joined.json().get("case_id") is None
+
+ 
+def test_institution_admin_can_disable_only_same_institution_accounts(tmp_path, monkeypatch):
+    learner_id, _, learner_b_id, _ = provision(tmp_path / "admin-users.db", monkeypatch)
+    with sqlite3.connect(tmp_path / "admin-users.db") as db:
+        db.row_factory = sqlite3.Row
+        init_identity_schema(db)
+        create_user(db, email="admin@a.example", display_name="Institution Admin",
+                    password="institution-admin-password", role="institution_admin", institution_id="inst-a")
+        db.commit()
+    with TestClient(main.app) as client:
+        admin = login(client, "admin@a.example", "institution-admin-password")
+        learner = login(client, "learner@a.example", "learner-password-long")
+        listed = client.get("/api/admin/users", headers=admin)
+        assert listed.status_code == 200, listed.text
+        assert all(row["institution_id"] == "inst-a" for row in listed.json()["users"])
+        disabled = client.patch("/api/admin/users/" + learner_id + "/status", headers=admin,
+                                json={"status": "disabled"})
+        assert disabled.status_code == 200, disabled.text
+        assert disabled.json()["sessions_revoked"] is True
+        assert client.get("/api/auth/me", headers=learner).status_code == 401
+        cross_tenant = client.patch("/api/admin/users/" + learner_b_id + "/status", headers=admin,
+                                    json={"status": "disabled"})
+        assert cross_tenant.status_code == 404
+
+
+def test_suspended_institution_rejects_new_login(tmp_path, monkeypatch):
+    provision(tmp_path / "suspended-login.db", monkeypatch)
+    with sqlite3.connect(tmp_path / "suspended-login.db") as db:
+        db.execute("UPDATE institutions SET status='suspended' WHERE institution_id='inst-a'")
+        db.commit()
+    with TestClient(main.app) as client:
+        response = client.post("/api/auth/login", json={
+            "email": "learner@a.example", "password": "learner-password-long"})
+        assert response.status_code == 401
+        assert response.json()["detail"] == "Invalid email or password."
