@@ -104,6 +104,16 @@ assert client.get('/api/educator/dashboard', headers=educator_headers).status_co
 assert client.post('/api/educator/exams', headers=educator_headers, json={
     'title':'Authorized educator exam', 'case_id':'malaria-001'
 }).status_code == 200
+# Every educator content-management route must reject pilot credentials in production.
+# These are distinct routes and must not rely on frontend-only hiding.
+for path, payload in [
+    ('/api/educator/case-draft', {'topic':'Security boundary test','specialty':'Internal medicine'}),
+    ('/api/educator/case-drafts/security-test/review', {'reviewer':'Forged reviewer','review_notes':'Should be rejected'}),
+    ('/api/educator/case-drafts/security-test/approve-and-publish', {'reviewer':'Forged reviewer','review_notes':'Should be rejected'}),
+]:
+    response = client.post(path, headers=pilot_headers, json=payload)
+    assert response.status_code == 401, (path, response.status_code, response.text)
+
 # Exam submissions must not reveal diagnosis, scoring, rubric feedback or pass-threshold state.
 assert exam_finish.json()['status'] == 'submitted_pending_educator_review'
 for forbidden in ('hidden_case_diagnosis', 'score', 'domains', 'critical_flags', 'threshold_status', 'demo_threshold'):
