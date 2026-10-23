@@ -6,8 +6,8 @@
 
 | Check | Evidence | Status |
 |---|---|---|
-| Backend regression suite | GitHub Actions workflow on the exact pull-request head | Pending latest CI; update after completion |
-| Frontend production build | GitHub Actions workflow on the exact pull-request head | Pending latest CI; update after completion |
+| Backend regression suite | GitHub Actions run 40038043332 on commit `dbfe189e21095ac9c040759988f6dd0039597c5e` | Passed: 28 tests, 3 warnings |
+| Frontend production build | GitHub Actions run 40038043332 on commit `dbfe189e21095ac9c040759988f6dd0039597c5e` | Passed |
 | Exam confidentiality | Automated regression checks for start, submission and resume responses | Automated only; faculty/security review still required |
 | Institution isolation | Automated tests for learner ownership, case visibility, cohort membership and scoped exports | Automated only; external security review still required |
 | Legacy migration inventory | `backend/migration_review.py` opens the selected SQLite database read-only | Tool implemented; must be run against an approved database copy |
