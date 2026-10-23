@@ -1,4 +1,4 @@
-"""Backend API smoke tests. Run from backend/: python ../tests/smoke_test.py"""
+"""Backend API smoke tests. Run from the repository root: python tests/smoke_checks.py"""
 import os, tempfile, sys
 from pathlib import Path
 
@@ -62,6 +62,27 @@ secure_data = secure.json()
 assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'X-Pilot-Token':'test-pilot-secret'}, json={'message':'When did it start?'}).status_code == 401
 assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'X-Pilot-Token':'test-pilot-secret','X-Session-Token':'wrong-token'}, json={'message':'When did it start?'}).status_code == 403
 assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'X-Pilot-Token':'test-pilot-secret','X-Session-Token':secure_data['session_token']}, json={'message':'When did it start?'}).status_code == 200
+# Every session-scoped mutation must enforce the same session ownership check.
+wrong_owner = {'X-Pilot-Token':'test-pilot-secret','X-Session-Token':'wrong-token'}
+assert client.post(f"/api/sessions/{secure_data['session_id']}/investigations", headers=wrong_owner, json={'test_id':'malaria-rdt','indication':'Fever in an endemic setting'}).status_code == 403
+assert client.post(f"/api/sessions/{secure_data['session_id']}/finish", headers=wrong_owner, json={'differential':['malaria']}).status_code == 403
+# A failed ownership check must not have completed or otherwise altered the session.
+assert client.post(f"/api/sessions/{secure_data['session_id']}/finish", headers={'X-Pilot-Token':'test-pilot-secret','X-Session-Token':secure_data['session_token']}, json={'differential':['malaria'],'final_diagnosis':'Malaria','management':['Escalate if danger signs'],'reflection':'Ownership test'}).status_code == 200
+# Exam expiry is enforced on active interactions, while the submission path records expiry.
+expiry_exam = client.post('/api/educator/exams', headers={'X-Educator-Token':'e' * 40}, json={'title':'Expiry lifecycle test','case_id':'trauma-001','duration':5,'pass_mark':70})
+assert expiry_exam.status_code == 200, expiry_exam.text
+expired_join = client.post('/api/sessions', headers={'X-Pilot-Token':'test-pilot-secret'}, json={'learner':'Expired exam test','mode':'exam','exam_code':expiry_exam.json()['code']})
+assert expired_join.status_code == 200, expired_join.text
+expired_id = expired_join.json()['session_id']
+db = main.conn()
+db.execute("UPDATE sessions SET created_at=? WHERE id=?", ('2000-01-01T00:00:00+00:00', expired_id))
+db.commit()
+db.close()
+expired_headers = {'X-Pilot-Token':'test-pilot-secret','X-Session-Token':expired_join.json()['session_token']}
+assert client.post(f"/api/sessions/{expired_id}/chat", headers=expired_headers, json={'message':'When did it start?'}).status_code == 409
+expired_submission = client.post(f"/api/sessions/{expired_id}/finish", headers=expired_headers, json={'differential':['trauma'],'final_diagnosis':'Trauma','management':['Urgent escalation'],'reflection':'Expiry test'})
+assert expired_submission.status_code == 200, expired_submission.text
+assert expired_submission.json()['time_expired'] is True
 main.APP_ENV = 'development'
 
 case_draft = client.post('/api/educator/case-draft', json={'topic':'Pediatric dehydration','specialty':'Pediatrics','source_references':['educator supplied protocol']})
@@ -71,5 +92,5 @@ assert client.get('/api/educator/dashboard').status_code == 200
 draft_id = case_draft.json()['draft_id']
 blocked = client.post(f'/api/educator/case-drafts/{draft_id}/approve-and-publish', json={'reviewer':'Smoke test educator','review_notes':'This test does not represent clinical approval.'})
 assert blocked.status_code == 422, blocked.text
-print('PASS: API smoke tests, exam result confidentiality, and production access-token gate, per-session authorization and exam-case confidentiality.')
+print('PASS: API smoke tests, exam confidentiality and expiry, production access-token gate, and per-session authorization for chat, investigations and submission.')
 os.unlink(tmp.name)
