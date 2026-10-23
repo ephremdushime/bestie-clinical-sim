@@ -31,7 +31,7 @@ def llm_configured() -> bool:
  values=(LLM_BASE,LLM_KEY,LLM_MODEL)
  return all(v.strip() and 'replace_with' not in v.lower() and 'your_model_name' not in v.lower() for v in values)
 app=FastAPI(title='Bestie Clinical Sim API',version='1.3.0')
-app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','http://localhost:5173,http://127.0.0.1:5173').split(','),allow_credentials=False,allow_methods=['GET','POST','OPTIONS'],allow_headers=['*','X-Pilot-Token','X-Educator-Token'])
+app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','http://localhost:5173,http://127.0.0.1:5173').split(','),allow_credentials=False,allow_methods=['GET','POST','PUT','PATCH','OPTIONS'],allow_headers=['*','X-Pilot-Token','X-Educator-Token'])
 
 # Identity endpoints are additive; legacy route authorization is migrated separately.
 from auth_routes import router as auth_router
@@ -69,7 +69,7 @@ def conn():
  c=sqlite3.connect(DB_PATH,timeout=20); c.row_factory=sqlite3.Row; return c
 
 def init_db():
- c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT, owner_user_id TEXT, institution_id TEXT);
+ c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT, owner_user_id TEXT, institution_id TEXT, draft_json TEXT);
  CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT, institution_id TEXT, creator_user_id TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT, institution_id TEXT, creator_user_id TEXT);
@@ -84,6 +84,7 @@ def init_db():
  if 'session_token_hash' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN session_token_hash TEXT')
  if 'owner_user_id' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN owner_user_id TEXT')
  if 'institution_id' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN institution_id TEXT')
+ if 'draft_json' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN draft_json TEXT')
  exam_cols={row['name'] for row in c.execute('PRAGMA table_info(exams)')}
  if 'institution_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN institution_id TEXT')
  if 'creator_user_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN creator_user_id TEXT')
@@ -211,6 +212,7 @@ def check_session_access(request:Request, session_row):
   raise HTTPException(403,'This session belongs to a different access token.')
 class StartSession(BaseModel): learner: str=Field(default='Student',min_length=1,max_length=80); case_id:str; mode:str='practice'; exam_code:str|None=None
 class Message(BaseModel): message:str=Field(min_length=1,max_length=3000)
+class SessionDraft(BaseModel): differential:list[str]=Field(default_factory=list,max_length=20); final_diagnosis:str=Field(default='',max_length=1000); management:list[str]=Field(default_factory=list,max_length=40); reflection:str=Field(default='',max_length=4000)
 class Investigation(BaseModel): test_id:str; indication:str=Field(min_length=3,max_length=800)
 class Finish(BaseModel): differential:list[str]=[]; final_diagnosis:str=''; management:list[str]=[]; reflection:str=''
 class ExamCreate(BaseModel): title:str=Field(min_length=3,max_length=120); case_id:str; duration:int=Field(default=20,ge=5,le=180); pass_mark:int=Field(default=70,ge=1,le=100); creator:str=Field(default='Educator',max_length=80)
@@ -303,6 +305,8 @@ def resume_session(sid: int, request: Request):
   elif event.get('type')=='investigation':
    safe_events.append({'role':'investigation','content':event.get('test_name',''),'result':event.get('result',''),'interpretation':event.get('interpretation',''),'appropriate':event.get('appropriate',False),'test_id':event.get('test_id')})
  report=json.loads(s['report']) if s['report'] else None
+ saved_draft=json.loads(s['draft_json']) if 'draft_json' in s.keys() and s['draft_json'] else None
+ if s['status']!='active' or (s['owner_user_id'] and (not identity or identity.get('user_id')!=s['owner_user_id'])): saved_draft=None
  exam_duration=None; remaining_seconds=None
  if s['mode']=='exam' and s['exam_id']:
   exrow=c.execute('SELECT duration FROM exams WHERE id=?',(s['exam_id'],)).fetchone()
@@ -313,7 +317,21 @@ def resume_session(sid: int, request: Request):
  if s['mode']=='exam' and report:
   report={'status':'submitted_pending_educator_review','mode':'exam','submitted_at':report.get('submitted_at'),'time_expired':report.get('time_expired'),'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
  c.close()
- return {'session_id':s['id'],'mode':s['mode'],'status':s['status'],'case_id':s['case_id'] if s['mode']=='practice' else None,'case_version':case.get('version'),'opening':case.get('opening') if not safe_events else None,'patient':{'age':case.get('age'),'sex':case.get('sex'),'appearance':case.get('appearance'),'vitals':case.get('vitals') if s['mode']=='practice' else None},'events':safe_events,'report':report,'created_at':s['created_at'],'examination':({'title':'Controlled examination','duration':exam_duration} if s['mode']=='exam' else None),'time_remaining_seconds':remaining_seconds}
+ return {'session_id':s['id'],'mode':s['mode'],'status':s['status'],'case_id':s['case_id'] if s['mode']=='practice' else None,'case_version':case.get('version'),'opening':case.get('opening') if not safe_events else None,'patient':{'age':case.get('age'),'sex':case.get('sex'),'appearance':case.get('appearance'),'vitals':case.get('vitals') if s['mode']=='practice' else None},'events':safe_events,'report':report,'created_at':s['created_at'],'examination':({'title':'Controlled examination','duration':exam_duration} if s['mode']=='exam' else None),'time_remaining_seconds':remaining_seconds,'draft':saved_draft}
+
+@app.put('/api/sessions/{sid}/draft')
+def save_session_draft(sid: int, body: SessionDraft, request: Request):
+ check_access(request); identity=scoped_identity(request); c=conn()
+ s=c.execute('SELECT * FROM sessions WHERE id=?',(sid,)).fetchone()
+ if not s: c.close(); raise HTTPException(404,'Session not found.')
+ check_session_access(request,s)
+ if s['owner_user_id'] and (not identity or identity.get('user_id')!=s['owner_user_id']):
+  c.close(); raise HTTPException(403,'Only the learner who owns this session can save private working notes.')
+ if s['status']!='active': c.close(); raise HTTPException(409,'This session is no longer active.')
+ if session_expired(c,s): c.close(); raise HTTPException(409,'Examination time has expired.')
+ draft={'differential':body.differential,'final_diagnosis':body.final_diagnosis,'management':body.management,'reflection':body.reflection,'saved_at':now()}
+ c.execute('UPDATE sessions SET draft_json=? WHERE id=?',(json.dumps(draft),sid)); c.commit(); c.close()
+ return {'saved':True,'saved_at':draft['saved_at']}
 
 @app.post('/api/sessions/{sid}/chat')
 async def chat(sid:int,body:Message,request:Request):
