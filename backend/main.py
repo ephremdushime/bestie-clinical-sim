@@ -33,6 +33,10 @@ def llm_configured() -> bool:
 app=FastAPI(title='Bestie Clinical Sim API',version='1.3.0')
 app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','http://localhost:5173,http://127.0.0.1:5173').split(','),allow_credentials=False,allow_methods=['GET','POST','OPTIONS'],allow_headers=['*','X-Pilot-Token','X-Educator-Token'])
 
+# Identity endpoints are additive; legacy route authorization is migrated separately.
+from auth_routes import router as auth_router
+app.include_router(auth_router)
+
 def validate_production_configuration() -> None:
  """Fail closed on common unsafe production configuration mistakes."""
  if APP_ENV != 'production':
@@ -70,9 +74,10 @@ def init_db():
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT);
  CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);''');
- # Safe additive migration for databases created by earlier versions.
+ # Safe additive migrations; never rebuild or discard existing pilot data.
  cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
  if 'session_token_hash' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN session_token_hash TEXT')
+ if 'owner_user_id' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN owner_user_id TEXT')
  c.commit(); c.close()
 init_db()
 try:
@@ -86,12 +91,51 @@ def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def save_event(c,sid,event):
  row=c.execute('SELECT events FROM sessions WHERE id=?',(sid,)).fetchone(); ev=json.loads(row['events'] or '[]'); ev.append({'at':now(),**event}); c.execute('UPDATE sessions SET events=? WHERE id=?',(json.dumps(ev),sid))
 def check_access(request:Request, educator=False):
+ identity=current_identity_user(request)
+ if educator:
+  if identity:
+   if identity['role'] not in ('educator','institution_admin','platform_admin'):
+    raise HTTPException(403,'An active educator or administrator account is required.')
+   request.state.identity_user=identity
+   return
+  if APP_ENV=='production': raise HTTPException(401,'Valid educator bearer session required.')
+  # Local development can use the legacy path for backwards-compatible demos only.
+  return
+ if identity:
+  request.state.identity_user=identity
+  return
  if APP_ENV!='production': return
- expected=EDUCATOR_TOKEN if educator else PILOT_TOKEN
- supplied=request.headers.get('X-Educator-Token' if educator else 'X-Pilot-Token','')
- if not expected or not supplied or not hmac.compare_digest(expected,supplied): raise HTTPException(401,'Valid access token required.')
+ supplied=request.headers.get('X-Pilot-Token','')
+ if not PILOT_TOKEN or not supplied or not hmac.compare_digest(PILOT_TOKEN,supplied):
+  raise HTTPException(401,'Valid access token required.')
+
+def educator_actor(request:Request, fallback_name:str='Educator') -> dict:
+ user=getattr(request.state,'identity_user',None) or current_identity_user(request)
+ if user: return user
+ # In production, reviewers must be attributable to a provisioned identity.
+ if APP_ENV=='production': raise HTTPException(401,'Verified educator identity required.')
+ return {'user_id':None,'institution_id':None,'display_name':fallback_name,'role':'educator'}
+def current_identity_user(request:Request):
+ """Resolve an optional provisioned-account bearer token without trusting body identity."""
+ authorization=request.headers.get('Authorization','')
+ scheme, separator, token=authorization.partition(' ')
+ if not separator or scheme.lower()!='bearer' or not token.strip(): return None
+ from identity import init_identity_schema, resolve_session
+ db=conn()
+ try:
+  init_identity_schema(db); user=resolve_session(db,token.strip()); db.commit()
+  return ({key:user[key] for key in ('user_id','institution_id','display_name','role')} if user else None)
+ finally: db.close()
+
 def check_session_access(request:Request, session_row):
- # Per-session secret prevents another pilot user from guessing a numeric session ID.
+ # New identity-owned sessions require the same account; legacy pilot sessions retain their per-session secret.
+ owner=session_row['owner_user_id'] if 'owner_user_id' in session_row.keys() else None
+ identity=getattr(request.state,'identity_user',None) or current_identity_user(request)
+ if owner:
+  if not identity: raise HTTPException(401,'Sign in with the account that owns this session.')
+  if identity['user_id'] != owner and identity['role'] not in ('educator','institution_admin','platform_admin'):
+   raise HTTPException(403,'This learner session belongs to another account.')
+  return
  if APP_ENV!='production': return
  expected_hash=session_row['session_token_hash'] if 'session_token_hash' in session_row.keys() else None
  supplied=request.headers.get('X-Session-Token','')
@@ -116,6 +160,9 @@ def cases():
 @app.post('/api/sessions')
 def create_session(body:StartSession,request:Request):
  check_access(request)
+ identity=getattr(request.state,'identity_user',None) or current_identity_user(request)
+ if identity and identity['role'] not in ('learner','educator','institution_admin','platform_admin'):
+  raise HTTPException(403,'An active account is required.')
  if body.mode not in ('practice','exam'): raise HTTPException(400,'Mode must be practice or exam.')
  case_id=body.case_id; exam_id=None
  if body.mode=='exam':
@@ -125,7 +172,10 @@ def create_session(body:StartSession,request:Request):
  if case_id not in CASES: raise HTTPException(404,'Case not found.')
  session_token=secrets.token_urlsafe(32)
  session_token_hash=__import__('hashlib').sha256(session_token.encode('utf-8')).hexdigest()
- c=conn(); cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash) VALUES(?,?,?,?,?,?)',(body.learner.strip(),case_id,body.mode,exam_id,now(),session_token_hash)); sid=cur.lastrowid
+ # The authenticated account is authoritative for the learner label and session ownership.
+ learner_name=identity['display_name'] if identity and identity['role']=='learner' else body.learner.strip()
+ owner_user_id=identity['user_id'] if identity and identity['role']=='learner' else None
+ c=conn(); cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id) VALUES(?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id)); sid=cur.lastrowid
  opening=CASES[case_id]['opening']; save_event(c,sid,{'type':'session_started','mode':body.mode,'case_id':case_id}); c.commit(); c.close()
  # Never expose the hidden case identifier/title to a controlled-exam participant.
  return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':CASES[case_id]['age'],'sex':CASES[case_id]['sex'],'appearance':CASES[case_id]['appearance'],'vitals':CASES[case_id]['vitals'] if body.mode=='practice' else None}}
@@ -223,7 +273,8 @@ class EvidenceSearchRequest(BaseModel):
  query: str = Field(min_length=3,max_length=300)
  max_results: int = Field(default=8,ge=1,le=20)
 class CaseReviewRequest(BaseModel):
- reviewer: str = Field(min_length=2,max_length=100)
+ # Retained for local legacy clients only; production reviewer identity comes from auth.
+ reviewer: str = Field(default='Educator',min_length=2,max_length=100)
  review_notes: str = Field(default='',max_length=4000)
 
 async def retrieve_evidence(query: str, max_results: int=8) -> dict:
@@ -274,7 +325,8 @@ def list_case_drafts(request: Request):
 def review_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
  check_access(request,True); c=conn(); row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
- d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':body.reviewer,'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
+ actor=educator_actor(request,body.reviewer)
+ d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
 
 @app.post('/api/educator/case-drafts/{draft_id}/approve-and-publish')
 def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
@@ -291,9 +343,10 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  if any(any(p in str(test.get(field,'')).lower() for p in placeholders) for test in case['investigations'].values() for field in ('result','interpretation')):
   c.close(); raise HTTPException(422,'Investigation results and interpretations contain placeholders. Complete them before publishing.')
  if not body.review_notes.strip(): c.close(); raise HTTPException(422,'A clinical review note is required.')
- case['version']='1.0.0'; case['status']='educator_approved'; case['approved_by']=body.reviewer; case['approved_at']=now(); case['review_notes']=body.review_notes
- c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),body.reviewer,case['approved_at']))
- d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':body.reviewer,'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
+ actor=educator_actor(request,body.reviewer)
+ case['version']='1.0.0'; case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
+ c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at']))
+ d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
  return {'status':d['status'],'case_id':case['id'],'version':case['version'],'message':'Published following educator attestation; this is not independent clinical certification.'}
 
 @app.post('/api/educator/case-draft')
