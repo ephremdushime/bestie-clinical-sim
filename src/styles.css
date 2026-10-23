@@ -6,3 +6,29 @@
 .case-authoring{margin-bottom:15px}.generated-draft{margin-top:17px;border:1px solid #dce9df;border-radius:9px;overflow:hidden}.generated-header{display:flex;justify-content:space-between;align-items:center;gap:10px;background:#eff7f1;padding:11px 13px}.generated-header b{font-size:10px;color:#34674a}.generated-draft pre{margin:0;padding:13px;max-height:420px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#fbfcfb;color:#465c4b;font-size:9px;line-height:1.65}
 .audit-pre{max-width:330px;max-height:240px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font-size:8px;line-height:1.5;color:#506a59;background:#f6f9f6;padding:8px;border-radius:6px}details summary{cursor:pointer;color:#277552;font-size:9px;font-weight:800}
 .imaging-preview{margin:10px 0 12px;padding:8px;border:1px solid #e1e9e3;background:#f5f8f5;border-radius:8px}.imaging-label{font-size:7px;letter-spacing:.1em;font-weight:800;color:#62806c;margin:2px 0 7px}.imaging-preview svg{display:block;width:100%;max-width:330px;margin:auto;border-radius:6px}.imaging-preview small{display:block;font-size:8px;line-height:1.5;color:#829087;margin-top:6px}
+
+
+/* Accessibility baseline: visible keyboard focus, reduced motion, and high-contrast support. */
+:where(a,button,input,select,textarea,[tabindex]):focus-visible{
+  outline:3px solid #17614a;
+  outline-offset:3px;
+}
+:where(button,a,input,select,textarea):disabled{
+  cursor:not-allowed;
+}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    scroll-behavior:auto !important;
+    animation-duration:0.01ms !important;
+    animation-iteration-count:1 !important;
+    transition-duration:0.01ms !important;
+  }
+}
+@media (forced-colors: active){
+  :where(a,button,input,select,textarea,[tabindex]):focus-visible{
+    outline:2px solid Highlight;
+  }
+  .primary,.secondary,.nav-item.selected,.count-chip,.mode-chip{
+    border:1px solid ButtonText;
+  }
+}
