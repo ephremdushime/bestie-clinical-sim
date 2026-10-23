@@ -20,12 +20,23 @@ assert 'antimalarial' not in str(public).lower()
 s = client.post('/api/sessions', json={'learner':'Smoke test','case_id':'malaria-001','mode':'practice'})
 assert s.status_code == 200, s.text
 sid = s.json()['session_id']
+# End-to-end API learner journey: interview -> indicated investigation -> reasoning/management -> formative feedback.
+chat = client.post(f'/api/sessions/{sid}/chat', json={'message':'Hello, when did the fever start and what other symptoms do you have?'})
+assert chat.status_code == 200 and isinstance(chat.json().get('reply'), str) and chat.json()['reply'].strip()
 r = client.post(f'/api/sessions/{sid}/investigations', json={'test_id':'malaria-rdt','indication':'Fever and chills in malaria-endemic setting'})
 assert r.status_code == 200 and r.json()['configured'] and r.json()['appropriate']
 r = client.post(f'/api/sessions/{sid}/investigations', json={'test_id':'ct-head','indication':'Routine screening'})
 assert r.status_code == 200 and r.json()['configured'] and not r.json()['appropriate'] and not r.json()['image_available']
 r = client.post(f'/api/sessions/{sid}/finish', json={'differential':['malaria','viral illness'],'final_diagnosis':'Malaria','management':['Appropriate treatment per current local guideline','Follow-up and safety-netting'],'reflection':'Positive malaria RDT supports diagnosis'})
 assert r.status_code == 200 and r.json()['status'] == 'formative_unvalidated'
+assert r.json()['mode'] == 'practice'
+assert r.json()['investigations_ordered'] == 2
+assert len(r.json()['domains']) >= 6
+assert any(d['domain'] == 'Investigation selection and indication' and d['status'] == 'evidence observed' for d in r.json()['domains'])
+assert 'Clinical educator' not in r.json()['summary'] or 'educator' in r.json()['summary'].lower()
+# A completed encounter cannot be submitted a second time.
+duplicate_finish = client.post(f'/api/sessions/{sid}/finish', json={'differential':['malaria','viral illness'],'final_diagnosis':'Malaria','management':['Urgent escalation','Follow-up'],'reflection':'Interpret the positive result'})
+assert duplicate_finish.status_code == 409, duplicate_finish.text
 
 exam = client.post('/api/educator/exams', json={'title':'Smoke test exam','case_id':'pregnancy-001','duration':5,'pass_mark':70})
 assert exam.status_code == 200, exam.text
