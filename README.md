@@ -10,11 +10,13 @@ Bestie Clinical Sim is a clinical education simulation prototype for medical and
 - **Examination mode:** teacher creates an exam with a hidden case and shareable code; the API enforces time limits on chat/investigation actions; the student-facing submission response does not reveal the hidden diagnosis, score, rubric decisions or threshold result. Full reports remain in the educator dashboard. Controlled-exam confidentiality remains a release gate; the current identity-backed routes bind authenticated learners to their own sessions and keep reports educator-only.
 - **Case library:** malaria, severe respiratory presentation, burns with possible inhalation injury, road-traffic trauma, pregnancy with severe headache, and pediatric fever/fast breathing.
 - **Investigations:** case-specific fixed results for configured tests; unsupported tests do not receive invented findings. A test's indication is recorded. Synthetic imaging schematics are explicitly labeled as illustrations, not diagnostic-quality images.
-- **Educator console:** exam builder, exam codes, close-exam control, recent sessions, reports and event/decision logs.
+- **Educator console:** exam builder, exam codes, close-exam control, institution-scoped cohorts, cohort membership, learner assignments, recent sessions, and bounded institution report CSV export. Assignments and exam records carry a rubric version; the default rubric is formative and not clinically validated.
 - **AI case drafting:** educator-only draft endpoint. If an OpenAI-compatible model is configured, it can propose a structured case draft; otherwise it returns a structured template. Drafts are never automatically published and must be source-checked and educator-approved.
 - **AI patient role-play:** optional OpenAI-compatible chat-completions endpoint; the model receives case facts but not the hidden diagnosis. Case results remain controlled by the API.
 - **Collaboration:** institution-scoped WebSocket text room with provisioned-account identity, single-use 60-second connection tickets, one-time ticket consumption, tenant room checks and bounded message sizes. It does not synchronize clinical case state or exam actions.
 - **VR/AR:** an early WebXR/WebGL scene and browser capability checks are integrated. It remains a prototype: no clinically validated anatomy, controller-driven tasks, haptics, spatial competency assessment or real-headset acceptance testing has been completed. The Uniport headset collaboration is intended for compatibility testing.
+- **Learner continuity:** active sessions can be restored after a browser reload using the server-authorized resume endpoint; private working notes autosave; examination time remaining is calculated server-side. Learners have an account-scoped progress view and assignment list.
+- **Security release review:** read-only legacy ownership inventory is available via `python backend/migration_review.py --database path/to/copy.db`; see `docs/SECURITY_RELEASE_REVIEW_AND_MIGRATION.md`. It never auto-assigns historical ownership.
 - **Privacy:** SQLite stores learner display names, fictional-case activity, and assessment event logs. Do not use real patient records.
 
 ## Local development
@@ -69,6 +71,13 @@ Copy `.env.example` to `.env`, replace all example secrets, configure the exact 
 - `POST /api/sessions/{id}/finish`
 - `POST /api/educator/case-draft`
 - `POST /api/educator/exams`
+- `GET /api/sessions/{id}/resume` — restore owner-authorized state and server-derived remaining exam time
+- `PUT /api/sessions/{id}/draft` — autosave private working notes for reload recovery
+- `GET /api/learner/progress` and `GET /api/learner/assignments` — account-scoped learner activity
+- `POST/GET /api/educator/cohorts`; `POST /api/educator/cohorts/{id}/members` — manage institution cohorts
+- `POST/GET /api/educator/assignments` — create and list cohort/learner assignments
+- `GET /api/educator/reports.csv` — bounded tenant-scoped report export
+- `GET /api/admin/users` and `PATCH /api/admin/users/{id}/status` — role-gated account listing and session-revoking disable/reactivate
 - `GET /api/educator/dashboard`
 - `POST /api/educator/exams/{id}/close`
 - `POST /api/auth/ws-ticket` — issue a short-lived, single-use WebSocket ticket for the signed-in account\n- `WS /ws/rooms/{room}?ticket=...` — institution-scoped text collaboration
@@ -97,7 +106,7 @@ Copy `.env.example` to `.env`, replace all example secrets, configure the exact 
 7. The current VR/AR scene is an early functional WebXR/WebGL prototype, not a validated immersive clinical environment; test on actual target headsets and implement controller-driven clinical tasks before claiming headset readiness.
 8. Draft pull requests must be reviewed and merged in dependency order before the complete stack exists on `main`. Passing GitHub CI confirms the tested backend and frontend build jobs only; it does not prove deployment, clinical validity, privacy/legal approval, load resilience, or headset acceptance.
 
-See `docs/PRODUCT_SPECIFICATION.md`, `docs/DELIVERY_ROADMAP_AND_ACCEPTANCE.md`, `docs/AI_SOURCE_GOVERNANCE.md`, `docs/UNIPORT_VR_AR_TEST_PLAN.md`, and `docs/TEST_RESULTS.md`.
+See `docs/PRODUCT_SPECIFICATION.md`, `docs/SECURITY_RELEASE_REVIEW_AND_MIGRATION.md`, `docs/PILOT_VALIDATION_CHECKLIST.md`, `docs/DELIVERY_ROADMAP_AND_ACCEPTANCE.md`, `docs/AI_SOURCE_GOVERNANCE.md`, `docs/UNIPORT_VR_AR_TEST_PLAN.md`, and `docs/TEST_RESULTS.md`.
 
 
 ## AI Clinical Scenario Engine (1.1.1)

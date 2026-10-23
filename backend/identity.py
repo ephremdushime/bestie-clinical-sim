@@ -99,6 +99,10 @@ def create_user(
         raise ValueError("Unsupported role.")
     if role in {"learner", "educator", "institution_admin"} and not institution_id:
         raise ValueError("Institution-scoped roles require an institution.")
+    if institution_id:
+        institution = db.execute("SELECT status FROM institutions WHERE institution_id=?", (institution_id,)).fetchone()
+        if not institution or institution["status"] != "active":
+            raise ValueError("Institution must exist and be active before provisioning accounts.")
     if role == "platform_admin" and institution_id:
         raise ValueError("Platform administrators must not be institution-scoped.")
     salt = secrets.token_bytes(16)
@@ -118,9 +122,11 @@ def create_user(
 def verify_password(db: sqlite3.Connection, email: str, password: str) -> sqlite3.Row | None:
     """Return active user row on success; generic None for unknown/disabled/wrong password."""
     row = db.execute(
-        "SELECT * FROM users WHERE email_normalized=?", (email.strip().casefold(),)
+        """SELECT u.*, i.status AS institution_status
+           FROM users u LEFT JOIN institutions i ON i.institution_id=u.institution_id
+           WHERE u.email_normalized=?""", (email.strip().casefold(),)
     ).fetchone()
-    if not row or row["status"] != "active":
+    if not row or row["status"] != "active" or (row["role"] != "platform_admin" and row["institution_status"] != "active"):
         # Spend a hash operation for unknown/disabled accounts to reduce timing leakage.
         _password_record(password if len(password) >= 12 else "invalid-password-placeholder", b"\0" * 16)
         return None
@@ -157,11 +163,14 @@ def resolve_session(db: sqlite3.Connection, token: str) -> sqlite3.Row | None:
     digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
     row = db.execute(
         """SELECT u.user_id,u.institution_id,u.email_normalized,u.display_name,u.role,
-                  u.status,s.expires_at,s.revoked_at
+                  u.status,s.expires_at,s.revoked_at,i.status AS institution_status
            FROM auth_sessions s JOIN users u ON u.user_id=s.user_id
+           LEFT JOIN institutions i ON i.institution_id=u.institution_id
            WHERE s.token_hash=?""", (digest,)
     ).fetchone()
     if not row or row["status"] != "active" or row["revoked_at"]:
+        return None
+    if row["role"] != "platform_admin" and row["institution_status"] != "active":
         return None
     try:
         if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):

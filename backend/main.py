@@ -31,7 +31,7 @@ def llm_configured() -> bool:
  values=(LLM_BASE,LLM_KEY,LLM_MODEL)
  return all(v.strip() and 'replace_with' not in v.lower() and 'your_model_name' not in v.lower() for v in values)
 app=FastAPI(title='Bestie Clinical Sim API',version='1.3.0')
-app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','http://localhost:5173,http://127.0.0.1:5173').split(','),allow_credentials=False,allow_methods=['GET','POST','OPTIONS'],allow_headers=['*','X-Pilot-Token','X-Educator-Token'])
+app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','http://localhost:5173,http://127.0.0.1:5173').split(','),allow_credentials=False,allow_methods=['GET','POST','PUT','PATCH','OPTIONS'],allow_headers=['*','X-Pilot-Token','X-Educator-Token'])
 
 # Identity endpoints are additive; legacy route authorization is migrated separately.
 from auth_routes import router as auth_router
@@ -69,22 +69,31 @@ def conn():
  c=sqlite3.connect(DB_PATH,timeout=20); c.row_factory=sqlite3.Row; return c
 
 def init_db():
- c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT, owner_user_id TEXT, institution_id TEXT);
+ c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT, owner_user_id TEXT, institution_id TEXT, draft_json TEXT);
  CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT, institution_id TEXT, creator_user_id TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT, institution_id TEXT, creator_user_id TEXT);
- CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT, institution_id TEXT);''');
+ CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT, institution_id TEXT);
+ CREATE TABLE IF NOT EXISTS cohorts(cohort_id TEXT PRIMARY KEY, name TEXT NOT NULL, institution_id TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS cohort_members(cohort_id TEXT NOT NULL REFERENCES cohorts(cohort_id) ON DELETE CASCADE, learner_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, added_at TEXT NOT NULL, PRIMARY KEY(cohort_id,learner_user_id));
+ CREATE TABLE IF NOT EXISTS assignments(assignment_id TEXT PRIMARY KEY, title TEXT NOT NULL, institution_id TEXT NOT NULL, case_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('practice','exam')), cohort_id TEXT REFERENCES cohorts(cohort_id), learner_user_id TEXT REFERENCES users(user_id), exam_id INTEGER REFERENCES exams(id), due_at TEXT, rubric_version TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','closed')));
+ CREATE TABLE IF NOT EXISTS rubric_versions(rubric_id TEXT PRIMARY KEY, rubric_version TEXT NOT NULL, institution_id TEXT, name TEXT NOT NULL, rubric_json TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL);
+ ''');
  # Safe additive migrations; never rebuild or discard existing pilot data.
  cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
  if 'session_token_hash' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN session_token_hash TEXT')
  if 'owner_user_id' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN owner_user_id TEXT')
  if 'institution_id' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN institution_id TEXT')
+ if 'draft_json' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN draft_json TEXT')
  exam_cols={row['name'] for row in c.execute('PRAGMA table_info(exams)')}
  if 'institution_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN institution_id TEXT')
  if 'creator_user_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN creator_user_id TEXT')
+ if 'rubric_version' not in exam_cols: c.execute("ALTER TABLE exams ADD COLUMN rubric_version TEXT NOT NULL DEFAULT 'rubric-v1.0.0'")
  draft_cols={row['name'] for row in c.execute('PRAGMA table_info(case_drafts)')}
  if 'institution_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN institution_id TEXT')
  if 'creator_user_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN creator_user_id TEXT')
+ assignment_cols={row['name'] for row in c.execute('PRAGMA table_info(assignments)')}
+ if 'exam_id' not in assignment_cols: c.execute('ALTER TABLE assignments ADD COLUMN exam_id INTEGER')
  approved_cols={row['name'] for row in c.execute('PRAGMA table_info(approved_cases)')}
  if 'institution_id' not in approved_cols: c.execute('ALTER TABLE approved_cases ADD COLUMN institution_id TEXT')
  c.commit(); c.close()
@@ -190,7 +199,7 @@ def check_session_access(request:Request, session_row):
   if identity['user_id'] != owner and identity['role'] not in ('educator','institution_admin','platform_admin'):
    raise HTTPException(403,'This learner session belongs to another account.')
   resource_institution=session_row['institution_id'] if 'institution_id' in session_row.keys() else None
-  if identity['role'] != 'platform_admin' and resource_institution and identity.get('institution_id') != resource_institution:
+  if identity['role'] != 'platform_admin' and identity.get('institution_id') != resource_institution:
    raise HTTPException(404,'Session not found.')
   return
  if APP_ENV!='production': return
@@ -203,6 +212,7 @@ def check_session_access(request:Request, session_row):
   raise HTTPException(403,'This session belongs to a different access token.')
 class StartSession(BaseModel): learner: str=Field(default='Student',min_length=1,max_length=80); case_id:str; mode:str='practice'; exam_code:str|None=None
 class Message(BaseModel): message:str=Field(min_length=1,max_length=3000)
+class SessionDraft(BaseModel): differential:list[str]=Field(default_factory=list,max_length=20); final_diagnosis:str=Field(default='',max_length=1000); management:list[str]=Field(default_factory=list,max_length=40); reflection:str=Field(default='',max_length=4000)
 class Investigation(BaseModel): test_id:str; indication:str=Field(min_length=3,max_length=800)
 class Finish(BaseModel): differential:list[str]=[]; final_diagnosis:str=''; management:list[str]=[]; reflection:str=''
 class ExamCreate(BaseModel): title:str=Field(min_length=3,max_length=120); case_id:str; duration:int=Field(default=20,ge=5,le=180); pass_mark:int=Field(default=70,ge=1,le=100); creator:str=Field(default='Educator',max_length=80)
@@ -210,7 +220,9 @@ class SubmitExam(BaseModel): learner:str; session_id:int; report:dict
 class CaseDraftRequest(BaseModel): topic:str=Field(min_length=3,max_length=180); specialty:str=Field(default='General medicine',max_length=100); learner_level:str=Field(default='Clinical-year student',max_length=100); learning_objectives:list[str]=[]; source_notes:str=Field(default='',max_length=12000); source_references:list[str]=[]; auto_retrieve:bool=True
 
 @app.get('/api/health')
-def health(): return {'status':'ok','version':'1.3.0','cases':len(CASES),'llm_configured':llm_configured(),'database':'sqlite','environment':APP_ENV,'xr':'WebXR compatibility is checked in browser; device support varies'}
+def health():
+ if APP_ENV=='production': return {'status':'ok','version':'1.3.0','xr':'WebXR compatibility is checked in browser; device support varies'}
+ return {'status':'ok','version':'1.3.0','cases':len(CASES),'llm_configured':llm_configured(),'database':'sqlite','environment':APP_ENV,'xr':'WebXR compatibility is checked in browser; device support varies'}
 @app.get('/api/cases')
 def cases(request: Request):
  identity=current_identity_user(request); visible={c['id']:c for c in CASES.values()}
@@ -236,7 +248,10 @@ def create_session(body:StartSession,request:Request):
  if body.mode not in ('practice','exam'): raise HTTPException(400,'Mode must be practice or exam.')
  case_id=body.case_id; exam_id=None
  if body.mode=='exam':
-  identity=scoped_identity(request); clause,params=tenant_clause(identity); c=conn(); ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"'+clause,(body.exam_code or '',*params)).fetchone(); c.close()
+  identity=scoped_identity(request)
+  if APP_ENV=='production' and (not identity or identity.get('role')!='learner'):
+   raise HTTPException(401,'Sign in with a provisioned learner account to join an examination.')
+  clause,params=tenant_clause(identity); c=conn(); ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"'+clause,(body.exam_code or '',*params)).fetchone(); c.close()
   if not ex: raise HTTPException(404,'Exam code is invalid or closed.')
   case_id=ex['case_id']; exam_id=ex['id']
  case_data=load_case(case_id,identity)
@@ -274,6 +289,49 @@ def session_expired(c, s):
  try: elapsed=(datetime.now(timezone.utc)-datetime.fromisoformat(s['created_at'])).total_seconds()/60
  except Exception: return False
  return elapsed > int(ex['duration'])
+
+@app.get('/api/sessions/{sid}/resume')
+def resume_session(sid: int, request: Request):
+ check_access(request); identity=scoped_identity(request); c=conn()
+ s=c.execute('SELECT * FROM sessions WHERE id=?',(sid,)).fetchone()
+ if not s: c.close(); raise HTTPException(404,'Session not found.')
+ check_session_access(request,s)
+ events=json.loads(s['events'] or '[]')
+ case=case_for_session(s)
+ safe_events=[]
+ for event in events:
+  if event.get('type')=='chat':
+   safe_events.extend([{'role':'student','content':event.get('student_message','')},{'role':'patient','content':event.get('patient_reply','')}])
+  elif event.get('type')=='investigation':
+   safe_events.append({'role':'investigation','content':event.get('test_name',''),'result':event.get('result',''),'interpretation':event.get('interpretation',''),'appropriate':event.get('appropriate',False),'test_id':event.get('test_id')})
+ report=json.loads(s['report']) if s['report'] else None
+ saved_draft=json.loads(s['draft_json']) if 'draft_json' in s.keys() and s['draft_json'] else None
+ if s['status']!='active' or (s['owner_user_id'] and (not identity or identity.get('user_id')!=s['owner_user_id'])): saved_draft=None
+ exam_duration=None; remaining_seconds=None
+ if s['mode']=='exam' and s['exam_id']:
+  exrow=c.execute('SELECT duration FROM exams WHERE id=?',(s['exam_id'],)).fetchone()
+  if exrow:
+   exam_duration=int(exrow['duration'])
+   try: remaining_seconds=max(0,exam_duration*60-int((datetime.now(timezone.utc)-datetime.fromisoformat(s['created_at'])).total_seconds()))
+   except Exception: remaining_seconds=0
+ if s['mode']=='exam' and report:
+  report={'status':'submitted_pending_educator_review','mode':'exam','submitted_at':report.get('submitted_at'),'time_expired':report.get('time_expired'),'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
+ c.close()
+ return {'session_id':s['id'],'mode':s['mode'],'status':s['status'],'case_id':s['case_id'] if s['mode']=='practice' else None,'case_version':case.get('version'),'opening':case.get('opening') if not safe_events else None,'patient':{'age':case.get('age'),'sex':case.get('sex'),'appearance':case.get('appearance'),'vitals':case.get('vitals') if s['mode']=='practice' else None},'events':safe_events,'report':report,'created_at':s['created_at'],'examination':({'title':'Controlled examination','duration':exam_duration} if s['mode']=='exam' else None),'time_remaining_seconds':remaining_seconds,'draft':saved_draft}
+
+@app.put('/api/sessions/{sid}/draft')
+def save_session_draft(sid: int, body: SessionDraft, request: Request):
+ check_access(request); identity=scoped_identity(request); c=conn()
+ s=c.execute('SELECT * FROM sessions WHERE id=?',(sid,)).fetchone()
+ if not s: c.close(); raise HTTPException(404,'Session not found.')
+ check_session_access(request,s)
+ if s['owner_user_id'] and (not identity or identity.get('user_id')!=s['owner_user_id']):
+  c.close(); raise HTTPException(403,'Only the learner who owns this session can save private working notes.')
+ if s['status']!='active': c.close(); raise HTTPException(409,'This session is no longer active.')
+ if session_expired(c,s): c.close(); raise HTTPException(409,'Examination time has expired.')
+ draft={'differential':body.differential,'final_diagnosis':body.final_diagnosis,'management':body.management,'reflection':body.reflection,'saved_at':now()}
+ c.execute('UPDATE sessions SET draft_json=? WHERE id=?',(json.dumps(draft),sid)); c.commit(); c.close()
+ return {'saved':True,'saved_at':draft['saved_at']}
 
 @app.post('/api/sessions/{sid}/chat')
 async def chat(sid:int,body:Message,request:Request):
@@ -333,7 +391,8 @@ def finish(sid:int,body:Finish,request:Request):
  if s['status']!='active': c.close(); raise HTTPException(409,'Session already submitted.')
  events=json.loads(s['events'] or '[]'); report=make_report(case_for_session(s),events,body); report['mode']=s['mode']; report['case_id']=s['case_id']; report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
  if s['mode']=='exam' and s['exam_id']:
-  ex=c.execute('SELECT pass_mark FROM exams WHERE id=?',(s['exam_id'],)).fetchone(); report['demo_threshold']=int(ex['pass_mark']) if ex else None; report['threshold_status']=('critical_review_required' if report['critical_flags'] else ('meets_demo_threshold' if report['score']>=int(ex['pass_mark']) else 'below_demo_threshold')) if ex else 'not_set'
+  ex=c.execute('SELECT pass_mark,rubric_version FROM exams WHERE id=?',(s['exam_id'],)).fetchone(); report['rubric_version']=ex['rubric_version'] if ex else 'rubric-v1.0.0'; report['demo_threshold']=int(ex['pass_mark']) if ex else None; report['threshold_status']=('critical_review_required' if report['critical_flags'] else ('meets_demo_threshold' if report['score']>=int(ex['pass_mark']) else 'below_demo_threshold')) if ex else 'not_set'
+ else: report['rubric_version']='rubric-v1.0.0'
  c.execute('UPDATE sessions SET status="completed",report=? WHERE id=?',(json.dumps(report),sid)); save_event(c,sid,{'type':'session_finished','score':report['score']}); c.commit(); c.close()
  # Controlled exams retain the full report for educator review, but the student response
  # must not reveal the hidden diagnosis, score, rubric decisions or pass-threshold result.
@@ -457,7 +516,156 @@ def create_exam(body:ExamCreate,request:Request):
  code=secrets.token_urlsafe(5).replace('-','').replace('_','').upper()[:8]
  identity=scoped_identity(request)
  creator=identity['display_name'] if identity else body.creator
- c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),creator,identity.get('institution_id') if identity else None,identity.get('user_id') if identity else None)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
+ rubric_version='rubric-v1.0.0'
+ rubric={'version':rubric_version,'domains':['Communication and history','Severity and examination','Investigation selection and indication','Result interpretation','Differential diagnosis','Final diagnosis','Management and safety','Referral and follow-up'],'scoring_method':'formative keyword/evidence checks; not clinically validated','critical_flags_weighted_separately':True}
+ c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,institution_id,creator_user_id,rubric_version) VALUES(?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),creator,identity.get('institution_id') if identity else None,identity.get('user_id') if identity else None,rubric_version)); c.execute('INSERT OR IGNORE INTO rubric_versions(rubric_id,rubric_version,institution_id,name,rubric_json,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?)',(((identity.get('institution_id') if identity else None) or 'legacy-development')+':'+rubric_version,rubric_version,identity.get('institution_id') if identity else None,'Default formative rubric v1.0.0',json.dumps(rubric),identity.get('user_id') if identity else 'legacy-development',now())); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
+@app.get('/api/learner/progress')
+def learner_progress(request: Request):
+ check_access(request)
+ identity=scoped_identity(request)
+ if not identity or identity.get('role')!='learner':
+  raise HTTPException(401,'Sign in with a learner account to view personal progress.')
+ c=conn()
+ rows=c.execute('SELECT id,case_id,mode,status,created_at,report FROM sessions WHERE owner_user_id=? ORDER BY id DESC LIMIT 200',(identity['user_id'],)).fetchall()
+ completed=[r for r in rows if r['status']=='completed']
+ practice=sum(1 for r in completed if r['mode']=='practice')
+ exams=sum(1 for r in completed if r['mode']=='exam')
+ assignments=c.execute('''SELECT a.assignment_id,a.title,a.case_id,a.mode,a.due_at,a.rubric_version,a.created_at,a.status,e.code AS exam_code,
+   (SELECT COUNT(*) FROM sessions s WHERE s.owner_user_id=? AND s.case_id=a.case_id AND s.status='completed' AND s.mode=a.mode AND s.created_at>=a.created_at) AS completed
+   FROM assignments a LEFT JOIN cohort_members cm ON cm.cohort_id=a.cohort_id LEFT JOIN exams e ON e.id=a.exam_id
+   WHERE a.institution_id=? AND a.status='active' AND (a.learner_user_id=? OR cm.learner_user_id=?)
+   ORDER BY a.created_at DESC LIMIT 100''',(identity['user_id'],identity.get('institution_id'),identity['user_id'],identity['user_id'])).fetchall()
+ c.close()
+ return {'learner':identity['display_name'],'total_sessions':len(rows),'completed_sessions':len(completed),'practice_completed':practice,'exams_submitted':exams,'recent':[{'session_id':r['id'],'case_id':r['case_id'],'mode':r['mode'],'status':r['status'],'created_at':r['created_at']} for r in rows[:20]],'assignments':[dict(a) for a in assignments]}
+
+@app.get('/api/learner/assignments')
+def learner_assignments(request: Request):
+ result=learner_progress(request)
+ return {'assignments':result['assignments']}
+
+@app.get('/api/admin/users')
+def admin_list_users(request: Request):
+ check_access(request,True); identity=scoped_identity(request)
+ if not identity or identity.get('role') not in ('institution_admin','platform_admin'):
+  raise HTTPException(403,'Institution or platform administrator account required.')
+ clause,params=tenant_clause(identity,'institution_id')
+ db=conn()
+ rows=db.execute('SELECT user_id,institution_id,display_name,role,status,created_at,updated_at FROM users WHERE 1=1'+clause+' ORDER BY display_name LIMIT 500',params).fetchall()
+ db.close()
+ return {'users':[dict(row) for row in rows]}
+
+@app.patch('/api/admin/users/{target_user_id}/status')
+def admin_set_user_status(target_user_id: str, body: dict, request: Request):
+ check_access(request,True); actor=scoped_identity(request)
+ if not actor or actor.get('role') not in ('institution_admin','platform_admin'):
+  raise HTTPException(403,'Institution or platform administrator account required.')
+ status=str(body.get('status','')).strip()
+ if status not in ('active','disabled','locked'):
+  raise HTTPException(422,'Status must be active, disabled, or locked.')
+ if target_user_id==actor['user_id'] and status!='active':
+  raise HTTPException(409,'Administrators cannot disable their own account in this workflow.')
+ db=conn(); target=db.execute('SELECT user_id,institution_id,role,status FROM users WHERE user_id=?',(target_user_id,)).fetchone()
+ if not target:
+  db.close(); raise HTTPException(404,'User not found.')
+ if actor['role']=='institution_admin':
+  if target['institution_id']!=actor.get('institution_id') or target['role'] not in ('learner','educator'):
+   db.close(); raise HTTPException(404,'User not found.')
+ from identity import write_audit_event
+ db.execute('UPDATE users SET status=?,updated_at=? WHERE user_id=?',(status,now(),target_user_id))
+ if status!='active':
+  db.execute('UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL',(now(),target_user_id))
+ write_audit_event(db,actor_user_id=actor['user_id'],institution_id=target['institution_id'],action='admin.user_status_changed',resource_type='user',resource_id=target_user_id,outcome='success',metadata_json=json.dumps({'previous_status':target['status'],'new_status':status}))
+ db.commit(); db.close()
+ return {'user_id':target_user_id,'status':status,'sessions_revoked':status!='active'}
+
+@app.post('/api/educator/cohorts')
+def create_cohort(body: dict, request: Request):
+ check_access(request,True); identity=scoped_identity(request)
+ if not identity or identity.get('role') not in ('educator','institution_admin','platform_admin') or not identity.get('institution_id'):
+  raise HTTPException(403,'An institution-scoped educator or administrator account is required.')
+ name=str(body.get('name','')).strip()
+ if not name or len(name)>120: raise HTTPException(422,'Cohort name must be 1–120 characters.')
+ cohort_id='cohort-'+secrets.token_hex(8)
+ c=conn(); c.execute('INSERT INTO cohorts(cohort_id,name,institution_id,created_by_user_id,created_at) VALUES(?,?,?,?,?)',(cohort_id,name,identity['institution_id'],identity['user_id'],now())); c.commit(); c.close()
+ return {'cohort_id':cohort_id,'name':name,'institution_id':identity['institution_id']}
+
+@app.get('/api/educator/cohorts')
+def list_cohorts(request: Request):
+ check_access(request,True); identity=scoped_identity(request)
+ if not identity: return {'cohorts':[]}
+ clause,params=tenant_clause(identity,'institution_id'); c=conn()
+ rows=c.execute('SELECT cohort_id,name,institution_id,created_by_user_id,created_at FROM cohorts WHERE 1=1'+clause+' ORDER BY name LIMIT 200',params).fetchall()
+ result=[]
+ for row in rows:
+  item=dict(row); item['member_count']=c.execute('SELECT COUNT(*) n FROM cohort_members WHERE cohort_id=?',(row['cohort_id'],)).fetchone()['n']; result.append(item)
+ c.close(); return {'cohorts':result}
+
+@app.post('/api/educator/cohorts/{cohort_id}/members')
+def add_cohort_member(cohort_id: str, body: dict, request: Request):
+ check_access(request,True); identity=scoped_identity(request)
+ if not identity or identity.get('role') not in ('educator','institution_admin','platform_admin'): raise HTTPException(403,'Educator role required.')
+ learner_id=str(body.get('learner_user_id','')).strip()
+ c=conn(); clause,params=tenant_clause(identity,'institution_id')
+ cohort=c.execute('SELECT * FROM cohorts WHERE cohort_id=?'+clause,(cohort_id,*params)).fetchone()
+ learner=c.execute("SELECT user_id,institution_id,role,status FROM users WHERE user_id=?",(learner_id,)).fetchone()
+ if not cohort or not learner or learner['role']!='learner' or learner['status']!='active' or learner['institution_id']!=cohort['institution_id']:
+  c.close(); raise HTTPException(404,'Cohort or active learner in this institution not found.')
+ c.execute('INSERT OR IGNORE INTO cohort_members(cohort_id,learner_user_id,added_at) VALUES(?,?,?)',(cohort_id,learner_id,now())); c.commit(); c.close()
+ return {'added':True,'cohort_id':cohort_id,'learner_user_id':learner_id}
+
+@app.post('/api/educator/assignments')
+def create_assignment(body: dict, request: Request):
+ check_access(request,True); identity=scoped_identity(request)
+ if not identity or identity.get('role') not in ('educator','institution_admin','platform_admin') or not identity.get('institution_id'):
+  raise HTTPException(403,'Institution-scoped educator or administrator account required.')
+ title=str(body.get('title','')).strip(); case_id=str(body.get('case_id','')).strip()
+ mode=str(body.get('mode','practice')); cohort_id=body.get('cohort_id'); learner_id=body.get('learner_user_id'); due_at=body.get('due_at')
+ if not title or len(title)>160 or mode not in ('practice','exam') or (not cohort_id and not learner_id) or (cohort_id and learner_id):
+  raise HTTPException(422,'Provide a title, valid mode, and exactly one cohort or learner target.')
+ if not load_case(case_id,identity): raise HTTPException(404,'Case not found.')
+ c=conn(); inst=identity['institution_id']
+ if cohort_id:
+  target=c.execute('SELECT cohort_id FROM cohorts WHERE cohort_id=? AND institution_id=?',(cohort_id,inst)).fetchone()
+ else:
+  target=c.execute("SELECT user_id FROM users WHERE user_id=? AND institution_id=? AND role='learner' AND status='active'",(learner_id,inst)).fetchone()
+ if not target: c.close(); raise HTTPException(404,'Assignment target not found in this institution.')
+ rubric_version='rubric-v1.0.0'
+ assignment_id='assignment-'+secrets.token_hex(8); exam_id=None; exam_code=None
+ if mode=='exam':
+  if len(title)>120: c.close(); raise HTTPException(422,'Exam assignment titles must be at most 120 characters.')
+  exam_code=secrets.token_urlsafe(5).replace('-','').replace('_','').upper()[:8]
+  cur=c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,institution_id,creator_user_id,rubric_version) VALUES(?,?,?,?,?,?,?,?,?,?)',(exam_code,title,case_id,20,70,now(),identity['display_name'],inst,identity['user_id'],rubric_version)); exam_id=cur.lastrowid
+  rubric={'version':rubric_version,'domains':['Communication and history','Severity and examination','Investigation selection and indication','Result interpretation','Differential diagnosis','Final diagnosis','Management and safety','Referral and follow-up'],'scoring_method':'formative keyword/evidence checks; not clinically validated','critical_flags_weighted_separately':True}
+  c.execute('INSERT OR IGNORE INTO rubric_versions(rubric_id,rubric_version,institution_id,name,rubric_json,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?)',(inst+':'+rubric_version,rubric_version,inst,'Default formative rubric v1.0.0',json.dumps(rubric),identity['user_id'],now()))
+ c.execute('INSERT INTO assignments(assignment_id,title,institution_id,case_id,mode,cohort_id,learner_user_id,exam_id,due_at,rubric_version,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',(assignment_id,title,inst,case_id,mode,cohort_id,learner_id,exam_id,due_at,rubric_version,identity['user_id'],now()))
+ c.commit(); c.close()
+ return {'assignment_id':assignment_id,'title':title,'institution_id':inst,'case_id':case_id,'mode':mode,'cohort_id':cohort_id,'learner_user_id':learner_id,'exam_id':exam_id,'exam_code':exam_code,'due_at':due_at,'rubric_version':rubric_version,'status':'active'}
+
+@app.get('/api/educator/assignments')
+def list_assignments(request: Request):
+ check_access(request,True); identity=scoped_identity(request)
+ if not identity: return {'assignments':[]}
+ clause,params=tenant_clause(identity,'institution_id'); c=conn()
+ rows=c.execute('SELECT * FROM assignments WHERE 1=1'+clause+' ORDER BY created_at DESC LIMIT 200',params).fetchall()
+ c.close(); return {'assignments':[dict(row) for row in rows]}
+
+@app.get('/api/educator/reports.csv')
+def export_reports(request: Request):
+ from fastapi.responses import Response
+ import csv, io
+ check_access(request,True); identity=scoped_identity(request); clause,params=tenant_clause(identity)
+ c=conn(); rows=c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,report FROM sessions WHERE status="completed"'+clause+' ORDER BY id DESC LIMIT 1000',params).fetchall(); c.close()
+ output=io.StringIO(newline=''); writer=csv.writer(output)
+ writer.writerow(['session_id','learner','case_id','mode','exam_id','created_at','status','score','rubric_version','critical_flags'])
+ def csv_cell(value):
+  text_value=str(value if value is not None else '')
+  return "'"+text_value if text_value.startswith(('=','+','-','@','\t','\r')) else text_value
+ for row in rows:
+  report=json.loads(row['report'] or '{}')
+  # CSV contains only sessions within the caller's tenant and does not export event logs.
+  writer.writerow([csv_cell(row['id']),csv_cell(row['learner']),csv_cell(row['case_id']),csv_cell(row['mode']),csv_cell(row['exam_id']),csv_cell(row['created_at']),csv_cell(row['status']),csv_cell(report.get('score','')),csv_cell(report.get('rubric_version','rubric-v1.0.0')),csv_cell('; '.join(report.get('critical_flags',[])))])
+ return Response(content=output.getvalue(),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="bestie-clinical-sim-reports.csv"','Cache-Control':'no-store'})
+
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
  check_access(request,True); identity=scoped_identity(request); clause,params=tenant_clause(identity); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions WHERE 1=1'+clause+' ORDER BY id DESC LIMIT 100',params)]; exams=[dict(r) for r in c.execute('SELECT * FROM exams WHERE 1=1'+clause+' ORDER BY id DESC LIMIT 100',params)]; total=c.execute('SELECT COUNT(*) n FROM sessions WHERE 1=1'+clause,params).fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"'+clause,params).fetchone()['n']; c.close()
