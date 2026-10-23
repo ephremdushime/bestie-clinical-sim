@@ -145,3 +145,38 @@ def test_suspended_institution_invalidates_existing_bearer_sessions(tmp_path, mo
             db.commit()
         assert client.get("/api/auth/me", headers=learner).status_code == 401
         assert client.get("/api/learner/progress", headers=learner).status_code == 401
+
+
+def test_shared_pilot_token_cannot_join_controlled_exam(tmp_path, monkeypatch):
+    _, _, _, educator_id = provision(tmp_path / "pilot-exam.db", monkeypatch)
+    with TestClient(main.app) as client:
+        educator = login(client, "educator@b.example", "educator-password-long")
+        exam = client.post("/api/educator/exams", headers=educator, json={
+            "title": "Tenant B exam", "case_id": "malaria-001"})
+        assert exam.status_code == 200, exam.text
+        response = client.post("/api/sessions", headers={"X-Pilot-Token": "p" * 40}, json={
+            "learner": "Shared token user", "case_id": "malaria-001",
+            "mode": "exam", "exam_code": exam.json()["code"]})
+        assert response.status_code == 401
+        assert "provisioned learner account" in response.json()["detail"]
+
+
+def test_csv_export_neutralizes_spreadsheet_formula_prefixes(tmp_path, monkeypatch):
+    learner_id, _, _, _ = provision(tmp_path / "csv-formula.db", monkeypatch)
+    with sqlite3.connect(tmp_path / "csv-formula.db") as db:
+        db.execute("UPDATE users SET display_name=? WHERE user_id=?",
+                   ("=HYPERLINK(\"https://bad.example\")", learner_id))
+        db.commit()
+    with TestClient(main.app) as client:
+        learner = login(client, "learner@a.example", "learner-password-long")
+        educator = login(client, "educator@a.example", "educator-password-long")
+        started = client.post("/api/sessions", headers=learner, json={
+            "learner": "ignored", "case_id": "malaria-001", "mode": "practice"})
+        sid = started.json()["session_id"]
+        client.post(f"/api/sessions/{sid}/finish", headers=learner, json={
+            "differential": ["malaria", "viral illness"], "final_diagnosis": "malaria",
+            "management": ["follow-up", "urgent referral"], "reflection": "review results"})
+        response = client.get("/api/educator/reports.csv", headers=educator)
+        assert response.status_code == 200
+        assert "'=HYPERLINK(" in response.text
+        assert '=HYPERLINK(' not in response.text
