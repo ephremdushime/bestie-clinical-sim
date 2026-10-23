@@ -95,3 +95,24 @@ def test_malformed_or_missing_bearer_token_is_rejected():
         with pytest.raises(HTTPException) as exc:
             auth_routes.current_user(header)
         assert exc.value.status_code == 401
+
+
+
+def test_expired_account_session_cannot_be_reused_for_api_or_websocket_ticket(tmp_path, monkeypatch):
+    db_path, _ = setup_auth_db(tmp_path, monkeypatch)
+    result = auth_routes.login(LoginRequest(
+        email="learner@example.org", password="test-password-that-is-long"))
+    token = result["access_token"]
+    import hashlib
+    with sqlite3.connect(db_path) as db:
+        db.execute("UPDATE auth_sessions SET expires_at=? WHERE token_hash=?",
+                   ("2000-01-01T00:00:00+00:00",
+                    hashlib.sha256(token.encode("utf-8")).hexdigest()))
+        db.commit()
+
+    with pytest.raises(HTTPException) as current_error:
+        auth_routes.current_user("Bearer " + token)
+    assert current_error.value.status_code == 401
+    with pytest.raises(HTTPException) as ticket_error:
+        auth_routes.create_websocket_ticket("Bearer " + token)
+    assert ticket_error.value.status_code == 401
