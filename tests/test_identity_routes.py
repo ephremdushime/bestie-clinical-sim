@@ -98,3 +98,59 @@ def test_authenticated_learner_session_is_bound_to_account(tmp_path, monkeypatch
         reply = client.post(f"/api/sessions/{data['session_id']}/chat", headers=headers,
                             json={"message": "When did it start?"})
         assert reply.status_code == 200, reply.text
+
+
+def test_educator_case_drafts_and_exams_are_institution_scoped(tmp_path, monkeypatch):
+    _, _ = _provision(tmp_path / "tenant.db", monkeypatch)
+    db = sqlite3.connect(tmp_path / "tenant.db")
+    db.row_factory = sqlite3.Row
+    db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+               ("inst-b", "Institution B", "2026-01-01T00:00:00+00:00"))
+    create_user(db, email="educator@b.example", display_name="Educator B",
+                password="educator-b-password-long", role="educator", institution_id="inst-b")
+    db.commit()
+    db.close()
+    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setattr(main, "PILOT_TOKEN", "p" * 40)
+    monkeypatch.setattr(main, "EDUCATOR_TOKEN", "e" * 40)
+    monkeypatch.setenv("CORS_ORIGINS", "https://sim.example.edu")
+    main.init_db()
+
+    with TestClient(main.app) as client:
+        login_a = client.post("/api/auth/login", json={
+            "email": "educator@a.example", "password": "educator-password-long"})
+        login_b = client.post("/api/auth/login", json={
+            "email": "educator@b.example", "password": "educator-b-password-long"})
+        assert login_a.status_code == login_b.status_code == 200
+        headers_a = {"Authorization": f"Bearer {login_a.json()['access_token']}"}
+        headers_b = {"Authorization": f"Bearer {login_b.json()['access_token']}"}
+
+        draft = client.post("/api/educator/case-draft", headers=headers_a, json={
+            "topic": "Institution A draft", "auto_retrieve": False})
+        assert draft.status_code == 200, draft.text
+        draft_id = draft.json()["draft_id"]
+        drafts_b = client.get("/api/educator/case-drafts", headers=headers_b)
+        assert drafts_b.status_code == 200
+        assert draft_id not in [x["draft_id"] for x in drafts_b.json()["drafts"]]
+        cross_review = client.post(
+            f"/api/educator/case-drafts/{draft_id}/review", headers=headers_b,
+            json={"reviewer": "Educator B", "review_notes": "Cross-tenant access test"})
+        assert cross_review.status_code == 404
+
+        exam = client.post("/api/educator/exams", headers=headers_a, json={
+            "title": "Institution A exam", "case_id": "malaria-001", "duration": 10,
+            "pass_mark": 70, "creator": "Forged Creator"})
+        assert exam.status_code == 200, exam.text
+        assert exam.json()["creator"] == "Educator A"
+        code = exam.json()["code"]
+        cross_join = client.post("/api/sessions", headers=headers_b, json={
+            "learner": "Learner B", "case_id": "malaria-001", "mode": "exam",
+            "exam_code": code})
+        assert cross_join.status_code == 404
+        cross_close = client.post(
+            f"/api/educator/exams/{exam.json()['id']}/close", headers=headers_b)
+        assert cross_close.status_code == 404
+
+        dashboard_b = client.get("/api/educator/dashboard", headers=headers_b)
+        assert dashboard_b.status_code == 200
+        assert all(x["institution_id"] != "inst-a" for x in dashboard_b.json()["exams"])
