@@ -296,10 +296,17 @@ def resume_session(sid: int, request: Request):
   elif event.get('type')=='investigation':
    safe_events.append({'role':'investigation','content':event.get('test_name',''),'result':event.get('result',''),'interpretation':event.get('interpretation',''),'appropriate':event.get('appropriate',False),'test_id':event.get('test_id')})
  report=json.loads(s['report']) if s['report'] else None
+ exam_duration=None; remaining_seconds=None
+ if s['mode']=='exam' and s['exam_id']:
+  exrow=c.execute('SELECT duration FROM exams WHERE id=?',(s['exam_id'],)).fetchone()
+  if exrow:
+   exam_duration=int(exrow['duration'])
+   try: remaining_seconds=max(0,exam_duration*60-int((datetime.now(timezone.utc)-datetime.fromisoformat(s['created_at'])).total_seconds()))
+   except Exception: remaining_seconds=0
  if s['mode']=='exam' and report:
   report={'status':'submitted_pending_educator_review','mode':'exam','submitted_at':report.get('submitted_at'),'time_expired':report.get('time_expired'),'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
  c.close()
- return {'session_id':s['id'],'mode':s['mode'],'status':s['status'],'case_id':s['case_id'] if s['mode']=='practice' else None,'case_version':case.get('version'),'opening':case.get('opening') if not safe_events else None,'patient':{'age':case.get('age'),'sex':case.get('sex'),'appearance':case.get('appearance'),'vitals':case.get('vitals') if s['mode']=='practice' else None},'events':safe_events,'report':report,'created_at':s['created_at'],'examination':({'title':'Controlled examination'} if s['mode']=='exam' else None)}
+ return {'session_id':s['id'],'mode':s['mode'],'status':s['status'],'case_id':s['case_id'] if s['mode']=='practice' else None,'case_version':case.get('version'),'opening':case.get('opening') if not safe_events else None,'patient':{'age':case.get('age'),'sex':case.get('sex'),'appearance':case.get('appearance'),'vitals':case.get('vitals') if s['mode']=='practice' else None},'events':safe_events,'report':report,'created_at':s['created_at'],'examination':({'title':'Controlled examination','duration':exam_duration} if s['mode']=='exam' else None),'time_remaining_seconds':remaining_seconds}
 
 @app.post('/api/sessions/{sid}/chat')
 async def chat(sid:int,body:Message,request:Request):
