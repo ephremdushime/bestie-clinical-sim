@@ -423,16 +423,29 @@ rooms={}
 async def room(ws:WebSocket,room:str):
  identity=None
  if APP_ENV=='production':
-  # Browser WebSockets cannot set Authorization headers. Accept a provisioned bearer
-  # session in the query string, but never log or echo it. Room names are tenant IDs.
-  token=ws.query_params.get('token','')
-  if not token or len(token)>512:
+  # Browser WebSockets cannot set Authorization headers. Use a single-use, 60-second
+  # ticket, not the long-lived bearer session, in the query string.
+  ticket=ws.query_params.get('ticket','')
+  if not ticket or len(ticket)>512:
    await ws.close(code=1008); return
   db=conn()
   try:
-   from identity import init_identity_schema, resolve_session
-   init_identity_schema(db); resolved=resolve_session(db,token); db.commit()
-   identity=({key:resolved[key] for key in ('user_id','institution_id','display_name','role')} if resolved else None)
+   import hashlib
+   from datetime import datetime, timezone
+   from identity import init_identity_schema
+   init_identity_schema(db)
+   digest=hashlib.sha256(ticket.encode('utf-8')).hexdigest()
+   now_iso=datetime.now(timezone.utc).isoformat(timespec='seconds')
+   cur=db.execute('UPDATE websocket_tickets SET consumed_at=? WHERE ticket_hash=? AND consumed_at IS NULL AND expires_at>?',
+                  (now_iso,digest,now_iso))
+   if cur.rowcount != 1:
+    db.commit(); await ws.close(code=1008); return
+   resolved=db.execute('''SELECT u.user_id,u.institution_id,u.display_name,u.role,u.status
+       FROM websocket_tickets t JOIN users u ON u.user_id=t.user_id
+       WHERE t.ticket_hash=?''',(digest,)).fetchone()
+   db.commit()
+   identity=({key:resolved[key] for key in ('user_id','institution_id','display_name','role')}
+             if resolved and resolved['status']=='active' else None)
   finally: db.close()
   if not identity or not identity.get('institution_id') and identity.get('role')!='platform_admin':
    await ws.close(code=1008); return
