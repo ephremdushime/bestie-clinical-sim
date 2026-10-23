@@ -70,6 +70,8 @@ def test_educator_routes_require_provisioned_educator_identity(tmp_path, monkeyp
 
 def test_authenticated_learner_session_is_bound_to_account(tmp_path, monkeypatch):
     learner_id, _ = _provision(tmp_path / "owner.db", monkeypatch)
+    # The route test uses an isolated database; initialize the simulation schema too.
+    main.init_db()
     monkeypatch.setattr(main, "APP_ENV", "production")
     monkeypatch.setattr(main, "PILOT_TOKEN", "p" * 40)
     monkeypatch.setattr(main, "EDUCATOR_TOKEN", "e" * 40)
