@@ -43,7 +43,7 @@ export default function CollaborationRoom({user}) {
       socket.onopen=()=>{setStatus('connected');setError('')};
       socket.onmessage=(event)=>{try{const data=JSON.parse(event.data);if(data.type==='history'){setMessages(Array.isArray(data.messages)?data.messages:[]);return}setMessages(prev=>[...prev,data])}catch{setError('Received an unreadable room message.')}};
       socket.onerror=()=>setError('Room connection failed. Confirm the room belongs to your institution and try again.');
-      socket.onclose=()=>{setStatus('disconnected');if(socketRef.current===socket)socketRef.current=null};
+      socket.onclose=()=>{if(socketRef.current===socket){socketRef.current=null;setStatus('disconnected')}};
     } catch(e) {setStatus('disconnected');setError(e.message||'Unable to connect to the room.')}
   };
 
