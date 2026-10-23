@@ -107,7 +107,12 @@ export default function XRClinicalScene({ caseTitle = 'Fictional patient encount
       gl.enable(gl.DEPTH_TEST);
       gl.clearColor(.055,.085,.105,1);
       const draw = (proj, vmat, viewport) => {
+        // WebXR renders multiple eye viewports into one framebuffer. Restrict both
+        // drawing and clearing to the current viewport so the second eye cannot
+        // erase the first eye's image.
+        gl.enable(gl.SCISSOR_TEST);
         gl.viewport(viewport.x, viewport.y, viewport.width, viewport.height);
+        gl.scissor(viewport.x, viewport.y, viewport.width, viewport.height);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
         gl.useProgram(program);
         objects.forEach(o => {
