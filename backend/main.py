@@ -177,7 +177,8 @@ def create_session(body:StartSession,request:Request):
  if body.mode not in ('practice','exam'): raise HTTPException(400,'Mode must be practice or exam.')
  case_id=body.case_id; exam_id=None
  if body.mode=='exam':
-  c=conn(); if identity and APP_ENV == 'production' and identity['role'] != 'platform_admin':
+  c=conn()
+  if identity and APP_ENV == 'production' and identity['role'] != 'platform_admin':
    ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open" AND institution_id=?',(body.exam_code or '',identity.get('institution_id'))).fetchone()
   else:
    ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"',(body.exam_code or '',)).fetchone()
