@@ -1,5 +1,27 @@
 {
-  "version": "1.0",
-  "description": "Template for educator-reviewed source registry entries. Verify sources and clinical guidance before using cases.",
-  "sources": []
+  "schema_version": "1.0.0",
+  "status": "template_not_approved_sources",
+  "instruction": "Populate only after an educator verifies the source itself. Do not treat search snippets as evidence.",
+  "records": [
+    {
+      "source_id": "SRC-001",
+      "title": "",
+      "issuing_organization_or_author": "",
+      "canonical_url_or_identifier": "",
+      "source_type": "national_guideline|international_guideline|systematic_review|primary_research|textbook|university_material",
+      "jurisdiction": "",
+      "publication_or_update_date": "",
+      "date_accessed": "",
+      "version": "",
+      "relevant_section_or_page": "",
+      "supporting_excerpt_or_summary": "",
+      "supported_case_claims": [],
+      "licensing_and_use_notes": "",
+      "reviewer_role": "",
+      "review_date": "",
+      "approval_status": "unreviewed|approved|rejected|expired",
+      "next_review_date": "",
+      "uncertainty_or_conflicts": ""
+    }
+  ]
 }

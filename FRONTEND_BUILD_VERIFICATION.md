@@ -11,14 +11,32 @@
 
 ## Dependency installation attempt
 
-Command: `npm install --no-audit --no-fund`
+Command:
+
+```sh
+npm install --no-audit --no-fund
+```
 
 The install attempt timed out. The npm log shows registry DNS/network resolution errors (`EAI_AGAIN` while fetching `https://registry.npmjs.org/@vitejs/plugin-react`). There is no `node_modules` directory and no package lockfile in this release archive.
 
 ## Interpretation
 
-This does not prove that the frontend has a compilation error or that it builds successfully. The Vite compiler was unavailable, so JSX transformation and production bundling did not run. The result is inconclusive until dependencies can be installed in a network-enabled environment.
+This result does **not** prove that the frontend source has a compilation error; the Vite compiler was unavailable, so JSX transformation and production bundling did not run. It also does **not** prove the frontend builds successfully. The result is inconclusive until dependencies can be installed in a network-enabled environment.
 
 ## Required next steps
 
-Run `npm install --no-audit --no-fund` and `npm run build` on a network-enabled machine. If successful, commit `package-lock.json` and verify reproducibility with `npm ci` followed by `npm run build`. Then run browser-based end-to-end tests. Do not deploy until these checks pass.
+Run these commands from the project root in a machine with npm registry access:
+
+```sh
+npm install --no-audit --no-fund
+npm run build
+```
+
+If the build passes, create and commit `package-lock.json`, then verify reproducibility with:
+
+```sh
+npm ci
+npm run build
+```
+
+Finally, serve the built `dist/` output and run browser-based end-to-end tests against the backend, including practice, timed exam, investigation ordering, finish/report, educator case review, and session-token authorization. Do not deploy until these checks pass.
