@@ -73,7 +73,12 @@ def init_db():
  CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT, institution_id TEXT, creator_user_id TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT, institution_id TEXT, creator_user_id TEXT);
- CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT, institution_id TEXT);''');
+ CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT, institution_id TEXT);
+ CREATE TABLE IF NOT EXISTS cohorts(cohort_id TEXT PRIMARY KEY, name TEXT NOT NULL, institution_id TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL);
+ CREATE TABLE IF NOT EXISTS cohort_members(cohort_id TEXT NOT NULL REFERENCES cohorts(cohort_id) ON DELETE CASCADE, learner_user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, added_at TEXT NOT NULL, PRIMARY KEY(cohort_id,learner_user_id));
+ CREATE TABLE IF NOT EXISTS assignments(assignment_id TEXT PRIMARY KEY, title TEXT NOT NULL, institution_id TEXT NOT NULL, case_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('practice','exam')), cohort_id TEXT REFERENCES cohorts(cohort_id), learner_user_id TEXT REFERENCES users(user_id), due_at TEXT, rubric_version TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','closed')));
+ CREATE TABLE IF NOT EXISTS rubric_versions(rubric_version TEXT PRIMARY KEY, institution_id TEXT, name TEXT NOT NULL, rubric_json TEXT NOT NULL, created_by_user_id TEXT NOT NULL, created_at TEXT NOT NULL);
+ ''');
  # Safe additive migrations; never rebuild or discard existing pilot data.
  cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
  if 'session_token_hash' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN session_token_hash TEXT')
@@ -82,6 +87,7 @@ def init_db():
  exam_cols={row['name'] for row in c.execute('PRAGMA table_info(exams)')}
  if 'institution_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN institution_id TEXT')
  if 'creator_user_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN creator_user_id TEXT')
+ if 'rubric_version' not in exam_cols: c.execute("ALTER TABLE exams ADD COLUMN rubric_version TEXT NOT NULL DEFAULT 'rubric-v1.0.0'")
  draft_cols={row['name'] for row in c.execute('PRAGMA table_info(case_drafts)')}
  if 'institution_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN institution_id TEXT')
  if 'creator_user_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN creator_user_id TEXT')
@@ -275,6 +281,26 @@ def session_expired(c, s):
  except Exception: return False
  return elapsed > int(ex['duration'])
 
+@app.get('/api/sessions/{sid}/resume')
+def resume_session(sid: int, request: Request):
+ check_access(request); identity=scoped_identity(request); c=conn()
+ s=c.execute('SELECT * FROM sessions WHERE id=?',(sid,)).fetchone()
+ if not s: c.close(); raise HTTPException(404,'Session not found.')
+ check_session_access(request,s)
+ events=json.loads(s['events'] or '[]')
+ case=case_for_session(s)
+ safe_events=[]
+ for event in events:
+  if event.get('type')=='chat':
+   safe_events.extend([{'role':'student','content':event.get('student_message','')},{'role':'patient','content':event.get('patient_reply','')}])
+  elif event.get('type')=='investigation':
+   safe_events.append({'role':'investigation','content':event.get('test_name',''),'result':event.get('result',''),'interpretation':event.get('interpretation',''),'appropriate':event.get('appropriate',False),'test_id':event.get('test_id')})
+ report=json.loads(s['report']) if s['report'] else None
+ if s['mode']=='exam' and report:
+  report={'status':'submitted_pending_educator_review','mode':'exam','submitted_at':report.get('submitted_at'),'time_expired':report.get('time_expired'),'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
+ c.close()
+ return {'session_id':s['id'],'mode':s['mode'],'status':s['status'],'case_id':s['case_id'] if s['mode']=='practice' else None,'case_version':case.get('version'),'opening':case.get('opening') if not safe_events else None,'patient':{'age':case.get('age'),'sex':case.get('sex'),'appearance':case.get('appearance'),'vitals':case.get('vitals') if s['mode']=='practice' else None},'events':safe_events,'report':report,'created_at':s['created_at'],'examination':({'title':'Controlled examination'} if s['mode']=='exam' else None)}
+
 @app.post('/api/sessions/{sid}/chat')
 async def chat(sid:int,body:Message,request:Request):
  check_access(request); c=conn(); s=c.execute('SELECT * FROM sessions WHERE id=?',(sid,)).fetchone()
@@ -458,6 +484,109 @@ def create_exam(body:ExamCreate,request:Request):
  identity=scoped_identity(request)
  creator=identity['display_name'] if identity else body.creator
  c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),creator,identity.get('institution_id') if identity else None,identity.get('user_id') if identity else None)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
+@app.get('/api/learner/progress')
+def learner_progress(request: Request):
+ check_access(request)
+ identity=scoped_identity(request)
+ if not identity or identity.get('role')!='learner':
+  raise HTTPException(401,'Sign in with a learner account to view personal progress.')
+ c=conn()
+ rows=c.execute('SELECT id,case_id,mode,status,created_at,report FROM sessions WHERE owner_user_id=? ORDER BY id DESC LIMIT 200',(identity['user_id'],)).fetchall()
+ completed=[r for r in rows if r['status']=='completed']
+ practice=sum(1 for r in completed if r['mode']=='practice')
+ exams=sum(1 for r in completed if r['mode']=='exam')
+ assignments=c.execute('''SELECT a.assignment_id,a.title,a.case_id,a.mode,a.due_at,a.rubric_version,a.created_at,a.status,
+   (SELECT COUNT(*) FROM sessions s WHERE s.owner_user_id=? AND s.case_id=a.case_id AND s.status='completed' AND s.mode=a.mode) AS completed
+   FROM assignments a LEFT JOIN cohort_members cm ON cm.cohort_id=a.cohort_id
+   WHERE a.institution_id=? AND a.status='active' AND (a.learner_user_id=? OR cm.learner_user_id=?)
+   ORDER BY a.created_at DESC LIMIT 100''',(identity['user_id'],identity.get('institution_id'),identity['user_id'],identity['user_id'])).fetchall()
+ c.close()
+ return {'learner':identity['display_name'],'total_sessions':len(rows),'completed_sessions':len(completed),'practice_completed':practice,'exams_submitted':exams,'recent':[{'session_id':r['id'],'case_id':r['case_id'],'mode':r['mode'],'status':r['status'],'created_at':r['created_at']} for r in rows[:20]],'assignments':[dict(a) for a in assignments]}
+
+@app.get('/api/learner/assignments')
+def learner_assignments(request: Request):
+ result=learner_progress(request)
+ return {'assignments':result['assignments']}
+
+@app.post('/api/educator/cohorts')
+def create_cohort(body: dict, request: Request):
+ check_access(request,True); identity=scoped_identity(request)
+ if not identity or identity.get('role') not in ('educator','institution_admin','platform_admin') or not identity.get('institution_id'):
+  raise HTTPException(403,'An institution-scoped educator or administrator account is required.')
+ name=str(body.get('name','')).strip()
+ if not name or len(name)>120: raise HTTPException(422,'Cohort name must be 1–120 characters.')
+ cohort_id='cohort-'+secrets.token_hex(8)
+ c=conn(); c.execute('INSERT INTO cohorts(cohort_id,name,institution_id,created_by_user_id,created_at) VALUES(?,?,?,?,?)',(cohort_id,name,identity['institution_id'],identity['user_id'],now())); c.commit(); c.close()
+ return {'cohort_id':cohort_id,'name':name,'institution_id':identity['institution_id']}
+
+@app.get('/api/educator/cohorts')
+def list_cohorts(request: Request):
+ check_access(request,True); identity=scoped_identity(request)
+ if not identity: return {'cohorts':[]}
+ clause,params=tenant_clause(identity,'institution_id'); c=conn()
+ rows=c.execute('SELECT cohort_id,name,institution_id,created_by_user_id,created_at FROM cohorts WHERE 1=1'+clause+' ORDER BY name LIMIT 200',params).fetchall()
+ result=[]
+ for row in rows:
+  item=dict(row); item['member_count']=c.execute('SELECT COUNT(*) n FROM cohort_members WHERE cohort_id=?',(row['cohort_id'],)).fetchone()['n']; result.append(item)
+ c.close(); return {'cohorts':result}
+
+@app.post('/api/educator/cohorts/{cohort_id}/members')
+def add_cohort_member(cohort_id: str, body: dict, request: Request):
+ check_access(request,True); identity=scoped_identity(request)
+ if not identity or identity.get('role') not in ('educator','institution_admin','platform_admin'): raise HTTPException(403,'Educator role required.')
+ learner_id=str(body.get('learner_user_id','')).strip()
+ c=conn(); clause,params=tenant_clause(identity,'institution_id')
+ cohort=c.execute('SELECT * FROM cohorts WHERE cohort_id=?'+clause,(cohort_id,*params)).fetchone()
+ learner=c.execute("SELECT user_id,institution_id,role,status FROM users WHERE user_id=?",(learner_id,)).fetchone()
+ if not cohort or not learner or learner['role']!='learner' or learner['status']!='active' or learner['institution_id']!=cohort['institution_id']:
+  c.close(); raise HTTPException(404,'Cohort or active learner in this institution not found.')
+ c.execute('INSERT OR IGNORE INTO cohort_members(cohort_id,learner_user_id,added_at) VALUES(?,?,?)',(cohort_id,learner_id,now())); c.commit(); c.close()
+ return {'added':True,'cohort_id':cohort_id,'learner_user_id':learner_id}
+
+@app.post('/api/educator/assignments')
+def create_assignment(body: dict, request: Request):
+ check_access(request,True); identity=scoped_identity(request)
+ if not identity or identity.get('role') not in ('educator','institution_admin','platform_admin') or not identity.get('institution_id'):
+  raise HTTPException(403,'Institution-scoped educator or administrator account required.')
+ title=str(body.get('title','')).strip(); case_id=str(body.get('case_id','')).strip()
+ mode=str(body.get('mode','practice')); cohort_id=body.get('cohort_id'); learner_id=body.get('learner_user_id'); due_at=body.get('due_at')
+ if not title or len(title)>160 or mode not in ('practice','exam') or (not cohort_id and not learner_id) or (cohort_id and learner_id):
+  raise HTTPException(422,'Provide a title, valid mode, and exactly one cohort or learner target.')
+ if not load_case(case_id,identity): raise HTTPException(404,'Case not found.')
+ c=conn(); inst=identity['institution_id']
+ if cohort_id:
+  target=c.execute('SELECT cohort_id FROM cohorts WHERE cohort_id=? AND institution_id=?',(cohort_id,inst)).fetchone()
+ else:
+  target=c.execute("SELECT user_id FROM users WHERE user_id=? AND institution_id=? AND role='learner' AND status='active'",(learner_id,inst)).fetchone()
+ if not target: c.close(); raise HTTPException(404,'Assignment target not found in this institution.')
+ rubric_version='rubric-v1.0.0'
+ assignment_id='assignment-'+secrets.token_hex(8)
+ c.execute('INSERT INTO assignments(assignment_id,title,institution_id,case_id,mode,cohort_id,learner_user_id,due_at,rubric_version,created_by_user_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(assignment_id,title,inst,case_id,mode,cohort_id,learner_id,due_at,rubric_version,identity['user_id'],now()))
+ c.commit(); c.close()
+ return {'assignment_id':assignment_id,'title':title,'institution_id':inst,'case_id':case_id,'mode':mode,'cohort_id':cohort_id,'learner_user_id':learner_id,'due_at':due_at,'rubric_version':rubric_version,'status':'active'}
+
+@app.get('/api/educator/assignments')
+def list_assignments(request: Request):
+ check_access(request,True); identity=scoped_identity(request)
+ if not identity: return {'assignments':[]}
+ clause,params=tenant_clause(identity,'institution_id'); c=conn()
+ rows=c.execute('SELECT * FROM assignments WHERE 1=1'+clause+' ORDER BY created_at DESC LIMIT 200',params).fetchall()
+ c.close(); return {'assignments':[dict(row) for row in rows]}
+
+@app.get('/api/educator/reports.csv')
+def export_reports(request: Request):
+ from fastapi.responses import Response
+ import csv, io
+ check_access(request,True); identity=scoped_identity(request); clause,params=tenant_clause(identity)
+ c=conn(); rows=c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,report FROM sessions WHERE status="completed"'+clause+' ORDER BY id DESC LIMIT 1000',params).fetchall(); c.close()
+ output=io.StringIO(newline=''); writer=csv.writer(output)
+ writer.writerow(['session_id','learner','case_id','mode','exam_id','created_at','status','score','rubric_version','critical_flags'])
+ for row in rows:
+  report=json.loads(row['report'] or '{}')
+  # CSV contains only sessions within the caller's tenant and does not export event logs.
+  writer.writerow([row['id'],row['learner'],row['case_id'],row['mode'],row['exam_id'],row['created_at'],row['status'],report.get('score',''),report.get('rubric_version','rubric-v1.0.0'),'; '.join(report.get('critical_flags',[]))])
+ return Response(content=output.getvalue(),media_type='text/csv; charset=utf-8',headers={'Content-Disposition':'attachment; filename="bestie-clinical-sim-reports.csv"','Cache-Control':'no-store'})
+
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
  check_access(request,True); identity=scoped_identity(request); clause,params=tenant_clause(identity); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions WHERE 1=1'+clause+' ORDER BY id DESC LIMIT 100',params)]; exams=[dict(r) for r in c.execute('SELECT * FROM exams WHERE 1=1'+clause+' ORDER BY id DESC LIMIT 100',params)]; total=c.execute('SELECT COUNT(*) n FROM sessions WHERE 1=1'+clause,params).fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"'+clause,params).fetchone()['n']; c.close()
