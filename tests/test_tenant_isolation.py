@@ -54,7 +54,7 @@ def _setup(db_path, monkeypatch):
             ("draft-" + suffix, "Topic " + suffix.upper(), "General medicine", "draft",
              json.dumps({"case": {"title": "Draft " + suffix.upper()}}),
              "2026-10-24T10:00:00+00:00", "2026-10-24T10:00:00+00:00",
-             iid, educator_a["user_id"] if suffix == "a" else educator_b["user_id"]),
+             iid, educator_a if suffix == "a" else educator_b),
         )
     db.execute(
         """INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,status,events,report,
