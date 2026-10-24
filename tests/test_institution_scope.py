@@ -93,6 +93,7 @@ def test_educator_cannot_access_another_institutions_learner_session_or_exam(tmp
         exam_b = client.post("/api/educator/exams", headers=educator_b, json={
             "title": "Institution B exam", "case_id": "malaria-001", "duration": 20, "pass_mark": 70})
         assert exam_b.status_code == 200
-        close = client.post(f"/api/educator/exams/{exam_b.json()["id"]}/close",
+        exam_id = exam_b.json()["id"]
+        close = client.post(f"/api/educator/exams/{exam_id}/close",
             headers=educator_a, json={})
         assert close.status_code == 403
