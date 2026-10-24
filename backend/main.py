@@ -1,6 +1,6 @@
 """Bestie Clinical Sim v1.3.0 - educational simulation API. Fictional cases only."""
 from __future__ import annotations
-import json, os, sqlite3, secrets, hmac, hashlib
+import json, os, sqlite3, secrets, hmac, hashlib, time
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Any
@@ -826,6 +826,7 @@ async def room(ws:WebSocket,room:str):
  await ws.accept()
  connection={'socket':ws,'user_id':principal['user_id'],'institution_id':principal['institution_id']}
  rooms.setdefault(room,[]).append(connection)
+ message_times=[]
  try:
   await ws.send_json({'type':'history','messages':[]})
   while True:
@@ -837,6 +838,11 @@ async def room(ws:WebSocket,room:str):
     await ws.send_json({'type':'error','message':'Message text is required.'}); continue
    if len(message_text)>1200:
     await ws.send_json({'type':'error','message':'Message exceeds the 1200-character limit.'}); continue
+   monotonic_now=time.monotonic()
+   message_times[:]=[stamp for stamp in message_times if monotonic_now-stamp<60]
+   if len(message_times)>=30:
+    await ws.send_json({'type':'error','message':'Message rate limit reached. Wait before sending more messages.'}); continue
+   message_times.append(monotonic_now)
    msg={'type':'message','user_id':principal['user_id'],'name':'Participant',
         'role':principal['role'],'text':message_text[:1200],'created_at':now()}
    for peer in list(rooms.get(room,[])):
