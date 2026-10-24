@@ -83,7 +83,7 @@ def init_db():
  cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
  if 'session_token_hash' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN session_token_hash TEXT')
  if 'owner_user_id' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN owner_user_id TEXT')
- for column in ('case_version','rubric_version','case_snapshot','rubric_snapshot'):
+ for column in ('case_version','rubric_version','case_snapshot','rubric_snapshot','result_released_at'):
   if column not in cols: c.execute(f'ALTER TABLE sessions ADD COLUMN {column} TEXT')
  exam_cols={row['name'] for row in c.execute('PRAGMA table_info(exams)')}
  for column in ('case_version','rubric_version','institution_id','creator_user_id'):
@@ -544,11 +544,46 @@ def create_exam(body:ExamCreate,request:Request):
  finally: c.close()
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
- check_access(request,True); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']; c.close()
+ check_access(request,True); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report,result_released_at FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']; c.close()
  for s in sessions:
   if s.get('report'): s['report']=json.loads(s['report'])
   if s.get('events'): s['events']=json.loads(s['events'])
  return {'total_sessions':total,'completed_sessions':done,'sessions':sessions,'exams':exams}
+@app.post('/api/educator/sessions/{session_id}/release-result')
+def release_exam_result(session_id:int,request:Request):
+ check_access(request,True); actor=educator_actor(request); c=conn()
+ try:
+  row=c.execute('''SELECT s.id,s.mode,s.status,s.report,s.result_released_at,e.institution_id
+      FROM sessions s LEFT JOIN exams e ON e.id=s.exam_id WHERE s.id=?''',(session_id,)).fetchone()
+  if not row: raise HTTPException(404,'Session not found.')
+  if row['mode']!='exam' or row['status']!='completed' or not row['report']:
+   raise HTTPException(409,'Only completed examination submissions can be released.')
+  if APP_ENV=='production' and actor.get('role')!='platform_admin' and row['institution_id']!=actor.get('institution_id'):
+   raise HTTPException(403,'You cannot release results for another institution.')
+  if row['result_released_at']:
+   return {'released':True,'result_released_at':row['result_released_at'],'already_released':True}
+  released_at=now()
+  c.execute('UPDATE sessions SET result_released_at=? WHERE id=? AND result_released_at IS NULL',(released_at,session_id))
+  save_event(c,session_id,{'type':'exam_result_released','released_by_user_id':actor.get('user_id'),'released_at':released_at})
+  c.commit()
+  return {'released':True,'result_released_at':released_at,'already_released':False}
+ finally: c.close()
+
+@app.get('/api/sessions/{sid}/result')
+def released_session_result(sid:int,request:Request):
+ check_access(request); identity=getattr(request.state,'identity_user',None) or current_identity_user(request); c=conn()
+ try:
+  row=c.execute('SELECT * FROM sessions WHERE id=?',(sid,)).fetchone()
+  if not row: raise HTTPException(404,'Session not found.')
+  check_session_access(request,row)
+  owner=row['owner_user_id'] if 'owner_user_id' in row.keys() else None
+  if APP_ENV=='production' and (not identity or not owner or identity['user_id']!=owner):
+   raise HTTPException(403,'Only the learner who owns this examination can retrieve its released result.')
+  if row['mode']!='exam' or row['status']!='completed': raise HTTPException(409,'No completed examination result is available.')
+  if not row['result_released_at']: raise HTTPException(403,'Your educator has not released this result yet.')
+  return {'result_released':True,'result_released_at':row['result_released_at'],'report':json.loads(row['report'])}
+ finally: c.close()
+
 @app.post('/api/educator/exams/{exam_id}/close')
 def close_exam(exam_id:int,request:Request):
  check_access(request,True); actor=educator_actor(request); c=conn()
