@@ -123,7 +123,7 @@ def _require_platform_admin(request: Request):
  return actor
 
 class OwnershipReconciliationRequest(BaseModel):
- resource_type: str = Field(pattern=r'^(session|case_draft|exam|approved_case)
+ resource_type: str = Field(pattern=r'^(session|case_draft|exam|approved_case)$')
  resource_id: str = Field(min_length=1,max_length=160)
  institution_id: str = Field(min_length=1,max_length=160)
  reason: str = Field(min_length=20,max_length=2000, description='Non-PHI administrative evidence description; do not include patient identifiers or clinical details.')
