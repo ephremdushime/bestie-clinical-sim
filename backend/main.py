@@ -128,7 +128,8 @@ class OwnershipReconciliationRequest(BaseModel):
  resource_type: str = Field(pattern=r'^(session|case_draft|exam|approved_case)$')
  resource_id: str = Field(min_length=1,max_length=160)
  institution_id: str = Field(min_length=1,max_length=160)
- reason: str = Field(min_length=20,max_length=2000, description='Non-PHI administrative evidence description; do not include patient identifiers or clinical details.')
+ reason: str = Field(min_length=20,max_length=2000, description='Why the cited evidence establishes ownership; do not include patient identifiers or clinical details.')
+ evidence_reference: str = Field(min_length=3,max_length=500, description='Reference to a controlled ticket, archived assignment record, or other attributable evidence. Do not include PHI.')
 
 # Published cases are resolved per request by institution; unassigned legacy rows are quarantined.
 
@@ -895,18 +896,23 @@ def reconcile_historical_ownership(body: OwnershipReconciliationRequest, request
   if not row: raise HTTPException(404,'Historical record not found.')
   if row['institution_id'] is not None:
    raise HTTPException(409,'Record already has an institution assignment; this workflow does not overwrite existing ownership.')
+  # Never assign a legacy record on the strength of a free-text reason alone.
+  # Existing attributable account/parent links must independently establish the target tenant.
   if resource=='approved_case':
    owners=c.execute("SELECT DISTINCT approved_by_user_id FROM case_versions WHERE case_id=? AND approved_by_user_id IS NOT NULL",(body.resource_id,)).fetchall()
+   if not owners:
+    raise HTTPException(409,'No attributable approver evidence exists; keep this case quarantined for evidence-backed manual reconciliation.')
    for owner_row in owners:
-    user=c.execute("SELECT institution_id FROM users WHERE user_id=?",(owner_row['approved_by_user_id'],)).fetchone()
+    user=c.execute("SELECT institution_id,status,role FROM users WHERE user_id=?",(owner_row['approved_by_user_id'],)).fetchone()
     if not user or user['institution_id']!=body.institution_id:
      raise HTTPException(422,'Recorded case approver ownership conflicts with the requested institution. Resolve the conflict manually before assignment.')
   else:
    owner=row['owner_user_id'] if resource=='session' else row['creator_user_id']
-   if owner:
-    user=c.execute("SELECT institution_id FROM users WHERE user_id=?",(owner,)).fetchone()
-    if not user or user['institution_id']!=body.institution_id:
-     raise HTTPException(422,'Recorded account ownership conflicts with the requested institution. Resolve the conflict manually before assignment.')
+   if not owner:
+    raise HTTPException(409,'No attributable account ownership exists; keep this record quarantined until evidence establishes ownership.')
+   user=c.execute("SELECT institution_id,status FROM users WHERE user_id=?",(owner,)).fetchone()
+   if not user or user['institution_id']!=body.institution_id:
+    raise HTTPException(422,'Recorded account ownership conflicts with the requested institution. Resolve the conflict manually before assignment.')
   exam_id=row['exam_id'] if resource=='session' else None
   if exam_id:
    ex=c.execute("SELECT institution_id FROM exams WHERE id=?",(exam_id,)).fetchone()
@@ -929,7 +935,7 @@ def reconcile_historical_ownership(body: OwnershipReconciliationRequest, request
   from identity import write_audit_event
   write_audit_event(c,actor_user_id=actor.get('user_id'),institution_id=body.institution_id,
    action='ownership.reconciled',resource_type=resource,resource_id=body.resource_id,outcome='success',
-   metadata_json=json.dumps({'reason':body.reason.strip(),'assignment_method':'explicit_platform_admin_review'}))
+   metadata_json=json.dumps({'reason':body.reason.strip(),'evidence_reference':body.evidence_reference.strip(),'assignment_method':'platform_admin_review_with_attributable_account_evidence'}))
   c.commit()
   return {'reconciled':True,'resource_type':resource,'resource_id':body.resource_id,'institution_id':body.institution_id,'audit_recorded':True}
  except HTTPException:
