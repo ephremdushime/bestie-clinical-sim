@@ -133,6 +133,7 @@ def change_password(body: PasswordChangeRequest, authorization: str | None = Hea
     token = _bearer(authorization)
     db = _db()
     try:
+        db.execute("BEGIN IMMEDIATE")
         session = resolve_session(db, token)
         if not session:
             raise HTTPException(401, "Session is invalid, expired, revoked, or account disabled.")
