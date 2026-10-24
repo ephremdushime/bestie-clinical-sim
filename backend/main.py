@@ -123,7 +123,7 @@ def next_case_version(db,case_id):
   try: numeric.append(tuple(int(part) for part in row['version'].split('.')[:3]))
   except (ValueError,AttributeError): continue
  current=max(numeric) if numeric else (0,9,0)
- return f'{current[0]}.{current[1]}.{current[2]+1}'
+ return f'{current[0]}.{current[1]}.{current[2]+1}' if numeric else '1.0.0'
 def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def save_event(c,sid,event):
  row=c.execute('SELECT events FROM sessions WHERE id=?',(sid,)).fetchone(); ev=json.loads(row['events'] or '[]'); ev.append({'at':now(),**event}); c.execute('UPDATE sessions SET events=? WHERE id=?',(json.dumps(ev),sid))
@@ -218,7 +218,7 @@ def create_session(body:StartSession,request:Request):
  pinned_case=case_for_session(c,{'case_id':case_id,'case_version':case_version})
  opening=pinned_case['opening']; save_event(c,sid,{'type':'session_started','mode':body.mode,'case_id':case_id,'case_version':case_version,'rubric_version':rubric_version}); c.commit(); c.close()
  # Never expose the hidden case identifier/title to a controlled-exam participant.
- return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':CASES[case_id]['age'],'sex':CASES[case_id]['sex'],'appearance':CASES[case_id]['appearance'],'vitals':CASES[case_id]['vitals'] if body.mode=='practice' else None}}
+ return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':pinned_case['age'],'sex':pinned_case['sex'],'appearance':pinned_case['appearance'],'vitals':pinned_case['vitals'] if body.mode=='practice' else None}}
 
 def fallback(case,msg):
  m=msg.lower(); facts=case['facts']
