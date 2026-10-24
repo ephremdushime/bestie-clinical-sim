@@ -101,13 +101,14 @@ except Exception:
  pass
 def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def rubric_for_case(case:dict) -> dict:
- # Explicit versioned formative rubric. It preserves current transparent checks;
- # it does not claim psychometric validation or competence certification.
+ # Explicit versioned formative rubric. It preserves transparent checks and
+ # educator-authored criteria; it is not a validated competence instrument.
  return {'version':str(case.get('rubric_version') or '1.0.0'),
          'domains':['Communication and history','Severity and examination',
                     'Investigation selection and indication','Result interpretation',
                     'Differential diagnosis','Final diagnosis','Management and safety',
                     'Referral and follow-up'],
+         'marking_criteria':list(case.get('marking_rubric') or []),
          'critical_errors':list(case.get('critical_errors') or []),
          'expected_actions':list(case.get('expected_actions') or []),
          'expected_differentials':list(case.get('expected_differentials') or []),
@@ -391,8 +392,21 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  if not body.review_notes.strip(): c.close(); raise HTTPException(422,'A clinical review note is required.')
  actor=educator_actor(request,body.reviewer)
  current=c.execute('SELECT version FROM approved_cases WHERE case_id=?',(case['id'],)).fetchone()
+ previous_rubric=c.execute('SELECT rubric_version,rubric_json FROM case_versions WHERE case_id=? ORDER BY approved_at DESC LIMIT 1',(case['id'],)).fetchone()
  case['version']=next_case_version(current['version'] if current else None)
- case['rubric_version']=str(case.get('rubric_version') or '1.0.0')
+ # Keep the rubric version stable when only case narrative/content changes. Bump
+ # it only when assessment criteria, expected actions/differentials or critical
+ # errors change, so old exam snapshots remain interpretable.
+ if previous_rubric:
+  case['rubric_version']=previous_rubric['rubric_version']
+  candidate=rubric_for_case(case)
+  previous_payload=json.loads(previous_rubric['rubric_json'])
+  candidate_payload=dict(candidate)
+  previous_payload.pop('version',None); candidate_payload.pop('version',None)
+  if json.dumps(candidate_payload,sort_keys=True,separators=(',',':')) != json.dumps(previous_payload,sort_keys=True,separators=(',',':')):
+   case['rubric_version']=next_case_version(previous_rubric['rubric_version'])
+ else:
+  case['rubric_version']=str(case.get('rubric_version') or '1.0.0')
  case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
  rubric=rubric_for_case(case); case_json=json.dumps(case); rubric_json=json.dumps(rubric)
  c.execute('INSERT INTO case_versions(case_id,version,rubric_version,payload,rubric_json,approved_by,approved_by_user_id,approved_at,review_notes) VALUES(?,?,?,?,?,?,?,?,?)',(case['id'],case['version'],case['rubric_version'],case_json,rubric_json,actor['display_name'],actor['user_id'],case['approved_at'],body.review_notes))
