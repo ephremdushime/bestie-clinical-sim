@@ -42,6 +42,14 @@ This build is suitable for supervised technical demonstrations and for collectin
 - SQLite is intended only for small supervised tests; concurrent writes, retention controls and backups need review.
 - API keys, network traffic, dependency versions and deployment logs need production security review.
 
+## Tenant ownership and legacy records
+
+- Built-in teaching cases are shared across institutions. Cases created and published by educators are assigned to the creator's institution and are visible only to that institution and platform administrators.
+- Existing published cases without a trusted institution assignment are intentionally hidden from institution-scoped accounts until an authorized migration assigns ownership. Their records are not deleted automatically.
+- Legacy sessions without a trusted owner/institution are not exposed to institution-scoped educator dashboards. Reconcile ownership before importing production or pilot data.
+- Institution administrators manage accounts through the administration routes; educator sessions, case review/publishing, and exam-management routes require an educator or platform-administrator role.
+- Verify these behaviors against a copy of the existing SQLite database before a pilot. Keep a recoverable backup and document any manual ownership reassignment.
+
 ## Release gates
 
 **Gate A — demonstration:** API smoke tests pass; no real patient data; all UI limitations disclosed.
