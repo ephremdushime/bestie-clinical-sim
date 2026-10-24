@@ -104,3 +104,34 @@ test('learner joins controlled exam without exposed observations or result', asy
   await expect(page.getByText('Awaiting educator review')).toBeVisible();
   await expect(page.getByText(/Your examination submission has been recorded/)).toBeVisible();
 });
+
+test('browser account sign-in uses bearer identity for protected workflows', async ({ page }) => {
+  await mockCases(page);
+  await page.route('**/api/auth/login', route => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      access_token: 'individual-account-token', token_type: 'bearer', expires_in: 28800,
+      user: { user_id: 'learner-1', email: 'learner@example.test', display_name: 'Learner One', role: 'learner', institution_id: 'inst-a' },
+    }),
+  }));
+  await page.route('**/api/sessions', async route => {
+    expect(route.request().headers()['authorization']).toBe('Bearer individual-account-token');
+    await route.fulfill({
+      status: 200, contentType: 'application/json',
+      body: JSON.stringify({
+        session_id: 303, session_token: 'owned-session-token', case_id: 'malaria-001',
+        mode: 'practice', opening: 'Hello, I am the fictional patient.', examination: null,
+        patient: { age: 24, sex: 'adult woman', appearance: 'Fictional patient', vitals: { Temperature: '38.9 °C' } },
+      }),
+    });
+  });
+
+  await page.goto('/');
+  await page.getByPlaceholder('name@institution.edu').fill('learner@example.test');
+  await page.getByPlaceholder('Provisioned account password').fill('test-password-long');
+  await page.getByRole('button', { name: 'Sign in with account' }).click();
+  await expect(page.getByRole('button', { name: /Signed in · Learner One/ })).toBeVisible();
+  await page.getByRole('button', { name: /Start practice/ }).click();
+  await page.getByRole('button', { name: /Enter consultation room/ }).click();
+  await expect(page.getByRole('heading', { name: 'Consultation room' })).toBeVisible();
+});
