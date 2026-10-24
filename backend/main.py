@@ -128,6 +128,15 @@ def ensure_version_snapshots():
    c.execute('UPDATE case_versions SET content_hash=? WHERE case_id=? AND version=? AND (content_hash IS NULL OR content_hash="")',(case_hash,case['id'],version))
    c.execute('INSERT OR IGNORE INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],version,RUBRIC_VERSION,rubric_payload,approved_at,rubric_hash))
    c.execute('UPDATE rubric_versions SET content_hash=? WHERE case_id=? AND case_version=? AND rubric_version=? AND (content_hash IS NULL OR content_hash="")',(rubric_hash,case['id'],version,RUBRIC_VERSION))
+  # Backfill hashes for older immutable versions without rewriting their payloads.
+  for row in c.execute('SELECT case_id,version,payload FROM case_versions WHERE content_hash IS NULL OR content_hash=""').fetchall():
+   try: digest=content_digest(json.loads(row['payload']))
+   except (TypeError,ValueError,json.JSONDecodeError): continue
+   c.execute('UPDATE case_versions SET content_hash=? WHERE case_id=? AND version=?',(digest,row['case_id'],row['version']))
+  for row in c.execute('SELECT case_id,case_version,rubric_version,payload FROM rubric_versions WHERE content_hash IS NULL OR content_hash=""').fetchall():
+   try: digest=content_digest(json.loads(row['payload']))
+   except (TypeError,ValueError,json.JSONDecodeError): continue
+   c.execute('UPDATE rubric_versions SET content_hash=? WHERE case_id=? AND case_version=? AND rubric_version=?',(digest,row['case_id'],row['case_version'],row['rubric_version']))
   c.commit()
  finally: c.close()
 ensure_version_snapshots()
