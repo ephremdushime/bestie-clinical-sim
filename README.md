@@ -7,7 +7,7 @@ Bestie Clinical Sim is a clinical education simulation prototype for medical and
 ## Included capabilities
 
 - **Practice mode:** patient dialogue, adjustable browser speech synthesis, optional browser dictation where supported, hints, investigations with a required clinical indication, case-configured results, management checklist, reflection and formative report.
-- **Examination mode:** teacher creates an exam with a hidden case and shareable code; the API enforces time limits on chat/investigation actions; the student-facing submission response does not reveal the hidden diagnosis, score, rubric decisions or threshold result. Full reports remain in the educator dashboard. This is still shared-token access, not per-user authentication.
+- **Examination mode:** an educator creates an institution-scoped exam with a hidden case and join code; in production, provisioned learner accounts must belong to that institution. The API enforces exam time limits, one attempt per learner account, and pinned case/rubric versions. The student-facing submission response does not reveal the hidden diagnosis, score, rubric decisions or threshold result. Full reports remain in the authorized educator dashboard.
 - **Case library:** malaria, severe respiratory presentation, burns with possible inhalation injury, road-traffic trauma, pregnancy with severe headache, and pediatric fever/fast breathing.
 - **Investigations:** case-specific fixed results for configured tests; unsupported tests do not receive invented findings. A test's indication is recorded. Synthetic imaging schematics are explicitly labeled as illustrations, not diagnostic-quality images.
 - **Educator console:** exam builder, exam codes, close-exam control, recent sessions, reports and event/decision logs.
@@ -88,14 +88,14 @@ Copy `.env.example` to `.env`, replace all example secrets, configure the exact 
 
 ## Known limitations and next steps
 
-1. No individual student/educator accounts, password reset, institutional SSO, identity verification, or per-user educator audit attribution; shared pilot/educator secrets remain a controlled-pilot mechanism, not a production identity system.
+1. Individual provisioned accounts, password changes, revocable bearer sessions, and per-user audit attribution are implemented. Institutional SSO, self-service account recovery, verified identity onboarding, MFA, and centralized account lifecycle management are not implemented; accounts must be provisioned through the trusted server shell.
 2. Scoring is based on transparent but limited demonstration checks; it is not validated against faculty marking or OSCE performance.
 3. Exam settings include duration and pass mark; pass/fail decisions must be reviewed and formally validated before operational use.
 4. The case registry is loaded from built-in cases plus educator-approved cases persisted in SQLite. Case approval/publishing remains an educator attestation and is not independent clinical certification.
 5. The source workflow accepts references and notes but does not crawl Google or external platforms, perform retrieval-augmented generation, verify URLs, or establish clinical evidence automatically.
 6. Imaging schematics are not real radiographs/CTs/ultrasounds. A validated synthetic image library and specialist review are required.
 7. The current VR/AR workspace is a compatibility scaffold, not a functional immersive clinical environment.
-8. No deployment or institutional approval has been completed. Frontend production compilation could not be verified because the npm registry was unreachable from this environment; the Docker frontend image is therefore not yet release-verified.
+8. CI currently passes the backend regression suite, frontend production build/browser workflows, live backend browser workflows, Docker image builds, Docker Compose validation, and Nginx configuration checks. This is not a substitute for a deployment rehearsal, TLS/domain configuration, external security assessment, load testing, backup restoration drill, monitoring/alerting, incident-response procedures, or institutional approval. No production deployment or clinical validation is claimed.
 
 See `docs/PRODUCT_SPECIFICATION.md`, `docs/AI_SOURCE_GOVERNANCE.md`, `docs/UNIPORT_VR_AR_TEST_PLAN.md`, and `docs/TEST_RESULTS.md`.
 
