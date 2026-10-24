@@ -138,14 +138,10 @@ def rubric_for_case(case:dict) -> dict:
  ],'critical_failures':critical,'scoring_policy':'Formative rubric draft; not a validated competence instrument.','source_case_id':case.get('id')}
 def increment_patch(version:str|None) -> str:
  raw=str(version or '0.0.0')
- prefix,separator,numeric=raw.rpartition('-')
- parts=numeric.split('.') if separator else raw.split('.')
- try:
-  major,minor,patch=(int(x) for x in parts)
-  next_version=f'{major}.{minor}.{patch+1}'
-  return f'{prefix}-{next_version}' if separator else next_version
- except (ValueError,TypeError):
-  return '1.0.0'
+ match=re.fullmatch(r'(.*?)(\d+)\.(\d+)\.(\d+)',raw)
+ if not match: return '1.0.0'
+ prefix,major,minor,patch=match.groups()
+ return f'{prefix}{int(major)}.{int(minor)}.{int(patch)+1}'
 def ensure_version_snapshots():
  c=conn()
  try:
