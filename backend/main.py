@@ -178,8 +178,8 @@ def check_access(request:Request, educator=False):
  identity=current_identity_user(request)
  if educator:
   if identity:
-   if identity['role'] not in ('educator','institution_admin','platform_admin'):
-    raise HTTPException(403,'An active educator or administrator account is required.')
+   if identity['role'] not in ('educator','platform_admin'):
+    raise HTTPException(403,'An active educator or platform administrator account is required.')
    request.state.identity_user=identity
    return
   if APP_ENV=='production': raise HTTPException(401,'Valid educator bearer session required.')
@@ -233,7 +233,7 @@ def check_session_access(request:Request, session_row):
  identity=getattr(request.state,'identity_user',None) or current_identity_user(request)
  if identity and identity.get('role')=='platform_admin': return
  if owner and identity and identity.get('user_id')==owner: return
- if identity and identity.get('role') in ('educator','institution_admin'):
+ if identity and identity.get('role')=='educator':
   db=conn()
   try:
    tenant=None
@@ -250,7 +250,9 @@ def check_session_access(request:Request, session_row):
  if owner:
   if not identity: raise HTTPException(401,'Sign in with the account that owns this session.')
   raise HTTPException(403,'This learner session belongs to another account.')
- if identity and identity.get('role') in ('educator','institution_admin'):
+ if identity and identity.get('role')=='institution_admin':
+  raise HTTPException(403,'Institution administrators do not have learner-session access.')
+ if identity and identity.get('role')=='educator':
   raise HTTPException(403,'Unassigned legacy sessions are not visible to institution accounts.')
  if APP_ENV!='production': return
  expected_hash=session_row['session_token_hash'] if 'session_token_hash' in session_row.keys() else None
