@@ -547,11 +547,17 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  if APP_ENV=='production' and actor['role']!='platform_admin' and row['institution_id']!=actor.get('institution_id'):
   c.close(); raise HTTPException(404,'Draft not found.')
  d=json.loads(row['payload'])
- if APP_ENV=='production' and actor['role']!='platform_admin':
+ if APP_ENV=='production':
   prior_review=d.get('review') or {}
-  if d.get('status')!='reviewed_not_approved' or not prior_review.get('reviewer_user_id') or not str(prior_review.get('notes') or '').strip():
+  creator_user_id=row['creator_user_id']
+  reviewer_user_id=prior_review.get('reviewer_user_id')
+  if not creator_user_id:
+   c.close(); raise HTTPException(409,'Draft creator attribution is missing; reconcile ownership before publication.')
+  if d.get('status')!='reviewed_not_approved' or not reviewer_user_id or not str(prior_review.get('notes') or '').strip():
    c.close(); raise HTTPException(409,'A recorded independent review is required before publication.')
-  if actor.get('user_id') in (row['creator_user_id'],prior_review.get('reviewer_user_id')):
+  if creator_user_id==reviewer_user_id:
+   c.close(); raise HTTPException(409,'The draft creator cannot be its independent reviewer.')
+  if actor.get('user_id') in (creator_user_id,reviewer_user_id):
    c.close(); raise HTTPException(403,'Publication requires an approver different from the draft creator and reviewer.')
   if not body.review_notes.strip():
    c.close(); raise HTTPException(422,'A publication attestation note is required.')
