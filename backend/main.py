@@ -73,7 +73,12 @@ def init_db():
  CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT);
- CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);''');
+ CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);
+ CREATE TABLE IF NOT EXISTS websocket_tickets(
+   ticket_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, institution_id TEXT,
+   room TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL
+ );
+ CREATE INDEX IF NOT EXISTS idx_websocket_tickets_expiry ON websocket_tickets(expires_at);''');
  # Safe additive migrations; never rebuild or discard existing pilot data.
  cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
  if 'session_token_hash' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN session_token_hash TEXT')
@@ -388,21 +393,103 @@ def dashboard(request:Request):
 def close_exam(exam_id:int,request:Request):
  check_access(request,True); c=conn(); c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); c.close(); return {'closed':True}
 
+class WebSocketTicketRequest(BaseModel):
+ room: str=Field(min_length=3,max_length=120)
+
+def _authorize_room(user:dict, room_name:str) -> bool:
+ # Collaboration is explicitly scoped to an active owned session or the user's institution.
+ if room_name.startswith('session:'):
+  raw_id=room_name.partition(':')[2]
+  if not raw_id.isdigit(): return False
+  c=conn()
+  try:
+   row=c.execute('''SELECT s.id,s.status,s.owner_user_id,u.institution_id AS owner_institution
+                    FROM sessions s LEFT JOIN users u ON u.user_id=s.owner_user_id
+                    WHERE s.id=?''',(int(raw_id),)).fetchone()
+   if not row or row['status']!='active' or not row['owner_user_id']: return False
+   if user['role']=='platform_admin': return True
+   if user['user_id']==row['owner_user_id']: return True
+   return user['role'] in ('educator','institution_admin') and bool(user.get('institution_id')) and user['institution_id']==row['owner_institution']
+  finally: c.close()
+ if room_name.startswith('institution:'):
+  institution_id=room_name.partition(':')[2]
+  if not institution_id or '/' in institution_id or ':' in institution_id: return False
+  return user['role']=='platform_admin' or (user['role'] in ('educator','institution_admin') and user.get('institution_id')==institution_id)
+ return False
+
+@app.post('/api/ws/ticket')
+def create_websocket_ticket(body:WebSocketTicketRequest,request:Request):
+ # Never send long-lived bearer tokens to the browser's WebSocket URL.
+ user=current_identity_user(request)
+ if not user: raise HTTPException(401,'Valid bearer account session required.')
+ if not _authorize_room(user,body.room):
+  raise HTTPException(403,'This account is not authorized for that collaboration room.')
+ token=secrets.token_urlsafe(32)
+ digest=__import__('hashlib').sha256(token.encode('utf-8')).hexdigest()
+ created=datetime.now(timezone.utc)
+ from datetime import timedelta
+ expires=created+timedelta(seconds=60)
+ c=conn()
+ try:
+  c.execute('DELETE FROM websocket_tickets WHERE expires_at<? OR used_at IS NOT NULL',
+            (created.isoformat(timespec='seconds'),))
+  c.execute('INSERT INTO websocket_tickets(ticket_hash,user_id,institution_id,room,expires_at,created_at) VALUES(?,?,?,?,?,?)',
+            (digest,user['user_id'],user.get('institution_id'),body.room,expires.isoformat(timespec='seconds'),created.isoformat(timespec='seconds')))
+  c.commit()
+ finally: c.close()
+ return {'ticket':token,'expires_in':60,'room':body.room}
+
+def _consume_websocket_ticket(token:str, room_name:str):
+ if not token or len(token)>512: return None
+ digest=__import__('hashlib').sha256(token.encode('utf-8')).hexdigest()
+ c=conn()
+ try:
+  c.execute('BEGIN IMMEDIATE')
+  row=c.execute('''SELECT t.user_id,t.institution_id,t.room,t.expires_at,t.used_at,
+                          u.display_name,u.role,u.status AS user_status
+                   FROM websocket_tickets t JOIN users u ON u.user_id=t.user_id
+                   WHERE t.ticket_hash=?''',(digest,)).fetchone()
+  now_dt=datetime.now(timezone.utc)
+  if not row or row['used_at'] or row['room']!=room_name or row['user_status']!='active':
+   c.rollback(); return None
+  try:
+   if datetime.fromisoformat(row['expires_at'])<=now_dt:
+    c.rollback(); return None
+  except ValueError:
+   c.rollback(); return None
+  updated=c.execute('UPDATE websocket_tickets SET used_at=? WHERE ticket_hash=? AND used_at IS NULL',
+            (now_dt.isoformat(timespec='seconds'),digest))
+  if updated.rowcount!=1:
+   c.rollback(); return None
+  c.commit()
+  return {'user_id':row['user_id'],'institution_id':row['institution_id'],
+          'display_name':row['display_name'],'role':row['role']}
+ finally: c.close()
+
 # Lightweight collaboration chat; no case-state synchronization is implied.
+# Room membership is checked before ticket issuance and the ticket is one-use/60s.
 rooms={}
 @app.websocket('/ws/rooms/{room}')
 async def room(ws:WebSocket,room:str):
- if APP_ENV=='production':
-  tok=ws.query_params.get('token','')
-  if not PILOT_TOKEN or not hmac.compare_digest(tok,PILOT_TOKEN): await ws.close(code=1008); return
- await ws.accept(); rooms.setdefault(room,[]).append(ws)
+ ticket=ws.query_params.get('ticket','')
+ user=_consume_websocket_ticket(ticket,room)
+ if not user or not _authorize_room(user,room):
+  await ws.close(code=1008); return
+ await ws.accept(); participant={'socket':ws,'user':user}
+ rooms.setdefault(room,[]).append(participant)
  try:
   await ws.send_json({'type':'history','messages':[]})
   while True:
-   data=await ws.receive_json(); msg={'type':'message','name':str(data.get('name','Participant'))[:80],'role':str(data.get('role','student'))[:20],'text':str(data.get('text',''))[:1200],'created_at':now()}
+   data=await ws.receive_json()
+   text_value=data.get('text','') if isinstance(data,dict) else ''
+   if not isinstance(text_value,str) or not text_value.strip():
+    await ws.send_json({'type':'error','detail':'Message text is required.'}); continue
+   msg={'type':'message','name':user['display_name'][:80],
+        'role':user['role'][:30],'text':text_value[:1200],'created_at':now()}
    for peer in list(rooms.get(room,[])):
-    try: await peer.send_json(msg)
+    try: await peer['socket'].send_json(msg)
     except Exception: pass
  except WebSocketDisconnect: pass
  finally:
-  if ws in rooms.get(room,[]): rooms[room].remove(ws)
+  if participant in rooms.get(room,[]): rooms[room].remove(participant)
+  if not rooms.get(room): rooms.pop(room,None)
