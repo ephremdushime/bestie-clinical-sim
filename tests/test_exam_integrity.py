@@ -70,7 +70,7 @@ def test_exam_requires_learner_identity_and_matching_institution(tmp_path, monke
         assert exam["institution_id"] == "inst-a"
         assert start_exam(client, learner_a, exam).status_code == 200
         assert start_exam(client, learner_b, exam).status_code == 403
-        assert start_exam(client, educator, exam).status_code == 401
+        assert start_exam(client, educator, exam).status_code == 403
         assert start_exam(client, {"X-Pilot-Token": "p" * 40}, exam).status_code == 401
 
 
