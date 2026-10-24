@@ -212,7 +212,7 @@ def create_session(body:StartSession,request:Request):
   c=conn(); cutoff=(datetime.now(timezone.utc)-timedelta(minutes=15)).isoformat(timespec='seconds')
   attempts=c.execute('SELECT COUNT(*) AS n FROM exam_join_attempts WHERE client_key=? AND attempted_at>=? AND succeeded=0',(client_key,cutoff)).fetchone()['n']
   if attempts>=10: c.close(); raise HTTPException(429,'Too many invalid examination codes. Try again later.')
-  ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"',(body.exam_code or '').strip().upper()).fetchone()
+  ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"',((body.exam_code or '').strip().upper(),)).fetchone()
   c.execute('INSERT INTO exam_join_attempts(client_key,code_hash,attempted_at,succeeded) VALUES(?,?,?,?)',(client_key,code_hash,now(),1 if ex else 0))
   c.execute('DELETE FROM exam_join_attempts WHERE attempted_at<?',((datetime.now(timezone.utc)-timedelta(days=2)).isoformat(timespec='seconds'),))
   c.commit(); c.close()
