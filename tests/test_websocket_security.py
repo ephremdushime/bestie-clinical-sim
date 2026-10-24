@@ -183,3 +183,31 @@ def test_expired_websocket_ticket_is_rejected(tmp_path, monkeypatch):
                 raise AssertionError("Expired WebSocket tickets must be rejected")
         except WebSocketDisconnect:
             pass
+
+
+
+def test_disabling_account_revokes_an_already_open_websocket(tmp_path, monkeypatch):
+    learner_id, _, _ = setup_accounts(tmp_path, monkeypatch)
+    with TestClient(main.app) as client:
+        token = login(client, "learner@ws.example", "learner-password-long")
+        headers = {"Authorization": f"Bearer {token}"}
+        started = client.post("/api/sessions", headers=headers, json={
+            "learner": "Learner", "case_id": "malaria-001", "mode": "practice"
+        })
+        room = f"session:{started.json()['session_id']}"
+        issued = client.post("/api/ws/ticket", headers=headers, json={"room": room})
+        assert issued.status_code == 200, issued.text
+
+        with client.websocket_connect(
+            f"/ws/rooms/{room}?ticket={issued.json()['ticket']}"
+        ) as ws:
+            assert ws.receive_json()["type"] == "history"
+            with sqlite3.connect(tmp_path / "websocket.db") as db:
+                db.execute("UPDATE users SET status='disabled' WHERE user_id=?", (learner_id,))
+                db.commit()
+            ws.send_json({"text": "This must not be broadcast"})
+            try:
+                ws.receive_json()
+                raise AssertionError("A disabled account must lose WebSocket access")
+            except WebSocketDisconnect:
+                pass
