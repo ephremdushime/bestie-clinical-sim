@@ -85,6 +85,46 @@ def test_educator_routes_require_provisioned_educator_identity(tmp_path, monkeyp
 
 
 
+
+def test_password_change_requires_current_password_and_revokes_existing_sessions(tmp_path, monkeypatch):
+    _provision(tmp_path / "password-change.db", monkeypatch)
+    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setenv("CORS_ORIGINS", "https://sim.example.edu")
+    main.init_db()
+
+    with TestClient(main.app) as client:
+        login = client.post("/api/auth/login", json={
+            "email": "learner@a.example", "password": "learner-password-long"})
+        assert login.status_code == 200, login.text
+        old_token = login.json()["access_token"]
+        wrong = client.post("/api/auth/change-password",
+            headers={"Authorization": f"Bearer {old_token}"},
+            json={"current_password": "incorrect-password", "new_password": "new-learner-password-456"})
+        assert wrong.status_code == 403, wrong.text
+
+        changed = client.post("/api/auth/change-password",
+            headers={"Authorization": f"Bearer {old_token}"},
+            json={"current_password": "learner-password-long", "new_password": "new-learner-password-456"})
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["reauthentication_required"] is True
+        assert client.get("/api/auth/me",
+            headers={"Authorization": f"Bearer {old_token}"}).status_code == 401
+        assert client.post("/api/auth/login", json={
+            "email": "learner@a.example", "password": "learner-password-long"}).status_code == 401
+        new_login = client.post("/api/auth/login", json={
+            "email": "learner@a.example", "password": "new-learner-password-456"})
+        assert new_login.status_code == 200, new_login.text
+
+        with main.conn() as db:
+            events = db.execute(
+                "SELECT action,outcome FROM audit_events WHERE action LIKE 'auth.password_change%' ORDER BY created_at"
+            ).fetchall()
+            assert [(row["action"], row["outcome"]) for row in events] == [
+                ("auth.password_change_failed", "denied"),
+                ("auth.password_changed", "success"),
+            ]
+
+
 def test_production_protected_routes_reject_shared_pilot_and_educator_tokens(tmp_path, monkeypatch):
     _provision(tmp_path / "shared-token.db", monkeypatch)
     monkeypatch.setattr(main, "APP_ENV", "production")
