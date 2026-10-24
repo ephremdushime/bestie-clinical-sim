@@ -122,3 +122,35 @@ def test_websocket_ticket_is_bound_to_requested_room(tmp_path, monkeypatch):
                 raise AssertionError("Ticket must not be usable in a different room")
         except WebSocketDisconnect:
             pass
+
+
+
+def test_exam_sessions_never_issue_collaboration_room_tickets(tmp_path, monkeypatch):
+    """Controlled examinations must not permit WebSocket answer-sharing rooms."""
+    setup_accounts(tmp_path, monkeypatch)
+    with TestClient(main.app) as client:
+        learner = login(client, "learner@ws.example", "learner-password-long")
+        educator = login(client, "educator@ws.example", "educator-password-long")
+        exam = client.post(
+            "/api/educator/exams",
+            headers={"Authorization": f"Bearer {educator}"},
+            json={"title": "WebSocket isolation exam", "case_id": "malaria-001",
+                  "duration": 5, "pass_mark": 70},
+        )
+        assert exam.status_code == 200, exam.text
+
+        joined = client.post(
+            "/api/sessions",
+            headers={"Authorization": f"Bearer {learner}"},
+            json={"learner": "Forged name", "case_id": "malaria-001",
+                  "mode": "exam", "exam_code": exam.json()["code"]},
+        )
+        assert joined.status_code == 200, joined.text
+        room = f"session:{joined.json()['session_id']}"
+
+        response = client.post(
+            "/api/ws/ticket",
+            headers={"Authorization": f"Bearer {learner}"},
+            json={"room": room},
+        )
+        assert response.status_code == 403, response.text
