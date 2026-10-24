@@ -450,7 +450,8 @@ def finish(sid:int,body:Finish,request:Request):
  check_session_access(request,s)
  if s['status']!='active': c.close(); raise HTTPException(409,'Session already submitted.')
  events=json.loads(s['events'] or '[]'); pinned_case=case_for_session(c,s); pinned_rubric=rubric_for_session(c,s); report=make_report(pinned_case,events,body,pinned_rubric)
- if isinstance(report.get('rubric_evaluation'),dict): report['rubric_evaluation']['rubric_version']=s['rubric_version'] report['mode']=s['mode']; report['case_id']=s['case_id']; report['case_version']=s['case_version']; report['rubric_version']=s['rubric_version']; report['rubric_snapshot']=pinned_rubric; report['rubric_snapshot_hash']=content_digest(pinned_rubric); report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
+ if isinstance(report.get('rubric_evaluation'),dict): report['rubric_evaluation']['rubric_version']=s['rubric_version']
+ report['mode']=s['mode']; report['case_id']=s['case_id']; report['case_version']=s['case_version']; report['rubric_version']=s['rubric_version']; report['rubric_snapshot']=pinned_rubric; report['rubric_snapshot_hash']=content_digest(pinned_rubric); report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
  if s['mode']=='exam' and s['exam_id']:
   ex=c.execute('SELECT pass_mark FROM exams WHERE id=?',(s['exam_id'],)).fetchone(); report['demo_threshold']=int(ex['pass_mark']) if ex else None; report['threshold_status']=('critical_review_required' if report['critical_flags'] else ('meets_demo_threshold' if report['score']>=int(ex['pass_mark']) else 'below_demo_threshold')) if ex else 'not_set'
  c.execute('UPDATE sessions SET status="completed",report=? WHERE id=?',(json.dumps(report),sid)); save_event(c,sid,{'type':'session_finished','score':report['score']}); c.commit(); c.close()
