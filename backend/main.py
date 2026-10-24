@@ -79,7 +79,7 @@ def init_db():
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT, institution_id TEXT, creator_user_id TEXT);
  CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);
   CREATE TABLE IF NOT EXISTS case_versions(case_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, approved_by TEXT, approved_by_user_id TEXT, approved_at TEXT NOT NULL, change_note TEXT NOT NULL DEFAULT '', content_hash TEXT NOT NULL DEFAULT '', PRIMARY KEY(case_id,version));
-  CREATE TABLE IF NOT EXISTS rubric_versions(case_id TEXT NOT NULL, case_version TEXT NOT NULL, rubric_version TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, content_hash TEXT NOT NULL DEFAULT '', PRIMARY KEY(case_id,case_version,rubric_version));
+  CREATE TABLE IF NOT EXISTS rubric_versions(case_id TEXT NOT NULL, case_version TEXT NOT NULL, rubric_version TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, content_hash TEXT NOT NULL DEFAULT '', approved_by_user_id TEXT, PRIMARY KEY(case_id,case_version,rubric_version));
   CREATE TABLE IF NOT EXISTS exam_join_attempts(attempt_id INTEGER PRIMARY KEY AUTOINCREMENT, client_key TEXT NOT NULL, code_hash TEXT NOT NULL, attempted_at TEXT NOT NULL, succeeded INTEGER NOT NULL DEFAULT 0);
   CREATE INDEX IF NOT EXISTS idx_exam_join_attempts ON exam_join_attempts(client_key,attempted_at,succeeded);
   CREATE TABLE IF NOT EXISTS websocket_tickets(ticket_hash TEXT PRIMARY KEY, room TEXT NOT NULL, user_id TEXT NOT NULL, auth_session_hash TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL);
@@ -103,6 +103,7 @@ def init_db():
  if 'content_hash' not in case_version_cols: c.execute("ALTER TABLE case_versions ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
  rubric_version_cols={row['name'] for row in c.execute('PRAGMA table_info(rubric_versions)')}
  if 'content_hash' not in rubric_version_cols: c.execute("ALTER TABLE rubric_versions ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
+ if 'approved_by_user_id' not in rubric_version_cols: c.execute('ALTER TABLE rubric_versions ADD COLUMN approved_by_user_id TEXT')
  c.commit(); c.close()
 init_db()
 try:
@@ -120,17 +121,49 @@ def content_digest(value:dict) -> str:
  return hashlib.sha256(canonical_json(value).encode('utf-8')).hexdigest()
 def rubric_definition():
  return {'version':RUBRIC_VERSION,'status':'formative_unvalidated','domains':['Communication and history','Severity and examination','Investigation selection and indication','Result interpretation','Differential diagnosis','Final diagnosis','Management and safety','Referral and follow-up'],'critical_error_policy':'Flag scenario-specific omissions for educator review; automated text detection is not a validated competence measure.'}
+def rubric_for_case(case:dict) -> dict:
+ actions=case.get('expected_actions',[])
+ if not isinstance(actions,list): actions=[]
+ differentials=case.get('expected_differentials',case.get('differentials',[]))
+ if not isinstance(differentials,list): differentials=[]
+ critical=case.get('critical_errors',case.get('critical_safety_errors',[]))
+ if not isinstance(critical,list): critical=[]
+ return {'status':'formative_unvalidated','criteria':[
+  {'id':'history_and_examination','label':'Focused history and examination','weight':20,'anchors':['Relevant history','Focused examination','Recognizes red flags']},
+  {'id':'differential','label':'Prioritized differential diagnosis','weight':15,'anchors':differentials},
+  {'id':'investigations','label':'Indication-based investigations and interpretation','weight':20,'anchors':['Justifies test selection','Interprets results in context']},
+  {'id':'management','label':'Safe management and escalation','weight':25,'anchors':actions},
+  {'id':'communication','label':'Communication, consent and professionalism','weight':10,'anchors':['Clear explanation','Respectful communication','Consent where appropriate']},
+  {'id':'follow_up','label':'Reassessment, referral and safety-netting','weight':10,'anchors':['Reassess response','Referral or follow-up','Safety-netting']}
+ ],'critical_failures':critical,'scoring_policy':'Formative rubric draft; not a validated competence instrument.','source_case_id':case.get('id')}
+def increment_patch(version:str|None) -> str:
+ raw=str(version or '0.0.0')
+ prefix,separator,numeric=raw.rpartition('-')
+ parts=numeric.split('.') if separator else raw.split('.')
+ try:
+  major,minor,patch=(int(x) for x in parts)
+  next_version=f'{major}.{minor}.{patch+1}'
+  return f'{prefix}-{next_version}' if separator else next_version
+ except (ValueError,TypeError):
+  return '1.0.0'
 def ensure_version_snapshots():
  c=conn()
  try:
   for case in CASES.values():
    version=str(case.get('version') or '1.0.0'); approved_at=str(case.get('approved_at') or '2026-01-01T00:00:00+00:00')
    case_payload=canonical_json(case); case_hash=content_digest(case)
-   rubric_payload=canonical_json(rubric_definition()); rubric_hash=content_digest(rubric_definition())
    c.execute('INSERT OR IGNORE INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash) VALUES(?,?,?,?,?,?,?,?)',(case['id'],version,case_payload,case.get('approved_by'),case.get('approved_by_user_id'),approved_at,'Initial immutable snapshot imported from existing case catalogue.',case_hash))
    c.execute('UPDATE case_versions SET content_hash=? WHERE case_id=? AND version=? AND (content_hash IS NULL OR content_hash="")',(case_hash,case['id'],version))
-   c.execute('INSERT OR IGNORE INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],version,RUBRIC_VERSION,rubric_payload,approved_at,rubric_hash))
-   c.execute('UPDATE rubric_versions SET content_hash=? WHERE case_id=? AND case_version=? AND rubric_version=? AND (content_hash IS NULL OR content_hash="")',(rubric_hash,case['id'],version,RUBRIC_VERSION))
+   rubric_payload=canonical_json(rubric_for_case(case)); rubric_value=json.loads(rubric_payload); rubric_hash=content_digest(rubric_value)
+   latest=c.execute('SELECT rubric_version,payload FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC LIMIT 1',(case['id'],version)).fetchone()
+   if latest:
+    try: latest_payload=canonical_json(json.loads(latest['payload']))
+    except (TypeError,ValueError,json.JSONDecodeError): latest_payload=''
+    rubric_version=latest['rubric_version'] if latest_payload==rubric_payload else increment_patch(latest['rubric_version'])
+   else:
+    rubric_version=RUBRIC_VERSION
+   c.execute('INSERT OR IGNORE INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],version,rubric_version,rubric_payload,approved_at,rubric_hash))
+   c.execute('UPDATE rubric_versions SET content_hash=? WHERE case_id=? AND case_version=? AND rubric_version=? AND (content_hash IS NULL OR content_hash="")',(rubric_hash,case['id'],version,rubric_version))
   # Backfill hashes for older immutable versions without rewriting their payloads.
   for row in c.execute('SELECT case_id,version,payload FROM case_versions WHERE content_hash IS NULL OR content_hash=""').fetchall():
    try: digest=content_digest(json.loads(row['payload']))
@@ -296,7 +329,14 @@ def create_session(body:StartSession,request:Request):
  learner_name=identity['display_name'] if identity and identity['role']=='learner' else body.learner.strip()
  owner_user_id=identity['user_id'] if identity and identity['role']=='learner' else None
  case_version=(ex['case_version'] if body.mode=='exam' and ex['case_version'] else CASES[case_id].get('version','1.0.0'))
- rubric_version=(ex['rubric_version'] if body.mode=='exam' and ex['rubric_version'] else RUBRIC_VERSION)
+ if body.mode=='exam' and ex['rubric_version']:
+  rubric_version=ex['rubric_version']
+ else:
+  rubric_conn=conn()
+  try:
+   rubric_row=rubric_conn.execute('SELECT rubric_version FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC LIMIT 1',(case_id,case_version)).fetchone()
+   rubric_version=rubric_row['rubric_version'] if rubric_row else RUBRIC_VERSION
+  finally: rubric_conn.close()
  c=conn()
  try:
   # Serialize starts so two concurrent requests cannot create duplicate attempts.
@@ -458,9 +498,30 @@ async def evidence_search(body: EvidenceSearchRequest, request: Request):
 
 @app.get('/api/educator/cases/{case_id}/versions')
 def case_version_history(case_id:str,request:Request):
- check_access(request,True); c=conn(); rows=c.execute('SELECT case_id,version,approved_by,approved_by_user_id,approved_at,change_note FROM case_versions WHERE case_id=? ORDER BY approved_at DESC,version DESC',(case_id,)).fetchall(); c.close()
- if not rows: raise HTTPException(404,'No version history found for this case.')
- return {'case_id':case_id,'versions':[dict(row) for row in rows]}
+ check_access(request,True); c=conn()
+ try:
+  rows=c.execute('SELECT case_id,version,content_hash,approved_by,approved_by_user_id,approved_at,change_note FROM case_versions WHERE case_id=? ORDER BY rowid DESC',(case_id,)).fetchall()
+  if not rows: raise HTTPException(404,'No version history found for this case.')
+  versions=[]
+  for row in rows:
+   rubrics=c.execute('SELECT rubric_version,content_hash,approved_by_user_id,created_at FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC',(case_id,row['version'])).fetchall()
+   item=dict(row); item['rubric_versions']=[dict(rubric) for rubric in rubrics]; versions.append(item)
+  return {'case_id':case_id,'latest_case_version':versions[0]['version'],'versions':versions}
+ finally: c.close()
+
+@app.get('/api/educator/cases/{case_id}/versions/{version}')
+def case_version_detail(case_id:str,version:str,request:Request):
+ check_access(request,True); c=conn()
+ try:
+  row=c.execute('SELECT payload,content_hash,approved_by,approved_by_user_id,approved_at,change_note FROM case_versions WHERE case_id=? AND version=?',(case_id,version)).fetchone()
+  if not row: raise HTTPException(404,'Case version not found.')
+  case=_validated_snapshot(row,'case')
+  rubric_rows=c.execute('SELECT rubric_version,payload,content_hash,created_at FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC',(case_id,version)).fetchall()
+  rubrics=[]
+  for rubric in rubric_rows:
+   rubrics.append({'rubric_version':rubric['rubric_version'],'rubric':_validated_snapshot({'payload':rubric['payload'],'content_hash':rubric['content_hash']},'rubric'),'content_hash':rubric['content_hash'],'created_at':rubric['created_at']})
+  return {'case':case,'content_hash':row['content_hash'],'approved_by':row['approved_by'],'approved_by_user_id':row['approved_by_user_id'],'approved_at':row['approved_at'],'change_note':row['change_note'],'rubric_versions':rubrics}
+ finally: c.close()
 
 @app.get('/api/educator/case-drafts')
 def list_case_drafts(request: Request):
@@ -503,8 +564,14 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  if not body.review_notes.strip(): c.close(); raise HTTPException(422,'A clinical review note is required.')
  case['version']=next_case_version(c,case['id']); case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
  c.execute('INSERT INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash) VALUES(?,?,?,?,?,?,?,?)',(case['id'],case['version'],canonical_json(case),actor['display_name'],actor['user_id'],case['approved_at'],body.review_notes,content_digest(case)))
- rubric_payload=canonical_json(rubric_definition())
- c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],RUBRIC_VERSION,rubric_payload,case['approved_at'],content_digest(rubric_definition())))
+ rubric_value=rubric_for_case(case); rubric_payload=canonical_json(rubric_value)
+ prior_rubric=c.execute('SELECT rubric_version,payload FROM rubric_versions WHERE case_id=? ORDER BY rowid DESC LIMIT 1',(case['id'],)).fetchone()
+ if prior_rubric:
+  try: prior_payload=canonical_json(json.loads(prior_rubric['payload']))
+  except (TypeError,ValueError,json.JSONDecodeError): prior_payload=''
+  rubric_version=prior_rubric['rubric_version'] if prior_payload==rubric_payload else increment_patch(prior_rubric['rubric_version'])
+ else: rubric_version=RUBRIC_VERSION
+ c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash,approved_by_user_id) VALUES(?,?,?,?,?,?,?)',(case['id'],case['version'],rubric_version,rubric_payload,case['approved_at'],content_digest(rubric_value),actor['user_id']))
  c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at']))
  d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
  return {'status':d['status'],'case_id':case['id'],'version':case['version'],'message':'Published following educator attestation; this is not independent clinical certification.'}
@@ -543,7 +610,9 @@ def create_exam(body:ExamCreate,request:Request):
  creator_user_id=actor.get('user_id')
  c=conn()
  try:
-  c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),actor['display_name'],case_version,RUBRIC_VERSION,institution_id,creator_user_id))
+  rubric_row=c.execute('SELECT rubric_version FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC LIMIT 1',(body.case_id,case_version)).fetchone()
+  rubric_version=rubric_row['rubric_version'] if rubric_row else RUBRIC_VERSION
+  c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),actor['display_name'],case_version,rubric_version,institution_id,creator_user_id))
   c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone()
   return dict(ex)
  finally:
