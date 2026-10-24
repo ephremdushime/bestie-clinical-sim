@@ -107,6 +107,7 @@ def init_db():
  rubric_version_cols={row['name'] for row in c.execute('PRAGMA table_info(rubric_versions)')}
  if 'content_hash' not in rubric_version_cols: c.execute("ALTER TABLE rubric_versions ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
  c.commit(); c.close()
+BUILTIN_CASE_IDS = frozenset(CASES)
 init_db()
 try:
  c0=conn()
@@ -221,9 +222,11 @@ def require_institution_scope(actor:dict, resource_institution_id:str|None, reso
 
 def require_case_scope(db, case_id:str, actor:dict):
  """Built-in cases are shared; educator-authored cases are tenant-owned by default."""
+ if case_id in BUILTIN_CASE_IDS:
+  return
  row=db.execute('SELECT institution_id FROM approved_cases WHERE case_id=?',(case_id,)).fetchone()
  if not row:
-  return
+  raise HTTPException(403,'This case has no trusted institution assignment.')
  require_institution_scope(actor,row['institution_id'],'case')
 
 def check_session_access(request:Request, session_row):
