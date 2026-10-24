@@ -472,7 +472,7 @@ def make_report(case,events,body,rubric=None):
   management_evidence=' '.join(body.management)+' '+chat_text
   reflection=(body.reflection or '').lower()
   for criterion in criteria:
-   cid=str(criterion.get('id','')); anchors=criterion.get('anchors',[]); anchors=anchors if isinstance(anchors,list) else []
+   cid=str(criterion.get('id','')); anchors=criterion.get('anchors',[]); anchors=[a for a in anchors if isinstance(a,str) and a.strip()] if isinstance(anchors,list) else []
    if cid=='differential': evidence=differential_evidence
    elif cid=='investigations': evidence=investigation_evidence+' '+reflection
    elif cid=='management': evidence=management_evidence
