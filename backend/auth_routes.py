@@ -105,11 +105,28 @@ def login(body: LoginRequest, request: Request = None):
             db.commit()
             raise HTTPException(429, "Too many sign-in attempts from this network. Try again later.")
 
-        attempts = db.execute(
+        user = verify_password(db, email, body.password)
+        # Serialize the final decision and attempt recording so concurrent failures
+        # cannot all pass a stale count and exceed the account/network limits.
+        db.execute("BEGIN IMMEDIATE")
+        current_client_attempts = db.execute(
+            "SELECT COUNT(*) AS n FROM auth_login_attempts WHERE client_key=? AND attempted_at>=? AND succeeded=0",
+            (client_key, cutoff),
+        ).fetchone()["n"]
+        current_account_attempts = db.execute(
             "SELECT COUNT(*) AS n FROM auth_login_attempts WHERE email_normalized=? AND attempted_at>=? AND succeeded=0",
             (email, cutoff),
         ).fetchone()["n"]
-        user = verify_password(db, email, body.password)
+        if current_client_attempts >= 50 or (not user and current_account_attempts >= 10):
+            reason = "client_attempt_limit" if current_client_attempts >= 50 else "account_attempt_limit"
+            write_audit_event(db, actor_user_id=None, institution_id=None,
+                              action="auth.login_throttled", resource_type="client" if reason == "client_attempt_limit" else "user",
+                              resource_id=None, outcome="denied",
+                              metadata_json='{"reason":"' + reason + '"}')
+            db.commit()
+            if reason == "client_attempt_limit":
+                raise HTTPException(429, "Too many sign-in attempts from this network. Try again later.")
+            raise HTTPException(429, "Too many sign-in attempts. Try again later.")
         db.execute(
             "INSERT INTO auth_login_attempts(email_normalized,attempted_at,succeeded,client_key) VALUES(?,?,?,?)",
             (email, now_text, 1 if user else 0, client_key),
@@ -118,13 +135,6 @@ def login(body: LoginRequest, request: Request = None):
         db.execute("DELETE FROM auth_login_attempts WHERE attempted_at<?",
                    ((now - timedelta(days=2)).isoformat(timespec="seconds"),))
         if not user:
-            if attempts >= 10:
-                write_audit_event(db, actor_user_id=None, institution_id=None,
-                                  action="auth.login_throttled", resource_type="user",
-                                  resource_id=None, outcome="denied",
-                                  metadata_json='{"reason":"account_attempt_limit"}')
-                db.commit()
-                raise HTTPException(429, "Too many sign-in attempts. Try again later.")
             write_audit_event(db, actor_user_id=None, institution_id=None,
                               action="auth.login_failed", resource_type="user",
                               resource_id=None, outcome="denied")
