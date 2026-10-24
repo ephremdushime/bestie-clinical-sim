@@ -83,8 +83,9 @@ def test_websocket_ticket_is_bound_to_room_and_rejects_long_lived_token(tmp_path
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect(f"/ws/rooms/{session_id + 100}?ticket={ticket}") as socket:
                 socket.receive_json()
+        legacy_token = "p" * 40
         with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect(f"/ws/rooms/{session_id}?token={"p" * 40}") as socket:
+            with client.websocket_connect(f"/ws/rooms/{session_id}?token={legacy_token}") as socket:
                 socket.receive_json()
 
 
