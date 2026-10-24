@@ -512,9 +512,9 @@ def test_published_cases_are_not_visible_or_usable_across_institutions(tmp_path,
         assert history.status_code == 404, history.text
 
 
-def test_unassigned_published_case_reconciliation_assigns_case_and_versions_with_audit(tmp_path, monkeypatch):
+def test_unattributed_published_case_stays_quarantined(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
-    from identity import create_user, init_identity_schema
+    from identity import create_user, init_identity_schema, issue_session
     case_payload = {
         "id": "legacy-approved-case", "version": "1.0.0", "title": "Legacy approved case",
         "diagnosis": "Fictional diagnosis", "investigations": {},
@@ -526,6 +526,10 @@ def test_unassigned_published_case_reconciliation_assigns_case_and_versions_with
         admin_id = create_user(db, email="case-reconcile-admin@example.test",
             display_name="Platform Admin", password="case-reconcile-admin-password",
             role="platform_admin")
+        reviewer_id = create_user(db, email="case-reconcile-reviewer@example.test",
+            display_name="Platform Reviewer", password="case-reconcile-reviewer-password",
+            role="platform_admin")
+        reviewer_token = issue_session(db, reviewer_id)
         db.execute(
             "INSERT INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)",
             (case_payload["id"], "1.0.0", main.canonical_json(case_payload), "Legacy reviewer", main.now()),
@@ -544,23 +548,26 @@ def test_unassigned_published_case_reconciliation_assigns_case_and_versions_with
         assert queue.status_code == 200, queue.text
         assert queue.json()["counts"]["approved_cases"] == 1
 
-        result = client.post("/api/platform-admin/ownership-reconciliation", json={
-            "resource_type": "approved_case", "resource_id": case_payload["id"],
-            "institution_id": "institution-a",
-            "reason": "Archived curriculum approval record confirms institution ownership.",
-        })
-        assert result.status_code == 200, result.text
+        result = client.post("/api/platform-admin/ownership-reconciliation",
+            headers={"X-Ownership-Reviewer-Authorization": f"Bearer {reviewer_token}"},
+            json={
+                "resource_type": "approved_case", "resource_id": case_payload["id"],
+                "institution_id": "institution-a",
+                "reason": "Archived approval notes do not attribute this record to an institution.",
+                "evidence_reference": "RECON-2026-UNATTRIBUTED",
+            })
+        assert result.status_code == 409, result.text
+        assert "keep this case quarantined" in result.json()["detail"]
 
         with main.conn() as db:
             approved = db.execute("SELECT institution_id FROM approved_cases WHERE case_id=?",
                 (case_payload["id"],)).fetchone()
             version = db.execute("SELECT institution_id FROM case_versions WHERE case_id=? AND version='1.0.0'",
                 (case_payload["id"],)).fetchone()
-            audit = db.execute("SELECT action,outcome FROM audit_events WHERE action='ownership.reconciled' AND resource_type='approved_case'").fetchone()
-            assert approved["institution_id"] == "institution-a"
-            assert version["institution_id"] == "institution-a"
-            assert audit["outcome"] == "success"
-
+            audit_count = db.execute("SELECT COUNT(*) n FROM audit_events WHERE action='ownership.reconciled' AND resource_type='approved_case'").fetchone()["n"]
+            assert approved["institution_id"] is None
+            assert version["institution_id"] is None
+            assert audit_count == 0
 
 def test_production_publication_fails_closed_when_creator_attribution_is_missing(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
