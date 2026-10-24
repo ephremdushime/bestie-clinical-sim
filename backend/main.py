@@ -381,7 +381,7 @@ def finish(sid:int,body:Finish,request:Request):
  # Controlled exams retain the full report for educator review, but the student response
  # must not reveal the hidden diagnosis, score, rubric decisions or pass-threshold result.
  if s['mode']=='exam':
-  return {'status':'submitted_pending_educator_review','mode':'exam','learner':s['learner']},'submitted_at':report['submitted_at'],'time_expired':report['time_expired'],'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
+  return {'status':'submitted_pending_educator_review','mode':'exam','learner':s['learner'],'submitted_at':report['submitted_at'],'time_expired':report['time_expired'],'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
  return report
 class EvidenceSearchRequest(BaseModel):
  query: str = Field(min_length=3,max_length=300)
