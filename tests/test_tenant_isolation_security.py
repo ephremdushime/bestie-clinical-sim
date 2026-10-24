@@ -11,11 +11,13 @@ import main
 
 def setup_db(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "DB_PATH", tmp_path / "tenant-isolation.db")
-    monkeypatch.setattr(main, "APP_ENV", "development")
-    monkeypatch.setattr(main, "PILOT_TOKEN", "tenant-test-pilot-token")
-    monkeypatch.setattr(main, "EDUCATOR_TOKEN", "tenant-test-educator-token")
-    monkeypatch.setattr(main, "CORS_ORIGINS", ["http://localhost:5173"])
-    monkeypatch.setattr(main, "validate_production_config", lambda: None)
+    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setattr(main, "PILOT_TOKEN", "tenant-test-pilot-token-0123456789-abcdef")
+    monkeypatch.setattr(main, "EDUCATOR_TOKEN", "tenant-test-educator-token-0123456789-abcdef")
+    monkeypatch.setattr(main, "CORS_ORIGINS", ["https://pilot.example.org"])
+    monkeypatch.setenv("CORS_ORIGINS", "https://pilot.example.org")
+    monkeypatch.setattr(main, "validate_production_configuration", lambda: None)
+    
     main.init_db()
     main.ensure_version_snapshots()
 
