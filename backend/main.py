@@ -42,10 +42,7 @@ def validate_production_configuration() -> None:
  if APP_ENV != 'production':
   return
  errors=[]
- if len(PILOT_TOKEN) < 32 or 'replace_with' in PILOT_TOKEN.lower(): errors.append('PILOT_ACCESS_TOKEN must be a unique random secret of at least 32 characters.')
- if len(EDUCATOR_TOKEN) < 32 or 'replace_with' in EDUCATOR_TOKEN.lower(): errors.append('EDUCATOR_ACCESS_TOKEN must be a unique random secret of at least 32 characters.')
- if PILOT_TOKEN and EDUCATOR_TOKEN and hmac.compare_digest(PILOT_TOKEN,EDUCATOR_TOKEN): errors.append('Pilot and educator access tokens must be different.')
- origins=[x.strip() for x in os.getenv('CORS_ORIGINS','').split(',') if x.strip()]
+ # Shared pilot/educator tokens are development-only; production access uses provisioned accounts.\n origins=[x.strip() for x in os.getenv('CORS_ORIGINS','').split(',') if x.strip()]
  if not origins or '*' in origins: errors.append('CORS_ORIGINS must list explicit trusted frontend origins; wildcard is not allowed.')
  if any(('localhost' in x or '127.0.0.1' in x) for x in origins): errors.append('Production CORS_ORIGINS must not contain localhost origins.')
  if errors: raise RuntimeError('Unsafe production configuration: '+' '.join(errors))
@@ -228,9 +225,9 @@ def check_access(request:Request, educator=False):
   request.state.identity_user=identity
   return
  if APP_ENV!='production': return
- supplied=request.headers.get('X-Pilot-Token','')
- if not PILOT_TOKEN or not supplied or not hmac.compare_digest(PILOT_TOKEN,supplied):
-  raise HTTPException(401,'Valid access token required.')
+ # Production protected routes require an active provisioned account session.
+ # Shared tokens are not an acceptable substitute for individual identity.
+ raise HTTPException(401,'Valid provisioned account bearer session required.')
 
 def educator_actor(request:Request, fallback_name:str='Educator') -> dict:
  user=getattr(request.state,'identity_user',None) or current_identity_user(request)
