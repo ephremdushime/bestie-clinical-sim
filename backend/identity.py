@@ -75,6 +75,12 @@ def init_identity_schema(db: sqlite3.Connection) -> None:
     );
     CREATE INDEX IF NOT EXISTS idx_audit_institution_time
       ON audit_events(institution_id, created_at);
+    CREATE TRIGGER IF NOT EXISTS audit_events_no_update
+      BEFORE UPDATE ON audit_events
+      BEGIN SELECT RAISE(ABORT, 'audit events are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS audit_events_no_delete
+      BEFORE DELETE ON audit_events
+      BEGIN SELECT RAISE(ABORT, 'audit events are append-only'); END;
     """)
 
 
