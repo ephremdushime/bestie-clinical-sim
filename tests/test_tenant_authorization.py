@@ -32,6 +32,8 @@ def setup(tmp_path, monkeypatch):
     users = [
         ("educator-a@example.org", "Educator A", "educator-password-a-long", "educator", "inst-a"),
         ("educator-b@example.org", "Educator B", "educator-password-b-long", "educator", "inst-b"),
+        ("admin-a@example.org", "Institution Admin A", "institution-admin-password-a-long", "institution_admin", "inst-a"),
+        ("platform-admin@example.org", "Platform Admin", "platform-admin-password-long", "platform_admin", None),
         ("learner-a@example.org", "Learner A", "learner-password-a-long", "learner", "inst-a"),
         ("learner-b@example.org", "Learner B", "learner-password-b-long", "learner", "inst-b"),
     ]
@@ -122,11 +124,24 @@ def test_case_drafts_are_tenant_scoped_for_list_review_and_publish(tmp_path, mon
 def test_institution_admin_cannot_close_another_institution_exam(tmp_path, monkeypatch):
     setup(tmp_path, monkeypatch)
     with TestClient(main.app) as client:
-        educator_a = sign_in(client, "educator-a@example.org", "educator-password-a-long")
+        admin_a = sign_in(client, "admin-a@example.org", "institution-admin-password-a-long")
         educator_b = sign_in(client, "educator-b@example.org", "educator-password-b-long")
         exam_b = create_exam(client, educator_b, "Institution B exam")
-        response = client.post(f"/api/educator/exams/{exam_b['id']}/close", headers=educator_a)
+        response = client.post(f"/api/educator/exams/{exam_b['id']}/close", headers=admin_a)
         assert response.status_code == 403, response.text
+
+
+def test_platform_admin_has_explicit_cross_institution_dashboard_access(tmp_path, monkeypatch):
+    setup(tmp_path, monkeypatch)
+    with TestClient(main.app) as client:
+        educator_a = sign_in(client, "educator-a@example.org", "educator-password-a-long")
+        educator_b = sign_in(client, "educator-b@example.org", "educator-password-b-long")
+        platform_admin = sign_in(client, "platform-admin@example.org", "platform-admin-password-long")
+        exam_a = create_exam(client, educator_a, "Institution A exam")
+        exam_b = create_exam(client, educator_b, "Institution B exam")
+        dashboard = client.get("/api/educator/dashboard", headers=platform_admin)
+        assert dashboard.status_code == 200, dashboard.text
+        assert {exam["id"] for exam in dashboard.json()["exams"]} == {exam_a["id"], exam_b["id"]}
 
 
 
