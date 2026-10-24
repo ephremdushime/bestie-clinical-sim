@@ -462,13 +462,17 @@ def review_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
  if row and APP_ENV=='production' and actor['role']!='platform_admin' and row['institution_id']!=actor.get('institution_id'):
   c.close(); raise HTTPException(404,'Draft not found.')
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
- if not row: c.close(); raise HTTPException(404,'Draft not found.')
  d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
 
 @app.post('/api/educator/case-drafts/{draft_id}/approve-and-publish')
 def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
- check_access(request,True); c=conn(); row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
+ check_access(request,True); actor=educator_actor(request); c=conn()
+ if APP_ENV=='production' and actor['role']!='platform_admin' and not actor.get('institution_id'):
+  c.close(); raise HTTPException(403,'An institution assignment is required.')
+ row=c.execute('SELECT payload,institution_id,creator_user_id FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
+ if APP_ENV=='production' and actor['role']!='platform_admin' and row['institution_id']!=actor.get('institution_id'):
+  c.close(); raise HTTPException(404,'Draft not found.')
  d=json.loads(row['payload']); case=d.get('case',{})
  if not case.get('title') or not case.get('diagnosis') or not isinstance(case.get('investigations'),dict):
   c.close(); raise HTTPException(422,'Case requires title, hidden diagnosis and structured investigations before publishing.')
@@ -480,7 +484,6 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  if any(any(p in str(test.get(field,'')).lower() for p in placeholders) for test in case['investigations'].values() for field in ('result','interpretation')):
   c.close(); raise HTTPException(422,'Investigation results and interpretations contain placeholders. Complete them before publishing.')
  if not body.review_notes.strip(): c.close(); raise HTTPException(422,'A clinical review note is required.')
- actor=educator_actor(request,body.reviewer)
  case['version']=next_case_version(c,case['id']); case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
  c.execute('INSERT INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash) VALUES(?,?,?,?,?,?,?,?)',(case['id'],case['version'],canonical_json(case),actor['display_name'],actor['user_id'],case['approved_at'],body.review_notes,content_digest(case)))
  rubric_payload=canonical_json(rubric_definition())
