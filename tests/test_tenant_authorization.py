@@ -197,6 +197,10 @@ def test_published_cases_remain_private_to_the_owning_institution(tmp_path, monk
             f"/api/educator/cases/{case_id}/versions", headers=educator_a
         )
         assert denied_history.status_code == 403, denied_history.text
+        denied_detail = client.get(
+            f"/api/educator/cases/{case_id}/versions/1.0.0", headers=educator_a
+        )
+        assert denied_detail.status_code == 403, denied_detail.text
 
         allowed_exam = client.post("/api/educator/exams", headers=educator_b, json={
             "title": "Institution B case exam", "case_id": case_id, "duration": 5, "pass_mark": 70
