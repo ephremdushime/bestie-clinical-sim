@@ -43,11 +43,12 @@ assert exam_finish.status_code == 200, exam_finish.text
 assert exam_finish.json()['status'] == 'submitted_pending_educator_review'
 assert 'hidden_case_diagnosis' not in exam_finish.json() and 'score' not in exam_finish.json()
 assert 'diagnosis' not in str(exam_finish.json()).lower()
-# Production mode must reject requests when the access secret is not configured/supplied.
+# Production configuration rejects wildcard origins; shared pilot tokens are no longer identity.
 main.APP_ENV = 'production'
+os.environ['CORS_ORIGINS'] = '*'
 try:
     main.validate_production_configuration()
-    raise AssertionError('Unsafe production configuration should be rejected')
+    raise AssertionError('Wildcard production CORS should be rejected')
 except RuntimeError:
     pass
 main.PILOT_TOKEN = 'p' * 40
@@ -55,7 +56,6 @@ main.EDUCATOR_TOKEN = 'e' * 40
 os.environ['CORS_ORIGINS'] = 'https://sim.example.edu'
 main.validate_production_configuration()
 assert client.post('/api/sessions', json={'learner':'No token','case_id':'malaria-001','mode':'practice'}).status_code == 401
-main.PILOT_TOKEN = 'test-pilot-secret'
 # Production educator routes must use individually provisioned identity sessions,
 # not the old shared educator token. Provision fixtures directly, as an offline admin would.
 from identity import create_user, issue_session, init_identity_schema
@@ -75,12 +75,13 @@ assert client.get('/api/educator/dashboard').status_code == 401
 assert client.get('/api/educator/dashboard', headers={'X-Educator-Token':'e'*40}).status_code == 401
 assert client.get('/api/educator/dashboard', headers={'Authorization':f'Bearer {learner_token}'}).status_code == 403
 assert client.get('/api/educator/dashboard', headers={'Authorization':f'Bearer {educator_token}'}).status_code == 200
-secure = client.post('/api/sessions', headers={'X-Pilot-Token':'test-pilot-secret'}, json={'learner':'Session owner','case_id':'malaria-001','mode':'practice'})
+legacy_create = client.post('/api/sessions', headers={'X-Pilot-Token':'test-pilot-secret'}, json={'learner':'Anonymous session','case_id':'malaria-001','mode':'practice'})
+assert legacy_create.status_code == 401, legacy_create.text
+secure = client.post('/api/sessions', headers={'Authorization':f'Bearer {learner_token}'}, json={'learner':'Session owner','case_id':'malaria-001','mode':'practice'})
 assert secure.status_code == 200, secure.text
 secure_data = secure.json()
-assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'X-Pilot-Token':'test-pilot-secret'}, json={'message':'When did it start?'}).status_code == 401
-assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'X-Pilot-Token':'test-pilot-secret','X-Session-Token':'wrong-token'}, json={'message':'When did it start?'}).status_code == 403
-assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'X-Pilot-Token':'test-pilot-secret','X-Session-Token':secure_data['session_token']}, json={'message':'When did it start?'}).status_code == 200
+assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'X-Pilot-Token':'test-pilot-secret','X-Session-Token':secure_data['session_token']}, json={'message':'When did it start?'}).status_code == 401
+assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'Authorization':f'Bearer {learner_token}'}, json={'message':'When did it start?'}).status_code == 200
 main.APP_ENV = 'development'
 
 case_draft = client.post('/api/educator/case-draft', json={'topic':'Pediatric dehydration','specialty':'Pediatrics','source_references':['educator supplied protocol']})

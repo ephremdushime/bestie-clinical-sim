@@ -7,7 +7,7 @@ Bestie Clinical Sim is a clinical education simulation prototype for medical and
 ## Included capabilities
 
 - **Practice mode:** patient dialogue, adjustable browser speech synthesis, optional browser dictation where supported, hints, investigations with a required clinical indication, case-configured results, management checklist, reflection and formative report.
-- **Examination mode:** teacher creates an exam with a hidden case and shareable code; the API enforces time limits on chat/investigation actions; the student-facing submission response does not reveal the hidden diagnosis, score, rubric decisions or threshold result. Full reports remain in the educator dashboard. This is still shared-token access, not per-user authentication.
+- **Examination mode:** teacher creates an exam with a hidden case and shareable code; the API enforces time limits on chat/investigation actions; the student-facing submission response does not reveal the hidden diagnosis, score, rubric decisions or threshold result. Full reports remain in the educator dashboard. Production assessment routes require provisioned accounts; account lifecycle management and institutional SSO remain incomplete.
 - **Case library:** malaria, severe respiratory presentation, burns with possible inhalation injury, road-traffic trauma, pregnancy with severe headache, and pediatric fever/fast breathing.
 - **Investigations:** case-specific fixed results for configured tests; unsupported tests do not receive invented findings. A test's indication is recorded. Synthetic imaging schematics are explicitly labeled as illustrations, not diagnostic-quality images.
 - **Educator console:** exam builder, exam codes, close-exam control, recent sessions, reports and event/decision logs.
@@ -41,7 +41,7 @@ npm run dev
 
 Open the Vite URL shown in the terminal (normally `http://localhost:5173`). Vite proxies `/api` and `/ws` to `localhost:8000`.
 
-In development, token gates are open unless environment variables are set. For a controlled pilot, use separate strong `PILOT_ACCESS_TOKEN` and `EDUCATOR_ACCESS_TOKEN` values and set `APP_ENV=production`. These are shared pilot tokens, **not** per-user accounts or institutional SSO.
+In development, routes remain open for local demonstrations. In production, users must sign in with a pre-provisioned account; simulation creation is tied to the account and examination attempts require a learner role. The retired shared `PILOT_ACCESS_TOKEN` and `EDUCATOR_ACCESS_TOKEN` values are not accepted as production identity. The current auth API supports login, current-user lookup and logout; account provisioning, password recovery and institutional SSO are not yet implemented.
 
 ## Optional language model
 
@@ -57,7 +57,7 @@ Never put API keys in React, browser storage, a public repository, or a client-s
 
 ## Docker
 
-Copy `.env.example` to `.env`, replace all example secrets, configure the exact frontend origins, and read `docs/PILOT_READINESS_AND_DEPLOYMENT.md` before using Docker Compose. Put the service behind managed HTTPS and restrict network access. Do not expose a development deployment publicly.
+Copy `.env.example` to `.env`, configure exact frontend origins, add optional backend-only model credentials if needed, and read `docs/PILOT_READINESS_AND_DEPLOYMENT.md` before using Docker Compose. Bootstrap the first platform administrator once using `scripts/bootstrap_admin.py` in a trusted deployment environment, then provision institution accounts through the authenticated admin API before enabling production sign-in. Never run the bootstrap script automatically at application startup. Put the service behind managed HTTPS and restrict network access. Do not expose a development deployment publicly.
 
 ## API overview
 
@@ -75,27 +75,27 @@ Copy `.env.example` to `.env`, replace all example secrets, configure the exact 
 
 ## Release 1.3.0 changes
 
-- Added per-session bearer secrets; only a hash is stored in SQLite, and production session operations require the matching session secret.
+- Bound identity-owned sessions to provisioned accounts; legacy unowned sessions retain per-session capability checks during migration.
 - Removed the hidden case ID, case title, and pass mark from the student-facing exam-start response.
-- Added fail-closed production configuration validation for strong distinct access secrets and explicit non-local CORS origins.
+- Added fail-closed production configuration validation for explicit non-local CORS origins and rejected shared-token session creation.
 - Added isolated regression tests for session authorization, exam confidentiality, AI draft persistence, publication and restart recovery.
 
 ## Release 1.2.0 changes
 
 - Fixed an examination confidentiality defect: submitting an exam no longer returns the hidden diagnosis or scoring breakdown to the student response. The full report is stored for educator review.
 - Updated the student report view so exam submissions show a pending-review receipt rather than practice feedback.
-- Added automated regression assertions for exam confidentiality and production-mode token enforcement.
+- Added automated regression assertions for exam confidentiality and identity-backed production access.
 
 ## Known limitations and next steps
 
-1. No individual student/educator accounts, password reset, institutional SSO, identity verification, or per-user educator audit attribution; shared pilot/educator secrets remain a controlled-pilot mechanism, not a production identity system.
+1. Login/logout/current-user and tenant-scoped account administration are available. The first platform administrator must be bootstrapped manually; password recovery, MFA, institutional SSO and external identity verification remain incomplete. Production simulation creation requires an authenticated account.
 2. Scoring is based on transparent but limited demonstration checks; it is not validated against faculty marking or OSCE performance.
 3. Exam settings include duration and pass mark; pass/fail decisions must be reviewed and formally validated before operational use.
 4. The case registry is loaded from built-in cases plus educator-approved cases persisted in SQLite. Case approval/publishing remains an educator attestation and is not independent clinical certification.
 5. The source workflow accepts references and notes but does not crawl Google or external platforms, perform retrieval-augmented generation, verify URLs, or establish clinical evidence automatically.
 6. Imaging schematics are not real radiographs/CTs/ultrasounds. A validated synthetic image library and specialist review are required.
 7. The current VR/AR workspace is a compatibility scaffold, not a functional immersive clinical environment.
-8. No deployment or institutional approval has been completed. Frontend production compilation could not be verified because the npm registry was unreachable from this environment; the Docker frontend image is therefore not yet release-verified.
+8. No deployment or institutional approval has been completed. CI currently verifies the frontend build and browser workflows, but production hosting, backup/restore, monitoring and incident response remain unverified.
 
 See `docs/PRODUCT_SPECIFICATION.md`, `docs/AI_SOURCE_GOVERNANCE.md`, `docs/UNIPORT_VR_AR_TEST_PLAN.md`, and `docs/TEST_RESULTS.md`.
 
