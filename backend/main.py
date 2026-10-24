@@ -229,13 +229,13 @@ def resolve_case_for_actor(db, case_id: str, actor: dict | None):
  if case_id in CASES:
   return CASES[case_id]
  if APP_ENV != 'production':
-  row=db.execute("SELECT payload FROM approved_cases WHERE case_id=? AND institution_id IS NOT NULL",(case_id,)).fetchone()
+  row=db.execute("SELECT payload FROM approved_cases WHERE case_id=?",(case_id,)).fetchone()
  elif actor and actor.get('role') == 'platform_admin':
   row=db.execute("SELECT payload FROM approved_cases WHERE case_id=? AND institution_id IS NOT NULL",(case_id,)).fetchone()
  elif actor and actor.get('institution_id'):
-  row=db.execute("SELECT payload FROM approved_cases WHERE case_id=? AND (institution_id=? OR institution_id='__shared__')",(case_id,actor['institution_id'])).fetchone()
+  row=db.execute("SELECT payload FROM approved_cases WHERE case_id=? AND institution_id=?",(case_id,actor['institution_id'])).fetchone()
  else:
-  row=db.execute("SELECT payload FROM approved_cases WHERE case_id=? AND institution_id='__shared__'",(case_id,)).fetchone()
+  row=None
  if not row:
   return None
  try:
@@ -280,13 +280,13 @@ def cases(request: Request):
  c=conn()
  try:
   if APP_ENV != 'production':
-   rows=c.execute("SELECT payload FROM approved_cases WHERE institution_id IS NOT NULL").fetchall()
+   rows=c.execute("SELECT payload FROM approved_cases").fetchall()
   elif actor and actor.get('role')=='platform_admin':
    rows=c.execute("SELECT payload FROM approved_cases WHERE institution_id IS NOT NULL").fetchall()
   elif actor and actor.get('institution_id'):
-   rows=c.execute("SELECT payload FROM approved_cases WHERE institution_id=? OR institution_id='__shared__'",(actor['institution_id'],)).fetchall()
+   rows=c.execute("SELECT payload FROM approved_cases WHERE institution_id=?",(actor['institution_id'],)).fetchall()
   else:
-   rows=c.execute("SELECT payload FROM approved_cases WHERE institution_id='__shared__'").fetchall()
+   rows=[]
   for row in rows:
    try: available.append(json.loads(row['payload']))
    except (TypeError,ValueError,json.JSONDecodeError): continue
@@ -571,7 +571,7 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  if APP_ENV=='production' and not case_institution_id:
   c.close(); raise HTTPException(409,'Reconcile this draft to an institution before publishing; unassigned cases cannot enter the shared catalogue.')
  if APP_ENV!='production' and not case_institution_id:
-  case_institution_id=actor.get('institution_id') or '__shared__'
+  case_institution_id=actor.get('institution_id')
  c.execute('INSERT INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash,institution_id) VALUES(?,?,?,?,?,?,?,?,?)',(case['id'],case['version'],canonical_json(case),actor['display_name'],actor['user_id'],case['approved_at'],body.review_notes,content_digest(case),case_institution_id))
  rubric_payload=canonical_json(rubric_definition())
  c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],RUBRIC_VERSION,rubric_payload,case['approved_at'],content_digest(rubric_definition())))
@@ -823,16 +823,16 @@ def reconcile_historical_ownership(body: OwnershipReconciliationRequest, request
    if ex['institution_id']!=body.institution_id:
     raise HTTPException(422,'Session institution would conflict with its examination institution.')
   if resource=='session':
-   c.execute("UPDATE sessions SET institution_id=? WHERE id=? AND institution_id IS NULL",(body.institution_id,body.resource_id))
+   changed=c.execute("UPDATE sessions SET institution_id=? WHERE id=? AND institution_id IS NULL",(body.institution_id,body.resource_id)).rowcount
   elif resource=='case_draft':
-   c.execute("UPDATE case_drafts SET institution_id=? WHERE draft_id=? AND institution_id IS NULL",(body.institution_id,body.resource_id))
+   changed=c.execute("UPDATE case_drafts SET institution_id=? WHERE draft_id=? AND institution_id IS NULL",(body.institution_id,body.resource_id)).rowcount
   elif resource=='exam':
-   c.execute("UPDATE exams SET institution_id=? WHERE id=? AND institution_id IS NULL",(body.institution_id,body.resource_id))
+   changed=c.execute("UPDATE exams SET institution_id=? WHERE id=? AND institution_id IS NULL",(body.institution_id,body.resource_id)).rowcount
   else:
-   c.execute("UPDATE approved_cases SET institution_id=? WHERE case_id=? AND institution_id IS NULL",(body.institution_id,body.resource_id))
-   if c.execute('SELECT changes()').fetchone()[0]==1:
+   changed=c.execute("UPDATE approved_cases SET institution_id=? WHERE case_id=? AND institution_id IS NULL",(body.institution_id,body.resource_id)).rowcount
+   if changed==1:
     c.execute("UPDATE case_versions SET institution_id=? WHERE case_id=? AND institution_id IS NULL",(body.institution_id,body.resource_id))
-  if c.execute('SELECT changes()').fetchone()[0]!=1:
+  if changed!=1:
    raise HTTPException(409,'Record changed concurrently; refresh the reconciliation queue.')
   from identity import write_audit_event
   write_audit_event(c,actor_user_id=actor.get('user_id'),institution_id=body.institution_id,
