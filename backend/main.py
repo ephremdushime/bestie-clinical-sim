@@ -103,6 +103,8 @@ def init_db():
  approved_cols={row['name'] for row in c.execute('PRAGMA table_info(approved_cases)')}
  if 'institution_id' not in approved_cols: c.execute('ALTER TABLE approved_cases ADD COLUMN institution_id TEXT')
  c.execute('UPDATE sessions SET institution_id=(SELECT institution_id FROM exams WHERE exams.id=sessions.exam_id) WHERE institution_id IS NULL AND exam_id IS NOT NULL')
+ c.execute('UPDATE case_versions SET institution_id=(SELECT institution_id FROM approved_cases WHERE approved_cases.case_id=case_versions.case_id) WHERE institution_id IS NULL AND EXISTS(SELECT 1 FROM approved_cases WHERE approved_cases.case_id=case_versions.case_id AND approved_cases.institution_id IS NOT NULL)')
+ c.execute('UPDATE rubric_versions SET institution_id=(SELECT institution_id FROM approved_cases WHERE approved_cases.case_id=rubric_versions.case_id) WHERE institution_id IS NULL AND EXISTS(SELECT 1 FROM approved_cases WHERE approved_cases.case_id=rubric_versions.case_id AND approved_cases.institution_id IS NOT NULL)')
  case_version_cols={row['name'] for row in c.execute('PRAGMA table_info(case_versions)')}
  if 'content_hash' not in case_version_cols: c.execute("ALTER TABLE case_versions ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
  if 'institution_id' not in case_version_cols: c.execute('ALTER TABLE case_versions ADD COLUMN institution_id TEXT')
@@ -131,11 +133,13 @@ def ensure_version_snapshots():
  try:
   for case in CASES.values():
    version=str(case.get('version') or '1.0.0'); approved_at=str(case.get('approved_at') or '2026-01-01T00:00:00+00:00')
+   owner_row=c.execute('SELECT institution_id FROM approved_cases WHERE case_id=?',(case['id'],)).fetchone()
+   institution_id=owner_row['institution_id'] if owner_row else None
    case_payload=canonical_json(case); case_hash=content_digest(case)
    rubric_payload=canonical_json(rubric_definition()); rubric_hash=content_digest(rubric_definition())
-   c.execute('INSERT OR IGNORE INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash) VALUES(?,?,?,?,?,?,?,?)',(case['id'],version,case_payload,case.get('approved_by'),case.get('approved_by_user_id'),approved_at,'Initial immutable snapshot imported from existing case catalogue.',case_hash))
+   c.execute('INSERT OR IGNORE INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash,institution_id) VALUES(?,?,?,?,?,?,?,?,?)',(case['id'],version,case_payload,case.get('approved_by'),case.get('approved_by_user_id'),approved_at,'Initial immutable snapshot imported from existing case catalogue.',case_hash,institution_id))
    c.execute('UPDATE case_versions SET content_hash=? WHERE case_id=? AND version=? AND (content_hash IS NULL OR content_hash="")',(case_hash,case['id'],version))
-   c.execute('INSERT OR IGNORE INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],version,RUBRIC_VERSION,rubric_payload,approved_at,rubric_hash))
+   c.execute('INSERT OR IGNORE INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash,institution_id) VALUES(?,?,?,?,?,?,?)',(case['id'],version,RUBRIC_VERSION,rubric_payload,approved_at,rubric_hash,institution_id))
    c.execute('UPDATE rubric_versions SET content_hash=? WHERE case_id=? AND case_version=? AND rubric_version=? AND (content_hash IS NULL OR content_hash="")',(rubric_hash,case['id'],version,RUBRIC_VERSION))
   # Backfill hashes for older immutable versions without rewriting their payloads.
   for row in c.execute('SELECT case_id,version,payload FROM case_versions WHERE content_hash IS NULL OR content_hash=""').fetchall():
@@ -255,9 +259,10 @@ def case_access_allowed(request:Request, case_id:str) -> bool:
   row=db.execute('SELECT institution_id FROM approved_cases WHERE case_id=?',(case_id,)).fetchone()
   owner=row['institution_id'] if row else None
  finally: db.close()
+ if APP_ENV!='production' and identity is None: return True
  if owner: return bool(identity and identity.get('institution_id')==owner)
  # Unscoped historical generated cases are not trusted in production or for account sessions.
- return APP_ENV!='production' and identity is None
+ return False
 
 class StartSession(BaseModel): learner: str=Field(default='Student',min_length=1,max_length=80); case_id:str; mode:str='practice'; exam_code:str|None=None
 class Message(BaseModel): message:str=Field(min_length=1,max_length=3000)
