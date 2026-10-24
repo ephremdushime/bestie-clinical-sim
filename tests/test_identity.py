@@ -84,3 +84,15 @@ def test_password_policy_and_role_scope_validation():
         assert False, "institution-scoped role without institution should fail"
     except ValueError:
         pass
+
+
+def test_suspended_institution_disables_password_login_and_existing_sessions():
+    db = setup_db()
+    uid = create_user(
+        db, email="suspended@example.org", display_name="Suspended Learner",
+        password="a-strong-test-password", role="learner", institution_id="ur",
+    )
+    token = issue_session(db, uid)
+    db.execute("UPDATE institutions SET status='suspended' WHERE institution_id='ur'")
+    assert verify_password(db, "suspended@example.org", "a-strong-test-password") is None
+    assert resolve_session(db, token) is None
