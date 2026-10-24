@@ -1,5 +1,7 @@
 """Regression tests for tenant isolation in educator and learner workflows."""
 import sys
+import pytest
+from fastapi import HTTPException
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -289,3 +291,29 @@ def test_production_case_review_and_publication_require_separate_people(tmp_path
         )
         # Independence passes, but the deliberately incomplete draft must still fail validation.
         assert different_person_publish.status_code == 422
+
+
+def test_tampered_pinned_case_snapshot_is_rejected_without_substitution(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    with main.conn() as db:
+        db.execute(
+            "UPDATE case_versions SET payload=? WHERE case_id=? AND version=?",
+            ('{"id":"malaria-001","version":"1.0.0","diagnosis":"tampered"}', "malaria-001", "1.0.0"),
+        )
+        db.commit()
+        with pytest.raises(HTTPException) as exc:
+            main.case_for_session(
+                db,
+                {"case_id": "malaria-001", "case_version": "1.0.0"},
+            )
+        assert exc.value.status_code == 409
+        assert "integrity check" in exc.value.detail
+
+
+def test_session_without_pinned_version_fails_closed(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    with main.conn() as db:
+        with pytest.raises(HTTPException) as exc:
+            main.case_for_session(db, {"case_id": "malaria-001", "case_version": None})
+        assert exc.value.status_code == 409
+        assert "no pinned case version" in exc.value.detail
