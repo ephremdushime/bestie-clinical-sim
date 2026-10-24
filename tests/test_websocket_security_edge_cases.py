@@ -63,7 +63,7 @@ def test_expired_ticket_is_rejected_at_socket_handshake(tmp_path, monkeypatch):
             db.execute("UPDATE websocket_tickets SET expires_at=? WHERE ticket_hash=?",
                        (expired_at, hashlib.sha256(ticket.encode()).hexdigest()))
         with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}"):
+            with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}", headers={"origin": "https://clinical-sim.example.test"}):
                 pass
 
 
@@ -75,7 +75,7 @@ def test_suspended_institution_invalidates_an_unconsumed_ticket(tmp_path, monkey
         with sqlite3.connect(db_path) as db:
             db.execute("UPDATE institutions SET status='suspended' WHERE institution_id='inst-a'")
         with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}"):
+            with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}", headers={"origin": "https://clinical-sim.example.test"}):
                 pass
 
 
@@ -87,7 +87,7 @@ def test_disabled_account_invalidates_an_unconsumed_ticket(tmp_path, monkeypatch
         with sqlite3.connect(db_path) as db:
             db.execute("UPDATE users SET status='disabled' WHERE user_id=?", (user_id,))
         with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}"):
+            with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}", headers={"origin": "https://clinical-sim.example.test"}):
                 pass
 
 
@@ -96,7 +96,7 @@ def test_empty_websocket_message_is_rejected_without_broadcasting(tmp_path, monk
     _, token = provision(db_path, monkeypatch)
     with TestClient(main.app) as client:
         ticket = issue_ticket(client, token)
-        with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}") as socket:
+        with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}", headers={"origin": "https://clinical-sim.example.test"}) as socket:
             assert socket.receive_json() == {"type": "history", "messages": []}
             socket.send_json({"text": "   ", "role": "platform_admin"})
             response = socket.receive_json()
@@ -109,7 +109,7 @@ def test_oversized_websocket_message_is_rejected_not_truncated(tmp_path, monkeyp
     _, token = provision(db_path, monkeypatch)
     with TestClient(main.app) as client:
         ticket = issue_ticket(client, token)
-        with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}") as socket:
+        with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}", headers={"origin": "https://clinical-sim.example.test"}) as socket:
             assert socket.receive_json() == {"type": "history", "messages": []}
             socket.send_json({"text": "x" * 1201})
             response = socket.receive_json()
