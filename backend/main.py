@@ -73,7 +73,7 @@ def conn():
  c=sqlite3.connect(DB_PATH,timeout=20); c.row_factory=sqlite3.Row; return c
 
 def init_db():
- c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT);
+ c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT, owner_user_id TEXT, case_version TEXT, rubric_version TEXT, institution_id TEXT);
  CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT, institution_id TEXT, creator_user_id TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT, institution_id TEXT, creator_user_id TEXT);
@@ -91,6 +91,8 @@ def init_db():
  session_cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
  if 'case_version' not in session_cols: c.execute('ALTER TABLE sessions ADD COLUMN case_version TEXT')
  if 'rubric_version' not in session_cols: c.execute('ALTER TABLE sessions ADD COLUMN rubric_version TEXT')
+ if 'institution_id' not in session_cols: c.execute('ALTER TABLE sessions ADD COLUMN institution_id TEXT')
+ c.execute('CREATE INDEX IF NOT EXISTS idx_sessions_institution_id ON sessions(institution_id)')
  exam_cols={row['name'] for row in c.execute('PRAGMA table_info(exams)')}
  if 'case_version' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN case_version TEXT')
  if 'rubric_version' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN rubric_version TEXT')
