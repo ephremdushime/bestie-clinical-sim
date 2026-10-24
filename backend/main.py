@@ -73,7 +73,10 @@ def init_db():
  CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT);
- CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);''');
+ CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);
+ CREATE TABLE IF NOT EXISTS ws_connection_tickets(ticket_hash TEXT PRIMARY KEY, session_id INTEGER NOT NULL, room TEXT NOT NULL, owner_user_id TEXT, session_token_hash TEXT NOT NULL, auth_token_hash TEXT, actor_name TEXT NOT NULL, actor_role TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL);
+ CREATE INDEX IF NOT EXISTS idx_ws_ticket_expiry ON ws_connection_tickets(expires_at,used_at);
+ ''');
  # Safe additive migrations; never rebuild or discard existing pilot data.
  cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
  if 'session_token_hash' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN session_token_hash TEXT')
@@ -388,21 +391,79 @@ def dashboard(request:Request):
 def close_exam(exam_id:int,request:Request):
  check_access(request,True); c=conn(); c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); c.close(); return {'closed':True}
 
-# Lightweight collaboration chat; no case-state synchronization is implied.
+# Collaboration sockets require a short-lived, single-use ticket bound to a
+# specific owned simulation session. Long-lived bearer tokens are never accepted
+# in WebSocket URLs.
+@app.post('/api/sessions/{session_id}/ws-ticket')
+def create_ws_ticket(session_id:int,request:Request):
+ check_access(request)
+ identity=getattr(request.state,'identity_user',None) or current_identity_user(request)
+ c=conn()
+ try:
+  row=c.execute('SELECT * FROM sessions WHERE id=?',(session_id,)).fetchone()
+  if not row: raise HTTPException(404,'Simulation session not found.')
+  check_session_access(request,row)
+  owner=row['owner_user_id'] if 'owner_user_id' in row.keys() else None
+  if owner and (not identity or identity['user_id'] != owner):
+   raise HTTPException(403,'Collaboration is limited to the account that owns this session.')
+  if row['status'] != 'active': raise HTTPException(409,'Only active simulation sessions can join a collaboration room.')
+  raw_ticket=secrets.token_urlsafe(32)
+  ticket_hash=__import__('hashlib').sha256(raw_ticket.encode('utf-8')).hexdigest()
+  authorization=request.headers.get('Authorization','')
+  scheme,sep,auth_token=authorization.partition(' ')
+  auth_token_hash=(__import__('hashlib').sha256(auth_token.strip().encode('utf-8')).hexdigest() if identity and sep and scheme.lower()=='bearer' and auth_token.strip() else None)
+  c.execute('DELETE FROM ws_connection_tickets WHERE expires_at<=? OR used_at IS NOT NULL',(now(),))
+  expires=(datetime.now(timezone.utc)+__import__('datetime').timedelta(seconds=60)).isoformat(timespec='seconds')
+  c.execute('''INSERT INTO ws_connection_tickets(ticket_hash,session_id,room,owner_user_id,session_token_hash,auth_token_hash,actor_name,actor_role,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)''',
+   (ticket_hash,session_id,str(session_id),owner,row['session_token_hash'],auth_token_hash,identity['display_name'] if identity else row['learner'],identity['role'] if identity else 'learner',expires,now()))
+  c.commit()
+  return {'ticket':raw_ticket,'room':str(session_id),'expires_in':60,'single_use':True}
+ finally: c.close()
+
+# Lightweight collaboration chat; it does not synchronize clinical case state.
 rooms={}
 @app.websocket('/ws/rooms/{room}')
 async def room(ws:WebSocket,room:str):
- if APP_ENV=='production':
-  tok=ws.query_params.get('token','')
-  if not PILOT_TOKEN or not hmac.compare_digest(tok,PILOT_TOKEN): await ws.close(code=1008); return
- await ws.accept(); rooms.setdefault(room,[]).append(ws)
+ raw_ticket=ws.query_params.get('ticket','')
+ if not raw_ticket or len(raw_ticket)>512:
+  await ws.close(code=1008); return
+ digest=__import__('hashlib').sha256(raw_ticket.encode('utf-8')).hexdigest()
+ c=conn()
+ try:
+  c.execute('BEGIN IMMEDIATE')
+  ticket=c.execute('SELECT * FROM ws_connection_tickets WHERE ticket_hash=? AND room=? AND used_at IS NULL AND expires_at>?',(digest,room,now())).fetchone()
+  if not ticket:
+   c.rollback(); await ws.close(code=1008); return
+  session=c.execute('SELECT id,status,owner_user_id,session_token_hash FROM sessions WHERE id=?',(ticket['session_id'],)).fetchone()
+  if (not session or session['status']!='active' or str(session['id'])!=room or not hmac.compare_digest(str(session['session_token_hash'] or ''),str(ticket['session_token_hash'] or '')) or session['owner_user_id']!=ticket['owner_user_id']):
+   c.rollback(); await ws.close(code=1008); return
+  if ticket['owner_user_id']:
+   user=c.execute('SELECT status FROM users WHERE user_id=?',(ticket['owner_user_id'],)).fetchone()
+   auth=c.execute('SELECT s.revoked_at,s.expires_at,u.status AS user_status FROM auth_sessions s JOIN users u ON u.user_id=s.user_id WHERE s.token_hash=? AND s.user_id=?',(ticket['auth_token_hash'],ticket['owner_user_id'])).fetchone()
+   if (not user or user['status']!='active' or not auth or auth['user_status']!='active' or auth['revoked_at'] or datetime.fromisoformat(auth['expires_at'])<=datetime.now(timezone.utc)):
+    c.rollback(); await ws.close(code=1008); return
+  updated=c.execute('UPDATE ws_connection_tickets SET used_at=? WHERE ticket_hash=? AND used_at IS NULL',(now(),digest))
+  if updated.rowcount!=1:
+   c.rollback(); await ws.close(code=1008); return
+  c.commit()
+  actor={'name':ticket['actor_name'],'role':ticket['actor_role'],'session_id':ticket['session_id']}
+ finally: c.close()
+ await ws.accept()
+ rooms.setdefault(room,[]).append(ws)
  try:
   await ws.send_json({'type':'history','messages':[]})
   while True:
-   data=await ws.receive_json(); msg={'type':'message','name':str(data.get('name','Participant'))[:80],'role':str(data.get('role','student'))[:20],'text':str(data.get('text',''))[:1200],'created_at':now()}
+   data=await ws.receive_json()
+   if not isinstance(data,dict): continue
+   text_value=data.get('text','')
+   if not isinstance(text_value,str): continue
+   text_value=text_value.strip()[:1200]
+   if not text_value: continue
+   msg={'type':'message','name':actor['name'][:80],'role':actor['role'][:20],'text':text_value,'created_at':now()}
    for peer in list(rooms.get(room,[])):
     try: await peer.send_json(msg)
     except Exception: pass
  except WebSocketDisconnect: pass
  finally:
   if ws in rooms.get(room,[]): rooms[room].remove(ws)
+  if not rooms.get(room): rooms.pop(room,None)
