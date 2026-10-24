@@ -596,6 +596,8 @@ async def room(ws:WebSocket,room:str):
    message_text=data.get('text','')
    if not isinstance(message_text,str) or not message_text.strip():
     await ws.send_json({'type':'error','message':'Message text is required.'}); continue
+   if len(message_text)>1200:
+    await ws.send_json({'type':'error','message':'Message exceeds the 1200-character limit.'}); continue
    msg={'type':'message','user_id':principal['user_id'],'name':'Participant',
         'role':principal['role'],'text':message_text[:1200],'created_at':now()}
    for peer in list(rooms.get(room,[])):
