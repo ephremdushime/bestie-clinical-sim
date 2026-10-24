@@ -322,6 +322,7 @@ def test_ownership_reconciliation_rejects_non_platform_admin(tmp_path, monkeypat
                 "resource_id": "1",
                 "institution_id": "institution-a",
                 "reason": "Documented ownership evidence from archived records.",
+                "evidence_reference": "RECON-2026-0031 / archived records",
             },
         )
         assert response.status_code == 403
