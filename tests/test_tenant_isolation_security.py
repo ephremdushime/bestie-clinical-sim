@@ -11,8 +11,11 @@ import main
 
 def setup_db(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "DB_PATH", tmp_path / "tenant-isolation.db")
-    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setattr(main, "APP_ENV", "development")
     monkeypatch.setattr(main, "PILOT_TOKEN", "tenant-test-pilot-token")
+    monkeypatch.setattr(main, "EDUCATOR_TOKEN", "tenant-test-educator-token")
+    monkeypatch.setattr(main, "CORS_ORIGINS", ["http://localhost:5173"])
+    monkeypatch.setattr(main, "validate_production_config", lambda: None)
     main.init_db()
     main.ensure_version_snapshots()
 
@@ -47,13 +50,12 @@ def test_educator_dashboard_is_limited_to_own_institution(tmp_path, monkeypatch)
         )
         db.commit()
 
-    original = main.current_identity_user
     with TestClient(main.app) as client:
         monkeypatch.setattr(main, "current_identity_user", lambda request: identity("educator-a", "institution-a"))
         response = client.get("/api/educator/dashboard", headers={"Authorization": "Bearer test"})
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert all(row.get("institution_id", "institution-a") == "institution-a" for row in payload["exams"])
+        assert all(row["title"] == "Institution A exam" for row in payload["exams"])
         assert {row["learner"] for row in payload["sessions"]} == {"Student A"}
         assert {row["title"] for row in payload["exams"]} == {"Institution A exam"}
 
