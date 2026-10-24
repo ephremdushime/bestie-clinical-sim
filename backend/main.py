@@ -172,7 +172,8 @@ def _validated_snapshot(row,kind:str):
   raise HTTPException(409,f'The pinned {kind} version failed its integrity check; this session is blocked for review.')
  return value
 def _validate_exam_session_pins(db,session_row):
- if APP_ENV!='production' or session_row['mode']!='exam':
+ mode=session_row['mode'] if 'mode' in session_row.keys() else None
+ if APP_ENV!='production' or mode!='exam':
   return
  exam_id=session_row['exam_id'] if 'exam_id' in session_row.keys() else None
  if not exam_id:
