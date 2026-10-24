@@ -208,9 +208,13 @@ def test_legacy_ownership_reconciliation_requires_platform_admin_and_writes_audi
             db, email="platform-admin@example.test", display_name="Platform Admin",
             password="platform-admin-long-password", role="platform_admin",
         )
+        learner_id = create_user(
+            db, email="legacy-student@example.test", display_name="Legacy Student",
+            password="legacy-student-long-password", role="learner", institution_id="institution-a",
+        )
         db.execute(
-            "INSERT INTO sessions(learner,case_id,mode,created_at,status,events,report) VALUES(?,?,?,?,?,?,?)",
-            ("Legacy Student", "malaria-001", "practice", main.now(), "completed", "[]", "{}"),
+            "INSERT INTO sessions(learner,case_id,mode,created_at,status,events,report,owner_user_id) VALUES(?,?,?,?,?,?,?,?)",
+            ("Legacy Student", "malaria-001", "practice", main.now(), "completed", "[]", "{}", learner_id),
         )
         db.execute(
             "INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
@@ -235,6 +239,7 @@ def test_legacy_ownership_reconciliation_requires_platform_admin_and_writes_audi
                 "resource_id": "1",
                 "institution_id": "institution-a",
                 "reason": "Institution registry and archived placement log confirm ownership.",
+                "evidence_reference": "RECON-2026-0042 / archived placement log",
             },
         )
         assert assigned.status_code == 200, assigned.text
@@ -259,9 +264,37 @@ def test_legacy_ownership_reconciliation_requires_platform_admin_and_writes_audi
                 "resource_id": "1",
                 "institution_id": "institution-a",
                 "reason": "Trying to repeat an already completed ownership assignment.",
+                "evidence_reference": "RECON-2026-0042 / archived placement log",
             },
         )
         assert duplicate.status_code == 409
+
+
+def test_ownerless_historical_records_stay_quarantined(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    from identity import create_user, init_identity_schema
+    with main.conn() as db:
+        init_identity_schema(db)
+        db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+                   ("institution-a", "Institution A", main.now()))
+        admin_id = create_user(db, email="platform-admin-quarantine@example.test",
+            display_name="Platform Admin", password="platform-admin-long-password", role="platform_admin")
+        db.execute("INSERT INTO sessions(learner,case_id,mode,created_at,status,events,report) VALUES(?,?,?,?,?,?,?)",
+            ("Unassigned Legacy Student", "malaria-001", "practice", main.now(), "completed", "[]", "{}"))
+        db.commit()
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(main, "current_identity_user",
+            lambda request: identity(admin_id, None, role="platform_admin"))
+        response = client.post("/api/platform-admin/ownership-reconciliation", json={
+            "resource_type": "session", "resource_id": "1", "institution_id": "institution-a",
+            "reason": "The archived source is not yet attributable to a verified institution.",
+            "evidence_reference": "RECON-2026-UNKNOWN",
+        })
+        assert response.status_code == 409, response.text
+        assert "keep this record quarantined" in response.json()["detail"]
+        queue = client.get("/api/platform-admin/ownership-reconciliation")
+        assert queue.status_code == 200, queue.text
+        assert queue.json()["counts"]["sessions"] == 1
 
 
 def test_ownership_reconciliation_rejects_non_platform_admin(tmp_path, monkeypatch):
