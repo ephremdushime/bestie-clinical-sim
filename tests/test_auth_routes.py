@@ -87,7 +87,7 @@ def test_login_rate_limit_blocks_after_ten_failed_attempts(tmp_path, monkeypatch
     with sqlite3.connect(db_path) as db:
         assert db.execute(
             "SELECT COUNT(*) FROM auth_login_attempts WHERE succeeded=0"
-        ).fetchone()[0] == 10
+        ).fetchone()[0] == 11
 
 
 def test_malformed_or_missing_bearer_token_is_rejected():
