@@ -76,7 +76,7 @@ def init_db():
  c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT);
  CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT, institution_id TEXT, creator_user_id TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
- CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT);
+ CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT, institution_id TEXT, creator_user_id TEXT);
  CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);
   CREATE TABLE IF NOT EXISTS case_versions(case_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, approved_by TEXT, approved_by_user_id TEXT, approved_at TEXT NOT NULL, change_note TEXT NOT NULL DEFAULT '', content_hash TEXT NOT NULL DEFAULT '', PRIMARY KEY(case_id,version));
   CREATE TABLE IF NOT EXISTS rubric_versions(case_id TEXT NOT NULL, case_version TEXT NOT NULL, rubric_version TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, content_hash TEXT NOT NULL DEFAULT '', PRIMARY KEY(case_id,case_version,rubric_version));
@@ -95,6 +95,9 @@ def init_db():
  if 'case_version' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN case_version TEXT')
  if 'rubric_version' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN rubric_version TEXT')
  if 'institution_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN institution_id TEXT')
+ draft_cols={row['name'] for row in c.execute('PRAGMA table_info(case_drafts)')}
+ if 'institution_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN institution_id TEXT')
+ if 'creator_user_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN creator_user_id TEXT')
  if 'creator_user_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN creator_user_id TEXT')
  case_version_cols={row['name'] for row in c.execute('PRAGMA table_info(case_versions)')}
  if 'content_hash' not in case_version_cols: c.execute("ALTER TABLE case_versions ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
@@ -211,8 +214,11 @@ def check_session_access(request:Request, session_row):
  identity=getattr(request.state,'identity_user',None) or current_identity_user(request)
  if owner:
   if not identity: raise HTTPException(401,'Sign in with the account that owns this session.')
-  if identity['user_id'] != owner and identity['role'] not in ('educator','institution_admin','platform_admin'):
-   raise HTTPException(403,'This learner session belongs to another account.')
+  if identity['user_id'] != owner:
+   if identity['role'] not in ('educator','institution_admin','platform_admin'):
+    raise HTTPException(403,'This learner session belongs to another account.')
+   if identity['role']!='platform_admin' and (not session_row['institution_id'] or session_row['institution_id']!=identity.get('institution_id')):
+    raise HTTPException(403,'This session belongs to another institution.')
   return
  if APP_ENV!='production': return
  expected_hash=session_row['session_token_hash'] if 'session_token_hash' in session_row.keys() else None
@@ -280,7 +286,8 @@ def create_session(body:StartSession,request:Request):
     raise HTTPException(403,'This examination is not assigned to your institution.')
    prior=c.execute('SELECT id FROM sessions WHERE exam_id=? AND owner_user_id=? AND mode="exam" LIMIT 1',(exam_id,owner_user_id)).fetchone()
    if prior: raise HTTPException(409,'You have already started an attempt for this examination.')
-  cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id,case_version,rubric_version) VALUES(?,?,?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id,case_version,rubric_version)); sid=cur.lastrowid
+  cur=session_institution_id=identity.get('institution_id') if identity else None
+  c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id,case_version,rubric_version,institution_id) VALUES(?,?,?,?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id,case_version,rubric_version,session_institution_id)); sid=cur.lastrowid
   pinned_session={'case_id':case_id,'case_version':case_version,'rubric_version':rubric_version}
   pinned_case=case_for_session(c,pinned_session)
   pinned_rubric=rubric_for_session(c,pinned_session)
@@ -436,14 +443,24 @@ def case_version_history(case_id:str,request:Request):
 
 @app.get('/api/educator/case-drafts')
 def list_case_drafts(request: Request):
- check_access(request,True); c=conn(); rows=c.execute('SELECT draft_id,topic,specialty,status,payload,created_at,updated_at FROM case_drafts ORDER BY id DESC LIMIT 100').fetchall(); c.close()
+ check_access(request,True); actor=educator_actor(request); c=conn()
+ if APP_ENV=='production' and actor['role']!='platform_admin':
+  if not actor.get('institution_id'): c.close(); raise HTTPException(403,'An institution assignment is required.')
+  rows=c.execute('SELECT draft_id,topic,specialty,status,payload,created_at,updated_at FROM case_drafts WHERE institution_id=? ORDER BY id DESC LIMIT 100',(actor['institution_id'],)).fetchall()
+ else: rows=c.execute('SELECT draft_id,topic,specialty,status,payload,created_at,updated_at FROM case_drafts ORDER BY id DESC LIMIT 100').fetchall()
+ c.close()
  return {'drafts':[{'draft_id':r['draft_id'],'topic':r['topic'],'specialty':r['specialty'],'status':r['status'],'created_at':r['created_at'],'updated_at':r['updated_at'],'case':json.loads(r['payload'])} for r in rows]}
 
 @app.post('/api/educator/case-drafts/{draft_id}/review')
 def review_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
- check_access(request,True); c=conn(); row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
+ check_access(request,True); actor=educator_actor(request); c=conn()
+ if APP_ENV=='production' and actor['role']!='platform_admin' and not actor.get('institution_id'):
+  c.close(); raise HTTPException(403,'An institution assignment is required.')
+ row=c.execute('SELECT payload,institution_id,creator_user_id FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
+ if row and APP_ENV=='production' and actor['role']!='platform_admin' and row['institution_id']!=actor.get('institution_id'):
+  c.close(); raise HTTPException(404,'Draft not found.')
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
- actor=educator_actor(request,body.reviewer)
+ if not row: c.close(); raise HTTPException(404,'Draft not found.')
  d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
 
 @app.post('/api/educator/case-drafts/{draft_id}/approve-and-publish')
@@ -490,7 +507,7 @@ async def draft_case(body:CaseDraftRequest,request:Request):
   except Exception: generated['generation_note']='Language model did not return valid case JSON; a structured scaffold was returned instead.'
  case=normalize_generated_case(generated,body); case['source_references']=refs; case['evidence_search']=evidence; case['generation_mode']=mode
  draft={'draft_id':secrets.token_urlsafe(12),'status':'draft_requires_clinical_review','topic':body.topic,'specialty':body.specialty,'learner_level':body.learner_level,'learning_objectives':objectives,'case':case,'source_references':refs,'evidence_search':evidence,'generation_mode':mode,'validation':{'status':'not_clinically_validated','automated_checks':{'has_title':bool(case.get('title')),'has_hidden_diagnosis':bool(case.get('diagnosis')),'has_investigation_structure':bool(case.get('investigations')),'has_source_search':bool(evidence.get('results')),'rubric_present':bool(case.get('marking_rubric'))},'required_before_publish':['Clinical educator verifies source claims and current local guidance','Check history, examination, results and hidden diagnosis are internally consistent','Check age, pregnancy, medication and dose safety where applicable','Confirm image provenance/licensing and investigation indications','Approve rubric and critical-error rules']}}
- c=conn(); c.execute('INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',(draft['draft_id'],body.topic,body.specialty,draft['status'],json.dumps(draft),now(),now())); c.commit(); c.close(); return draft
+ actor=educator_actor(request); c=conn(); c.execute('INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?)',(draft['draft_id'],body.topic,body.specialty,draft['status'],json.dumps(draft),now(),now(),actor.get('institution_id'),actor.get('user_id'))); c.commit(); c.close(); return draft
 
 @app.post('/api/educator/exams')
 def create_exam(body:ExamCreate,request:Request):
@@ -510,7 +527,13 @@ def create_exam(body:ExamCreate,request:Request):
   c.close()
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
- check_access(request,True); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']; c.close()
+ check_access(request,True); actor=educator_actor(request); c=conn()
+ if APP_ENV=='production' and actor['role']!='platform_admin':
+  if not actor.get('institution_id'): c.close(); raise HTTPException(403,'An institution assignment is required.')
+  iid=actor['institution_id']; sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions WHERE institution_id=? ORDER BY id DESC LIMIT 100',(iid,))]; exams=[dict(r) for r in c.execute('SELECT * FROM exams WHERE institution_id=? ORDER BY id DESC LIMIT 100',(iid,))]; total=c.execute('SELECT COUNT(*) n FROM sessions WHERE institution_id=?',(iid,)).fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE institution_id=? AND status="completed"',(iid,)).fetchone()['n']
+ else:
+  sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']
+ c.close()
  for s in sessions:
   if s.get('report'): s['report']=json.loads(s['report'])
   if s.get('events'): s['events']=json.loads(s['events'])
@@ -521,8 +544,10 @@ def close_exam(exam_id:int,request:Request):
  try:
   exam=c.execute('SELECT institution_id,creator_user_id FROM exams WHERE id=?',(exam_id,)).fetchone()
   if not exam: raise HTTPException(404,'Examination not found.')
-  if APP_ENV=='production' and actor['role']!='platform_admin' and (not exam['institution_id'] or exam['institution_id']!=actor.get('institution_id')):
-   raise HTTPException(403,'This examination belongs to another institution or has no trusted institution assignment.')
+  if actor['role']!='platform_admin' and (not exam['institution_id'] or exam['institution_id']!=actor.get('institution_id')):
+   raise HTTPException(404,'Examination not found in your institution.')
+  if actor['role']!='platform_admin' and exam['creator_user_id'] and exam['creator_user_id']!=actor.get('user_id') and actor['role']!='institution_admin':
+   raise HTTPException(403,'Only the exam creator or institution administrator may close this examination.')
   c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); return {'closed':True}
  finally:
   c.close()
