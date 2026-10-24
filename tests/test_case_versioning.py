@@ -43,7 +43,13 @@ def test_exam_and_session_pin_case_and_rubric_versions(tmp_path, monkeypatch):
         assert created.status_code == 200, created.text
         exam = created.json()
         assert exam["case_version"] == main.CASES["malaria-001"]["version"]
-        assert exam["rubric_version"] == main.RUBRIC_VERSION
+        assert exam["rubric_version"]
+        with sqlite3.connect(db_path) as db:
+            pinned_rubric = db.execute(
+                "SELECT content_hash FROM rubric_versions WHERE case_id=? AND case_version=? AND rubric_version=?",
+                ("malaria-001", exam["case_version"], exam["rubric_version"]),
+            ).fetchone()
+        assert pinned_rubric is not None and len(pinned_rubric[0]) == 64
 
         joined = client.post("/api/sessions", json={
             "learner": "Version test learner", "case_id": "burn-001",
