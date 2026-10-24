@@ -300,7 +300,14 @@ def create_session(body:StartSession,request:Request):
  learner_name=identity['display_name'] if identity and identity['role']=='learner' else body.learner.strip()
  owner_user_id=identity['user_id'] if identity and identity['role']=='learner' else None
  case_version=(ex['case_version'] if body.mode=='exam' and ex['case_version'] else CASES[case_id].get('version','1.0.0'))
- rubric_version=(ex['rubric_version'] if body.mode=='exam' and ex['rubric_version'] else RUBRIC_VERSION)
+ if body.mode=='exam' and ex['rubric_version']:
+  rubric_version=ex['rubric_version']
+ else:
+  rubric_conn=conn()
+  try:
+   rubric_row=rubric_conn.execute('SELECT rubric_version FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC LIMIT 1',(case_id,case_version)).fetchone()
+   rubric_version=rubric_row['rubric_version'] if rubric_row else RUBRIC_VERSION
+  finally: rubric_conn.close()
  c=conn()
  try:
   # Serialize starts so two concurrent requests cannot create duplicate attempts.
@@ -462,9 +469,30 @@ async def evidence_search(body: EvidenceSearchRequest, request: Request):
 
 @app.get('/api/educator/cases/{case_id}/versions')
 def case_version_history(case_id:str,request:Request):
- check_access(request,True); c=conn(); rows=c.execute('SELECT case_id,version,approved_by,approved_by_user_id,approved_at,change_note FROM case_versions WHERE case_id=? ORDER BY approved_at DESC,version DESC',(case_id,)).fetchall(); c.close()
- if not rows: raise HTTPException(404,'No version history found for this case.')
- return {'case_id':case_id,'versions':[dict(row) for row in rows]}
+ check_access(request,True); c=conn()
+ try:
+  rows=c.execute('SELECT case_id,version,content_hash,approved_by,approved_by_user_id,approved_at,change_note FROM case_versions WHERE case_id=? ORDER BY rowid DESC',(case_id,)).fetchall()
+  if not rows: raise HTTPException(404,'No version history found for this case.')
+  versions=[]
+  for row in rows:
+   rubrics=c.execute('SELECT rubric_version,content_hash,approved_by_user_id,created_at FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC',(case_id,row['version'])).fetchall()
+   item=dict(row); item['rubric_versions']=[dict(rubric) for rubric in rubrics]; versions.append(item)
+  return {'case_id':case_id,'latest_case_version':versions[0]['version'],'versions':versions}
+ finally: c.close()
+
+@app.get('/api/educator/cases/{case_id}/versions/{version}')
+def case_version_detail(case_id:str,version:str,request:Request):
+ check_access(request,True); c=conn()
+ try:
+  row=c.execute('SELECT payload,content_hash,approved_by,approved_by_user_id,approved_at,change_note FROM case_versions WHERE case_id=? AND version=?',(case_id,version)).fetchone()
+  if not row: raise HTTPException(404,'Case version not found.')
+  case=_validated_snapshot(row,'case')
+  rubric_rows=c.execute('SELECT rubric_version,payload,content_hash,created_at FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC',(case_id,version)).fetchall()
+  rubrics=[]
+  for rubric in rubric_rows:
+   rubrics.append({'rubric_version':rubric['rubric_version'],'rubric':_validated_snapshot({'payload':rubric['payload'],'content_hash':rubric['content_hash']},'rubric'),'content_hash':rubric['content_hash'],'created_at':rubric['created_at']})
+  return {'case':case,'content_hash':row['content_hash'],'approved_by':row['approved_by'],'approved_by_user_id':row['approved_by_user_id'],'approved_at':row['approved_at'],'change_note':row['change_note'],'rubric_versions':rubrics}
+ finally: c.close()
 
 @app.get('/api/educator/case-drafts')
 def list_case_drafts(request: Request):
@@ -496,8 +524,14 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  actor=educator_actor(request,body.reviewer)
  case['version']=next_case_version(c,case['id']); case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
  c.execute('INSERT INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash) VALUES(?,?,?,?,?,?,?,?)',(case['id'],case['version'],canonical_json(case),actor['display_name'],actor['user_id'],case['approved_at'],body.review_notes,content_digest(case)))
- rubric_payload=canonical_json(rubric_definition())
- c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],RUBRIC_VERSION,rubric_payload,case['approved_at'],content_digest(rubric_definition())))
+ rubric_value=rubric_for_case(case); rubric_payload=canonical_json(rubric_value)
+ prior_rubric=c.execute('SELECT rubric_version,payload FROM rubric_versions WHERE case_id=? ORDER BY rowid DESC LIMIT 1',(case['id'],)).fetchone()
+ if prior_rubric:
+  try: prior_payload=canonical_json(json.loads(prior_rubric['payload']))
+  except (TypeError,ValueError,json.JSONDecodeError): prior_payload=''
+  rubric_version=prior_rubric['rubric_version'] if prior_payload==rubric_payload else increment_patch(prior_rubric['rubric_version'])
+ else: rubric_version=RUBRIC_VERSION
+ c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],rubric_version,rubric_payload,case['approved_at'],content_digest(rubric_value)))
  c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at']))
  d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
  return {'status':d['status'],'case_id':case['id'],'version':case['version'],'message':'Published following educator attestation; this is not independent clinical certification.'}
@@ -535,7 +569,9 @@ def create_exam(body:ExamCreate,request:Request):
  creator_user_id=actor.get('user_id')
  c=conn()
  try:
-  c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),actor['display_name'],case_version,RUBRIC_VERSION,institution_id,creator_user_id))
+  rubric_row=c.execute('SELECT rubric_version FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC LIMIT 1',(body.case_id,case_version)).fetchone()
+  rubric_version=rubric_row['rubric_version'] if rubric_row else RUBRIC_VERSION
+  c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),actor['display_name'],case_version,rubric_version,institution_id,creator_user_id))
   c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone()
   return dict(ex)
  finally:
