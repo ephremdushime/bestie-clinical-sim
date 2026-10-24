@@ -288,7 +288,7 @@ def create_session(body:StartSession,request:Request):
     raise HTTPException(403,'This examination is not assigned to your institution.')
    prior=c.execute('SELECT id FROM sessions WHERE exam_id=? AND owner_user_id=? AND mode="exam" LIMIT 1',(exam_id,owner_user_id)).fetchone()
    if prior: raise HTTPException(409,'You have already started an attempt for this examination.')
-  cur=session_institution_id=identity.get('institution_id') if identity else None
+  session_institution_id=identity.get('institution_id') if identity else None
   c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id,case_version,rubric_version,institution_id) VALUES(?,?,?,?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id,case_version,rubric_version,session_institution_id)); sid=cur.lastrowid
   pinned_session={'case_id':case_id,'case_version':case_version,'rubric_version':rubric_version}
   pinned_case=case_for_session(c,pinned_session)
