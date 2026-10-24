@@ -116,7 +116,7 @@ def main_cli() -> int:
             )
             print(f"Created active institution: {args.institution_id}")
 
-        if args.email:
+        if args.email and not args.reset_password:
             if args.role == "platform_admin" and existing_admins and not args.allow_additional_platform_admin:
                 raise SystemExit(
                     "An active platform administrator already exists. Use --allow-additional-platform-admin "
