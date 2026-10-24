@@ -25,6 +25,12 @@ A linked record may be assigned only when its parent relationship is independent
 6. **Verify after writing.** Re-read the affected records, verify tenant-boundary behavior with a second institution, confirm immutable snapshot hashes remain valid, and confirm the audit event is present. Roll back from the verified backup if checks fail.
 7. **Close the ticket.** Record the exact changed IDs, migration/commit identifier, backup reference, verification results, and reviewer sign-off. Keep unresolved records quarantined.
 
+## Application enforcement
+
+The production reconciliation API requires a platform administrator to submit the change and a second, independently authenticated active platform administrator via the `X-Ownership-Reviewer-Authorization` bearer header. Requests must include a non-PHI `evidence_reference` and a reason; both are written to the append-only audit event alongside the reviewer identity.
+
+The API also requires attributable account evidence: session owners, draft/exam creators, or recorded case approvers must be present and their account institution must match the proposed institution. Linked exam ownership must already match before a session can be assigned. If those relationships are missing or conflict, the API rejects the write and the record remains in the quarantine queue. A narrative reference alone cannot override missing attribution. Records with no attributable ownership must be handled only through a separately reviewed, version-controlled migration after external evidence is established; do not bypass the rejection with a bulk update.
+
 ## Stop conditions
 
 Stop without making changes if the evidence does not establish ownership, a record chain crosses institutions, snapshot integrity fails, the backup cannot be verified, an unexpected row count occurs, or the audit write fails. Never use a bulk default such as assigning every null institution to one institution.
