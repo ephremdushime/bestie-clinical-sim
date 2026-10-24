@@ -33,6 +33,10 @@ def llm_configured() -> bool:
 app=FastAPI(title='Bestie Clinical Sim API',version='1.3.0')
 app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','http://localhost:5173,http://127.0.0.1:5173').split(','),allow_credentials=False,allow_methods=['GET','POST','OPTIONS'],allow_headers=['*','X-Pilot-Token','X-Educator-Token'])
 
+# Identity endpoints are additive; legacy route authorization is migrated separately.
+from auth_routes import router as auth_router
+app.include_router(auth_router)
+
 def validate_production_configuration() -> None:
  """Fail closed on common unsafe production configuration mistakes."""
  if APP_ENV != 'production':
@@ -69,10 +73,23 @@ def init_db():
  CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT);
- CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);''');
- # Safe additive migration for databases created by earlier versions.
+ CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);
+  CREATE TABLE IF NOT EXISTS case_versions(case_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, approved_by TEXT, approved_by_user_id TEXT, approved_at TEXT NOT NULL, change_note TEXT NOT NULL DEFAULT '', PRIMARY KEY(case_id,version));
+  CREATE TABLE IF NOT EXISTS rubric_versions(case_id TEXT NOT NULL, case_version TEXT NOT NULL, rubric_version TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(case_id,case_version,rubric_version));
+  CREATE TABLE IF NOT EXISTS exam_join_attempts(attempt_id INTEGER PRIMARY KEY AUTOINCREMENT, client_key TEXT NOT NULL, code_hash TEXT NOT NULL, attempted_at TEXT NOT NULL, succeeded INTEGER NOT NULL DEFAULT 0);
+  CREATE INDEX IF NOT EXISTS idx_exam_join_attempts ON exam_join_attempts(client_key,attempted_at,succeeded);
+  CREATE TABLE IF NOT EXISTS websocket_tickets(ticket_hash TEXT PRIMARY KEY, room TEXT NOT NULL, user_id TEXT NOT NULL, auth_session_hash TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL);
+  CREATE INDEX IF NOT EXISTS idx_websocket_tickets_expiry ON websocket_tickets(expires_at);''');
+ # Safe additive migrations; never rebuild or discard existing pilot data.
  cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
  if 'session_token_hash' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN session_token_hash TEXT')
+ if 'owner_user_id' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN owner_user_id TEXT')
+ session_cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
+ if 'case_version' not in session_cols: c.execute('ALTER TABLE sessions ADD COLUMN case_version TEXT')
+ if 'rubric_version' not in session_cols: c.execute('ALTER TABLE sessions ADD COLUMN rubric_version TEXT')
+ exam_cols={row['name'] for row in c.execute('PRAGMA table_info(exams)')}
+ if 'case_version' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN case_version TEXT')
+ if 'rubric_version' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN rubric_version TEXT')
  c.commit(); c.close()
 init_db()
 try:
@@ -82,16 +99,82 @@ try:
  c0.close()
 except Exception:
  pass
+
+RUBRIC_VERSION='heuristic-1.0.0'
+def rubric_definition():
+ return {'version':RUBRIC_VERSION,'status':'formative_unvalidated','domains':['Communication and history','Severity and examination','Investigation selection and indication','Result interpretation','Differential diagnosis','Final diagnosis','Management and safety','Referral and follow-up'],'critical_error_policy':'Flag scenario-specific omissions for educator review; automated text detection is not a validated competence measure.'}
+def ensure_version_snapshots():
+ c=conn()
+ try:
+  for case in CASES.values():
+   version=str(case.get('version') or '1.0.0'); approved_at=str(case.get('approved_at') or '2026-01-01T00:00:00+00:00')
+   c.execute('INSERT OR IGNORE INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note) VALUES(?,?,?,?,?,?,?)',(case['id'],version,json.dumps(case),case.get('approved_by'),case.get('approved_by_user_id'),approved_at,'Initial immutable snapshot imported from existing case catalogue.'))
+   c.execute('INSERT OR IGNORE INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at) VALUES(?,?,?,?,?)',(case['id'],version,RUBRIC_VERSION,json.dumps(rubric_definition()),approved_at))
+  c.commit()
+ finally: c.close()
+ensure_version_snapshots()
+def case_for_session(db,session_row):
+ version=session_row['case_version'] if 'case_version' in session_row.keys() else None; case_id=session_row['case_id']
+ if version:
+  row=db.execute('SELECT payload FROM case_versions WHERE case_id=? AND version=?',(case_id,version)).fetchone()
+  if row: return json.loads(row['payload'])
+ return CASES[case_id]
+def next_case_version(db,case_id):
+ rows=db.execute('SELECT version FROM case_versions WHERE case_id=?',(case_id,)).fetchall(); numeric=[]
+ for row in rows:
+  try: numeric.append(tuple(int(part) for part in row['version'].split('.')[:3]))
+  except (ValueError,AttributeError): continue
+ current=max(numeric) if numeric else (0,9,0)
+ return f'{current[0]}.{current[1]}.{current[2]+1}' if numeric else '1.0.0'
 def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def save_event(c,sid,event):
  row=c.execute('SELECT events FROM sessions WHERE id=?',(sid,)).fetchone(); ev=json.loads(row['events'] or '[]'); ev.append({'at':now(),**event}); c.execute('UPDATE sessions SET events=? WHERE id=?',(json.dumps(ev),sid))
 def check_access(request:Request, educator=False):
+ identity=current_identity_user(request)
+ if educator:
+  if identity:
+   if identity['role'] not in ('educator','institution_admin','platform_admin'):
+    raise HTTPException(403,'An active educator or administrator account is required.')
+   request.state.identity_user=identity
+   return
+  if APP_ENV=='production': raise HTTPException(401,'Valid educator bearer session required.')
+  # Local development can use the legacy path for backwards-compatible demos only.
+  return
+ if identity:
+  request.state.identity_user=identity
+  return
  if APP_ENV!='production': return
- expected=EDUCATOR_TOKEN if educator else PILOT_TOKEN
- supplied=request.headers.get('X-Educator-Token' if educator else 'X-Pilot-Token','')
- if not expected or not supplied or not hmac.compare_digest(expected,supplied): raise HTTPException(401,'Valid access token required.')
+ supplied=request.headers.get('X-Pilot-Token','')
+ if not PILOT_TOKEN or not supplied or not hmac.compare_digest(PILOT_TOKEN,supplied):
+  raise HTTPException(401,'Valid access token required.')
+
+def educator_actor(request:Request, fallback_name:str='Educator') -> dict:
+ user=getattr(request.state,'identity_user',None) or current_identity_user(request)
+ if user: return user
+ # In production, reviewers must be attributable to a provisioned identity.
+ if APP_ENV=='production': raise HTTPException(401,'Verified educator identity required.')
+ return {'user_id':None,'institution_id':None,'display_name':fallback_name,'role':'educator'}
+def current_identity_user(request:Request):
+ """Resolve an optional provisioned-account bearer token without trusting body identity."""
+ authorization=request.headers.get('Authorization','')
+ scheme, separator, token=authorization.partition(' ')
+ if not separator or scheme.lower()!='bearer' or not token.strip(): return None
+ from identity import init_identity_schema, resolve_session
+ db=conn()
+ try:
+  init_identity_schema(db); user=resolve_session(db,token.strip()); db.commit()
+  return ({key:user[key] for key in ('user_id','institution_id','display_name','role')} if user else None)
+ finally: db.close()
+
 def check_session_access(request:Request, session_row):
- # Per-session secret prevents another pilot user from guessing a numeric session ID.
+ # New identity-owned sessions require the same account; legacy pilot sessions retain their per-session secret.
+ owner=session_row['owner_user_id'] if 'owner_user_id' in session_row.keys() else None
+ identity=getattr(request.state,'identity_user',None) or current_identity_user(request)
+ if owner:
+  if not identity: raise HTTPException(401,'Sign in with the account that owns this session.')
+  if identity['user_id'] != owner and identity['role'] not in ('educator','institution_admin','platform_admin'):
+   raise HTTPException(403,'This learner session belongs to another account.')
+  return
  if APP_ENV!='production': return
  expected_hash=session_row['session_token_hash'] if 'session_token_hash' in session_row.keys() else None
  supplied=request.headers.get('X-Session-Token','')
@@ -116,19 +199,38 @@ def cases():
 @app.post('/api/sessions')
 def create_session(body:StartSession,request:Request):
  check_access(request)
+ identity=getattr(request.state,'identity_user',None) or current_identity_user(request)
+ if identity and identity['role'] not in ('learner','educator','institution_admin','platform_admin'):
+  raise HTTPException(403,'An active account is required.')
  if body.mode not in ('practice','exam'): raise HTTPException(400,'Mode must be practice or exam.')
  case_id=body.case_id; exam_id=None
  if body.mode=='exam':
-  c=conn(); ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"',(body.exam_code or '',)).fetchone(); c.close()
+  if APP_ENV=='production' and (not identity or identity['role']!='learner'):
+   raise HTTPException(403,'A provisioned learner account is required to join an examination.')
+  client_key=request.client.host if request.client else 'unknown'
+  code_hash=__import__('hashlib').sha256((body.exam_code or '').strip().upper().encode('utf-8')).hexdigest()
+  c=conn(); cutoff=(datetime.now(timezone.utc)-timedelta(minutes=15)).isoformat(timespec='seconds')
+  attempts=c.execute('SELECT COUNT(*) AS n FROM exam_join_attempts WHERE client_key=? AND attempted_at>=? AND succeeded=0',(client_key,cutoff)).fetchone()['n']
+  if attempts>=10: c.close(); raise HTTPException(429,'Too many invalid examination codes. Try again later.')
+  ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"',((body.exam_code or '').strip().upper(),)).fetchone()
+  c.execute('INSERT INTO exam_join_attempts(client_key,code_hash,attempted_at,succeeded) VALUES(?,?,?,?)',(client_key,code_hash,now(),1 if ex else 0))
+  c.execute('DELETE FROM exam_join_attempts WHERE attempted_at<?',((datetime.now(timezone.utc)-timedelta(days=2)).isoformat(timespec='seconds'),))
+  c.commit(); c.close()
   if not ex: raise HTTPException(404,'Exam code is invalid or closed.')
   case_id=ex['case_id']; exam_id=ex['id']
  if case_id not in CASES: raise HTTPException(404,'Case not found.')
  session_token=secrets.token_urlsafe(32)
  session_token_hash=__import__('hashlib').sha256(session_token.encode('utf-8')).hexdigest()
- c=conn(); cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash) VALUES(?,?,?,?,?,?)',(body.learner.strip(),case_id,body.mode,exam_id,now(),session_token_hash)); sid=cur.lastrowid
- opening=CASES[case_id]['opening']; save_event(c,sid,{'type':'session_started','mode':body.mode,'case_id':case_id}); c.commit(); c.close()
+ # The authenticated account is authoritative for the learner label and session ownership.
+ learner_name=identity['display_name'] if identity and identity['role']=='learner' else body.learner.strip()
+ owner_user_id=identity['user_id'] if identity and identity['role']=='learner' else None
+ case_version=(ex['case_version'] if body.mode=='exam' and ex['case_version'] else CASES[case_id].get('version','1.0.0'))
+ rubric_version=(ex['rubric_version'] if body.mode=='exam' and ex['rubric_version'] else RUBRIC_VERSION)
+ c=conn(); cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id,case_version,rubric_version) VALUES(?,?,?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id,case_version,rubric_version)); sid=cur.lastrowid
+ pinned_case=case_for_session(c,{'case_id':case_id,'case_version':case_version})
+ opening=pinned_case['opening']; save_event(c,sid,{'type':'session_started','mode':body.mode,'case_id':case_id,'case_version':case_version,'rubric_version':rubric_version}); c.commit(); c.close()
  # Never expose the hidden case identifier/title to a controlled-exam participant.
- return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':CASES[case_id]['age'],'sex':CASES[case_id]['sex'],'appearance':CASES[case_id]['appearance'],'vitals':CASES[case_id]['vitals'] if body.mode=='practice' else None}}
+ return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':pinned_case['age'],'sex':pinned_case['sex'],'appearance':pinned_case['appearance'],'vitals':pinned_case['vitals'] if body.mode=='practice' else None}}
 
 def fallback(case,msg):
  m=msg.lower(); facts=case['facts']
@@ -161,7 +263,7 @@ async def chat(sid:int,body:Message,request:Request):
  check_session_access(request,s)
  if s['status']!='active': c.close(); raise HTTPException(409,'Session is no longer active.')
  if session_expired(c,s): c.close(); raise HTTPException(409,'Examination time has expired. Submit your current work.')
- case=CASES[s['case_id']]; reply=await llm_patient(case,body.message,[]) or fallback(case,body.message)
+ case=case_for_session(c,s); reply=await llm_patient(case,body.message,[]) or fallback(case,body.message)
  save_event(c,sid,{'type':'chat','student_message':body.message,'patient_reply':reply}); c.commit(); c.close(); return {'reply':reply,'model':'llm' if llm_configured() else 'deterministic-fallback'}
 @app.post('/api/sessions/{sid}/investigations')
 def investigate(sid:int,body:Investigation,request:Request):
@@ -170,7 +272,7 @@ def investigate(sid:int,body:Investigation,request:Request):
  check_session_access(request,s)
  if s['status']!='active': c.close(); raise HTTPException(409,'Session is no longer active.')
  if session_expired(c,s): c.close(); raise HTTPException(409,'Examination time has expired. Submit your current work.')
- case=CASES[s['case_id']]; test=case['investigations'].get(body.test_id); configured=bool(test)
+ case=case_for_session(c,s); test=case['investigations'].get(body.test_id); configured=bool(test)
  if not test:
   # Generic non-indicated tests are explicitly not fabricated.
   test={'name':body.test_id,'result':'No case-specific result is configured for this test. It has not been performed in this simulation.','interpretation':'Do not infer a diagnosis from an unavailable result. Discuss the indication with an educator.','appropriate':False,'why':'This case does not include a validated result for this investigation.'}
@@ -210,20 +312,21 @@ def finish(sid:int,body:Finish,request:Request):
  if not s: c.close(); raise HTTPException(404,'Session not found.')
  check_session_access(request,s)
  if s['status']!='active': c.close(); raise HTTPException(409,'Session already submitted.')
- events=json.loads(s['events'] or '[]'); report=make_report(CASES[s['case_id']],events,body); report['mode']=s['mode']; report['case_id']=s['case_id']; report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
+ events=json.loads(s['events'] or '[]'); report=make_report(case_for_session(c,s),events,body); report['mode']=s['mode']; report['case_id']=s['case_id']; report['case_version']=s['case_version']; report['rubric_version']=s['rubric_version']; report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
  if s['mode']=='exam' and s['exam_id']:
   ex=c.execute('SELECT pass_mark FROM exams WHERE id=?',(s['exam_id'],)).fetchone(); report['demo_threshold']=int(ex['pass_mark']) if ex else None; report['threshold_status']=('critical_review_required' if report['critical_flags'] else ('meets_demo_threshold' if report['score']>=int(ex['pass_mark']) else 'below_demo_threshold')) if ex else 'not_set'
  c.execute('UPDATE sessions SET status="completed",report=? WHERE id=?',(json.dumps(report),sid)); save_event(c,sid,{'type':'session_finished','score':report['score']}); c.commit(); c.close()
  # Controlled exams retain the full report for educator review, but the student response
  # must not reveal the hidden diagnosis, score, rubric decisions or pass-threshold result.
  if s['mode']=='exam':
-  return {'status':'submitted_pending_educator_review','mode':'exam','case_id':s['case_id'],'learner':s['learner'],'submitted_at':report['submitted_at'],'time_expired':report['time_expired'],'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
+  return {'status':'submitted_pending_educator_review','mode':'exam','learner':s['learner'],'submitted_at':report['submitted_at'],'time_expired':report['time_expired'],'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
  return report
 class EvidenceSearchRequest(BaseModel):
  query: str = Field(min_length=3,max_length=300)
  max_results: int = Field(default=8,ge=1,le=20)
 class CaseReviewRequest(BaseModel):
- reviewer: str = Field(min_length=2,max_length=100)
+ # Retained for local legacy clients only; production reviewer identity comes from auth.
+ reviewer: str = Field(default='Educator',min_length=2,max_length=100)
  review_notes: str = Field(default='',max_length=4000)
 
 async def retrieve_evidence(query: str, max_results: int=8) -> dict:
@@ -265,6 +368,12 @@ def normalize_generated_case(g: dict, body) -> dict:
 async def evidence_search(body: EvidenceSearchRequest, request: Request):
  check_access(request,True); return await retrieve_evidence(body.query,body.max_results)
 
+@app.get('/api/educator/cases/{case_id}/versions')
+def case_version_history(case_id:str,request:Request):
+ check_access(request,True); c=conn(); rows=c.execute('SELECT case_id,version,approved_by,approved_by_user_id,approved_at,change_note FROM case_versions WHERE case_id=? ORDER BY approved_at DESC,version DESC',(case_id,)).fetchall(); c.close()
+ if not rows: raise HTTPException(404,'No version history found for this case.')
+ return {'case_id':case_id,'versions':[dict(row) for row in rows]}
+
 @app.get('/api/educator/case-drafts')
 def list_case_drafts(request: Request):
  check_access(request,True); c=conn(); rows=c.execute('SELECT draft_id,topic,specialty,status,payload,created_at,updated_at FROM case_drafts ORDER BY id DESC LIMIT 100').fetchall(); c.close()
@@ -274,7 +383,8 @@ def list_case_drafts(request: Request):
 def review_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
  check_access(request,True); c=conn(); row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
- d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':body.reviewer,'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
+ actor=educator_actor(request,body.reviewer)
+ d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
 
 @app.post('/api/educator/case-drafts/{draft_id}/approve-and-publish')
 def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
@@ -291,9 +401,12 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  if any(any(p in str(test.get(field,'')).lower() for p in placeholders) for test in case['investigations'].values() for field in ('result','interpretation')):
   c.close(); raise HTTPException(422,'Investigation results and interpretations contain placeholders. Complete them before publishing.')
  if not body.review_notes.strip(): c.close(); raise HTTPException(422,'A clinical review note is required.')
- case['version']='1.0.0'; case['status']='educator_approved'; case['approved_by']=body.reviewer; case['approved_at']=now(); case['review_notes']=body.review_notes
- c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),body.reviewer,case['approved_at']))
- d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':body.reviewer,'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
+ actor=educator_actor(request,body.reviewer)
+ case['version']=next_case_version(c,case['id']); case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
+ c.execute('INSERT INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note) VALUES(?,?,?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],actor['user_id'],case['approved_at'],body.review_notes))
+ c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],RUBRIC_VERSION,json.dumps(rubric_definition()),case['approved_at']))
+ c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at']))
+ d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
  return {'status':d['status'],'case_id':case['id'],'version':case['version'],'message':'Published following educator attestation; this is not independent clinical certification.'}
 
 @app.post('/api/educator/case-draft')
@@ -323,7 +436,8 @@ def create_exam(body:ExamCreate,request:Request):
  check_access(request,True)
  if body.case_id not in CASES: raise HTTPException(404,'Case not found.')
  code=secrets.token_urlsafe(5).replace('-','').replace('_','').upper()[:8]
- c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator) VALUES(?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),body.creator)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
+ case_version=CASES[body.case_id].get('version','1.0.0')
+ c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version) VALUES(?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),body.creator,case_version,RUBRIC_VERSION)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
  check_access(request,True); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']; c.close()
@@ -335,21 +449,116 @@ def dashboard(request:Request):
 def close_exam(exam_id:int,request:Request):
  check_access(request,True); c=conn(); c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); c.close(); return {'closed':True}
 
-# Lightweight collaboration chat; no case-state synchronization is implied.
+# Collaboration rooms require an individually authenticated, one-time ticket.
+# The long-lived bearer token is never sent in a WebSocket URL.
+import re
+import hashlib
+from datetime import timedelta
+
+class WebSocketTicketRequest(BaseModel):
+ room: str = Field(min_length=1,max_length=100)
+
+def _room_allowed_for_user(room_name:str,user:dict) -> bool:
+ # Institution rooms permit collaboration only within the user's own institution.
+ # Personal rooms are private to that exact account.
+ return room_name == f"institution-{user['institution_id']}" or room_name == f"user-{user['user_id']}"
+
+@app.post('/api/ws/tickets')
+def create_websocket_ticket(body:WebSocketTicketRequest,request:Request):
+ user=current_identity_user(request)
+ if not user:
+  raise HTTPException(401,'A valid individual account session is required for collaboration.')
+ if not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',body.room):
+  raise HTTPException(422,'Invalid collaboration room identifier.')
+ if not _room_allowed_for_user(body.room,user):
+  raise HTTPException(403,'You are not authorized to join this collaboration room.')
+ authorization=request.headers.get('Authorization','')
+ _,_,raw_token=authorization.partition(' ')
+ auth_hash=hashlib.sha256(raw_token.strip().encode('utf-8')).hexdigest()
+ ticket=secrets.token_urlsafe(32)
+ ticket_hash=hashlib.sha256(ticket.encode('utf-8')).hexdigest()
+ created=datetime.now(timezone.utc)
+ expires=created+timedelta(seconds=60)
+ c=conn()
+ try:
+  # Confirm the issuing session is still live and tied to this account.
+  session=c.execute("""SELECT s.user_id FROM auth_sessions s JOIN users u ON u.user_id=s.user_id
+   WHERE s.token_hash=? AND s.user_id=? AND s.revoked_at IS NULL AND s.expires_at>? AND u.status='active'""",
+   (auth_hash,user['user_id'],created.isoformat(timespec='seconds'))).fetchone()
+  if not session:
+   raise HTTPException(401,'The account session is no longer active.')
+  c.execute("""INSERT INTO websocket_tickets(ticket_hash,room,user_id,auth_session_hash,expires_at,created_at)
+   VALUES(?,?,?,?,?,?)""",(ticket_hash,body.room,user['user_id'],auth_hash,expires.isoformat(timespec='seconds'),created.isoformat(timespec='seconds')))
+  # Keep the table bounded without deleting still-valid tickets.
+  c.execute("DELETE FROM websocket_tickets WHERE expires_at<? OR used_at IS NOT NULL",
+   (created.isoformat(timespec='seconds'),))
+  c.commit()
+ finally:
+  c.close()
+ return {'ticket':ticket,'expires_in':60,'room':body.room,'websocket_path':f'/ws/rooms/{body.room}'}
+
+def _consume_websocket_ticket(ticket:str,requested_room:str):
+ if not ticket or len(ticket)>256 or not re.fullmatch(r'[A-Za-z0-9_-]{1,100}',requested_room):
+  return None
+ ticket_hash=hashlib.sha256(ticket.encode('utf-8')).hexdigest()
+ timestamp=datetime.now(timezone.utc).isoformat(timespec='seconds')
+ c=conn()
+ try:
+  c.execute('BEGIN IMMEDIATE')
+  row=c.execute("""SELECT t.room,t.user_id,t.auth_session_hash,t.expires_at,
+   u.institution_id,u.role,u.status AS user_status,i.status AS institution_status,
+   s.revoked_at,s.expires_at AS auth_expires_at
+   FROM websocket_tickets t JOIN users u ON u.user_id=t.user_id
+   JOIN auth_sessions s ON s.token_hash=t.auth_session_hash AND s.user_id=t.user_id
+   LEFT JOIN institutions i ON i.institution_id=u.institution_id
+   WHERE t.ticket_hash=? AND t.used_at IS NULL""",(ticket_hash,)).fetchone()
+  if not row or row['room']!=requested_room or row['user_status']!='active':
+   c.rollback(); return None
+  if row['institution_id'] and row['institution_status']!='active':
+   c.rollback(); return None
+  if row['revoked_at'] or row['expires_at']<=timestamp or row['auth_expires_at']<=timestamp:
+   c.rollback(); return None
+  if requested_room not in (f"institution-{row['institution_id']}",f"user-{row['user_id']}"):
+   c.rollback(); return None
+  changed=c.execute("UPDATE websocket_tickets SET used_at=? WHERE ticket_hash=? AND used_at IS NULL AND expires_at>?",
+   (timestamp,ticket_hash,timestamp)).rowcount
+  if changed!=1:
+   c.rollback(); return None
+  c.commit()
+  return {'user_id':row['user_id'],'institution_id':row['institution_id'],'role':row['role']}
+ finally:
+  c.close()
+
+# Lightweight collaboration chat; it does not synchronize clinical case state.
 rooms={}
 @app.websocket('/ws/rooms/{room}')
 async def room(ws:WebSocket,room:str):
- if APP_ENV=='production':
-  tok=ws.query_params.get('token','')
-  if not PILOT_TOKEN or not hmac.compare_digest(tok,PILOT_TOKEN): await ws.close(code=1008); return
- await ws.accept(); rooms.setdefault(room,[]).append(ws)
+ ticket=ws.query_params.get('ticket','')
+ principal=_consume_websocket_ticket(ticket,room)
+ if not principal:
+  await ws.close(code=1008); return
+ await ws.accept()
+ connection={'socket':ws,'user_id':principal['user_id'],'institution_id':principal['institution_id']}
+ rooms.setdefault(room,[]).append(connection)
  try:
   await ws.send_json({'type':'history','messages':[]})
   while True:
-   data=await ws.receive_json(); msg={'type':'message','name':str(data.get('name','Participant'))[:80],'role':str(data.get('role','student'))[:20],'text':str(data.get('text',''))[:1200],'created_at':now()}
+   data=await ws.receive_json()
+   if not isinstance(data,dict):
+    await ws.send_json({'type':'error','message':'Message must be an object.'}); continue
+   message_text=data.get('text','')
+   if not isinstance(message_text,str) or not message_text.strip():
+    await ws.send_json({'type':'error','message':'Message text is required.'}); continue
+   if len(message_text)>1200:
+    await ws.send_json({'type':'error','message':'Message exceeds the 1200-character limit.'}); continue
+   msg={'type':'message','user_id':principal['user_id'],'name':'Participant',
+        'role':principal['role'],'text':message_text,'created_at':now()}
    for peer in list(rooms.get(room,[])):
-    try: await peer.send_json(msg)
+    if peer['institution_id']!=principal['institution_id']:
+     continue
+    try: await peer['socket'].send_json(msg)
     except Exception: pass
  except WebSocketDisconnect: pass
  finally:
-  if ws in rooms.get(room,[]): rooms[room].remove(ws)
+  if connection in rooms.get(room,[]): rooms[room].remove(connection)
+  if not rooms.get(room): rooms.pop(room,None)
