@@ -242,6 +242,10 @@ def create_session(body:StartSession,request:Request):
   # Serialize starts so two concurrent requests cannot create duplicate attempts.
   c.execute('BEGIN IMMEDIATE')
   if APP_ENV=='production' and body.mode=='exam' and owner_user_id:
+   active_exam=c.execute('SELECT status,institution_id FROM exams WHERE id=?',(exam_id,)).fetchone()
+   if not active_exam or active_exam['status']!='open': raise HTTPException(409,'This examination is no longer open for new attempts.')
+   if not active_exam['institution_id'] or active_exam['institution_id']!=identity.get('institution_id'):
+    raise HTTPException(403,'This examination is not assigned to your institution.')
    prior=c.execute('SELECT id FROM sessions WHERE exam_id=? AND owner_user_id=? AND mode="exam" LIMIT 1',(exam_id,owner_user_id)).fetchone()
    if prior: raise HTTPException(409,'You have already started an attempt for this examination.')
   cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id,case_version,rubric_version) VALUES(?,?,?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id,case_version,rubric_version)); sid=cur.lastrowid
