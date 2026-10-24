@@ -57,9 +57,14 @@ publish=client.post(f"/api/educator/case-drafts/{draft['draft_id']}/approve-and-
 assert publish.status_code == 200, publish.text
 case_id=publish.json()['case_id']
 assert any(c['id'] == case_id for c in client.get('/api/cases').json()['cases'])
-# Simulate backend restart and verify approved case is loaded from SQLite.
+# Simulate backend restart: published cases are loaded from SQLite per request,
+# not copied into the global registry where institution-specific cases could leak.
 main=importlib.reload(main)
-assert case_id in main.CASES, 'Published case was not restored after restart'
-print('PASS: mocked LLM generation -> draft persistence -> educator attestation -> case registry -> restart reload.')
+with TestClient(main.app) as restarted_client:
+    restored = restarted_client.get('/api/cases')
+    assert restored.status_code == 200, restored.text
+    assert any(c['id'] == case_id for c in restored.json()['cases']), 'Published case was not restored after restart'
+print('PASS: mocked LLM generation -> draft persistence -> educator attestation -> scoped case registry -> restart reload.')
+
 try: os.unlink(dbpath)
 except OSError: pass
