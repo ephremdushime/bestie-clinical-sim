@@ -70,6 +70,26 @@ def test_audit_event_records_actor_scope_and_outcome():
     assert row["outcome"] == "success"
 
 
+
+def test_audit_events_are_append_only():
+    db = setup_db()
+    event_id = write_audit_event(
+        db, actor_user_id=None, institution_id="ur", action="security.test",
+        resource_type="test", resource_id="immutable-1", outcome="success",
+    )
+    try:
+        db.execute("UPDATE audit_events SET outcome='failure' WHERE event_id=?", (event_id,))
+        assert False, "audit updates must be rejected"
+    except sqlite3.IntegrityError:
+        pass
+    try:
+        db.execute("DELETE FROM audit_events WHERE event_id=?", (event_id,))
+        assert False, "audit deletion must be rejected"
+    except sqlite3.IntegrityError:
+        pass
+    assert db.execute("SELECT outcome FROM audit_events WHERE event_id=?", (event_id,)).fetchone()["outcome"] == "success"
+
+
 def test_password_policy_and_role_scope_validation():
     db = setup_db()
     try:
