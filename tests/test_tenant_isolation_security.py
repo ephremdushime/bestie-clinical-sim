@@ -240,3 +240,52 @@ def test_ownership_reconciliation_rejects_non_platform_admin(tmp_path, monkeypat
             },
         )
         assert response.status_code == 403
+
+
+def test_production_case_review_and_publication_require_separate_people(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    with main.conn() as db:
+        db.execute(
+            "INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?)",
+            ("draft-separation", "Test topic", "General medicine", "draft", '{"case":{}}',
+             main.now(), main.now(), "institution-a", "creator-user"),
+        )
+        db.commit()
+
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(
+            main, "current_identity_user",
+            lambda request: identity("creator-user", "institution-a", role="educator"),
+        )
+        self_review = client.post(
+            "/api/educator/case-drafts/draft-separation/review",
+            json={"review_notes": "The creator tries to review their own case."},
+        )
+        assert self_review.status_code == 403
+
+        monkeypatch.setattr(
+            main, "current_identity_user",
+            lambda request: identity("reviewer-user", "institution-a", role="educator"),
+        )
+        review = client.post(
+            "/api/educator/case-drafts/draft-separation/review",
+            json={"review_notes": "Reviewed for internal consistency; clinical details still require completion."},
+        )
+        assert review.status_code == 200, review.text
+
+        same_person_publish = client.post(
+            "/api/educator/case-drafts/draft-separation/approve-and-publish",
+            json={"review_notes": "I reviewed and approve this case."},
+        )
+        assert same_person_publish.status_code == 403
+
+        monkeypatch.setattr(
+            main, "current_identity_user",
+            lambda request: identity("approver-user", "institution-a", role="educator"),
+        )
+        different_person_publish = client.post(
+            "/api/educator/case-drafts/draft-separation/approve-and-publish",
+            json={"review_notes": "Independent publication attestation."},
+        )
+        # Independence passes, but the deliberately incomplete draft must still fail validation.
+        assert different_person_publish.status_code == 422
