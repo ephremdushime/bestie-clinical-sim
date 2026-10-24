@@ -28,6 +28,8 @@ def provision(path, monkeypatch):
                    (iid, name, "2026-01-01T00:00:00+00:00"))
     create_user(db, email="educator@exam.example", display_name="Educator A",
                 password="educator-password-long", role="educator", institution_id="inst-a")
+    create_user(db, email="educator@other.example", display_name="Educator B",
+                password="other-educator-password-long", role="educator", institution_id="inst-b")
     create_user(db, email="learner@exam.example", display_name="Learner A",
                 password="learner-password-long", role="learner", institution_id="inst-a")
     create_user(db, email="learner@other.example", display_name="Learner B",
@@ -55,6 +57,23 @@ def test_production_exam_requires_learner_identity_and_prevents_duplicate_attemp
                  "duration": 5, "pass_mark": 70})
         assert created.status_code == 200, created.text
         code = created.json()["code"]
+
+        other_educator = get_token(client, "educator@other.example", "other-educator-password-long")
+        other_exam = client.post("/api/educator/exams", headers={
+            "Authorization": f"Bearer {other_educator}"
+        }, json={"title": "Institution B exam", "case_id": "trauma-001",
+                 "duration": 5, "pass_mark": 70})
+        assert other_exam.status_code == 200, other_exam.text
+
+        dashboard_a = client.get("/api/educator/dashboard", headers={
+            "Authorization": f"Bearer {educator}"
+        })
+        assert dashboard_a.status_code == 200
+        assert all(item["id"] != other_exam.json()["id"] for item in dashboard_a.json()["exams"])
+        cross_close = client.post(f"/api/educator/exams/{other_exam.json()['id']}/close", headers={
+            "Authorization": f"Bearer {educator}"
+        })
+        assert cross_close.status_code == 404
 
         assert client.post("/api/sessions", json={
             "learner": "Anonymous", "case_id": "malaria-001", "mode": "exam",
