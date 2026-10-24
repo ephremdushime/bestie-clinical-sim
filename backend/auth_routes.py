@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from identity import (
@@ -42,10 +42,15 @@ def _db() -> sqlite3.Connection:
         attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
         email_normalized TEXT NOT NULL,
         attempted_at TEXT NOT NULL,
-        succeeded INTEGER NOT NULL DEFAULT 0
+        succeeded INTEGER NOT NULL DEFAULT 0,
+        client_key TEXT NOT NULL DEFAULT 'unknown'
       )
     """)
+    attempt_columns = {row["name"] for row in db.execute("PRAGMA table_info(auth_login_attempts)")}
+    if "client_key" not in attempt_columns:
+        db.execute("ALTER TABLE auth_login_attempts ADD COLUMN client_key TEXT NOT NULL DEFAULT 'unknown'")
     db.execute("CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_email_time ON auth_login_attempts(email_normalized, attempted_at)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_client_time ON auth_login_attempts(client_key, attempted_at)")
     db.commit()
     return db
 
@@ -75,36 +80,51 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login")
-def login(body: LoginRequest):
-    """Authenticate a provisioned account; never creates users."""
+def login(body: LoginRequest, request: Request):
+    """Authenticate a provisioned account with per-account and per-client throttling."""
     from datetime import datetime, timedelta, timezone
 
     email = body.email.strip().casefold()
     now = datetime.now(timezone.utc)
+    now_text = now.isoformat(timespec="seconds")
     cutoff = (now - timedelta(minutes=15)).isoformat(timespec="seconds")
+    # The bundled reverse proxy overwrites X-Real-IP. The API must not be exposed
+    # directly to the public network, otherwise this header is not trustworthy.
+    client_key = request.headers.get("X-Real-IP") or (request.client.host if request.client else "unknown")
     db = _db()
     try:
+        client_attempts = db.execute(
+            "SELECT COUNT(*) AS n FROM auth_login_attempts WHERE client_key=? AND attempted_at>=? AND succeeded=0",
+            (client_key, cutoff),
+        ).fetchone()["n"]
+        if client_attempts >= 50:
+            write_audit_event(db, actor_user_id=None, institution_id=None,
+                              action="auth.login_throttled", resource_type="client",
+                              resource_id=None, outcome="denied",
+                              metadata_json='{"reason":"client_attempt_limit"}')
+            db.commit()
+            raise HTTPException(429, "Too many sign-in attempts from this network. Try again later.")
+
         attempts = db.execute(
             "SELECT COUNT(*) AS n FROM auth_login_attempts WHERE email_normalized=? AND attempted_at>=? AND succeeded=0",
             (email, cutoff),
         ).fetchone()["n"]
-        # Per-account throttle; generic error avoids confirming account existence.
-        if attempts >= 10:
-            write_audit_event(db, actor_user_id=None, institution_id=None,
-                              action="auth.login_throttled", resource_type="user",
-                              resource_id=None, outcome="denied",
-                              metadata_json='{"reason":"attempt_limit"}')
-            db.commit()
-            raise HTTPException(429, "Too many sign-in attempts. Try again later.")
         user = verify_password(db, email, body.password)
         db.execute(
-            "INSERT INTO auth_login_attempts(email_normalized,attempted_at,succeeded) VALUES(?,?,?)",
-            (email, now.isoformat(timespec="seconds"), 1 if user else 0),
+            "INSERT INTO auth_login_attempts(email_normalized,attempted_at,succeeded,client_key) VALUES(?,?,?,?)",
+            (email, now_text, 1 if user else 0, client_key),
         )
         # Retain only the recent window plus a small margin.
         db.execute("DELETE FROM auth_login_attempts WHERE attempted_at<?",
                    ((now - timedelta(days=2)).isoformat(timespec="seconds"),))
         if not user:
+            if attempts >= 10:
+                write_audit_event(db, actor_user_id=None, institution_id=None,
+                                  action="auth.login_throttled", resource_type="user",
+                                  resource_id=None, outcome="denied",
+                                  metadata_json='{"reason":"account_attempt_limit"}')
+                db.commit()
+                raise HTTPException(429, "Too many sign-in attempts. Try again later.")
             write_audit_event(db, actor_user_id=None, institution_id=None,
                               action="auth.login_failed", resource_type="user",
                               resource_id=None, outcome="denied")
