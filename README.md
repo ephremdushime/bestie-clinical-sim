@@ -105,3 +105,5 @@ See `docs/PRODUCT_SPECIFICATION.md`, `docs/AI_SOURCE_GOVERNANCE.md`, `docs/UNIPO
 The educator console supports evidence-assisted case drafting. It can query PubMed and Europe PMC, pass retrieved citation metadata/eligible abstracts to the optional configured language model, persist drafts in SQLite, record review notes, and publish an educator-attested case into the case registry. See `docs/AI_CASE_FACTORY.md` for endpoints, controls and limitations.
 
 Important: the source search is evidence discovery, not clinical verification. A fallback draft is only a scaffold. Educator attestation does not independently certify clinical accuracy; complete the review checklist before publishing.
+
+Collaboration WebSocket security includes short-lived single-use tickets, production Origin allowlisting, same-institution room checks, and a per-connection message rate limit.
