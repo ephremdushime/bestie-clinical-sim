@@ -57,7 +57,7 @@ Never put API keys in React, browser storage, a public repository, or a client-s
 
 ## Docker
 
-Copy `.env.example` to `.env`, configure exact frontend origins, add optional backend-only model credentials if needed, and read `docs/PILOT_READINESS_AND_DEPLOYMENT.md` before using Docker Compose. Provision user accounts through a trusted administrative process before enabling production sign-in. Put the service behind managed HTTPS and restrict network access. Do not expose a development deployment publicly.
+Copy `.env.example` to `.env`, configure exact frontend origins, add optional backend-only model credentials if needed, and read `docs/PILOT_READINESS_AND_DEPLOYMENT.md` before using Docker Compose. Bootstrap the first platform administrator once using `scripts/bootstrap_admin.py` in a trusted deployment environment, then provision institution accounts through the authenticated admin API before enabling production sign-in. Never run the bootstrap script automatically at application startup. Put the service behind managed HTTPS and restrict network access. Do not expose a development deployment publicly.
 
 ## API overview
 
@@ -88,7 +88,7 @@ Copy `.env.example` to `.env`, configure exact frontend origins, add optional ba
 
 ## Known limitations and next steps
 
-1. Login, logout and current-user endpoints are available for pre-provisioned accounts, but account provisioning/administration, password recovery, MFA, institutional SSO and identity verification remain incomplete. Production simulation creation now requires an authenticated account.
+1. Login/logout/current-user and tenant-scoped account administration are available. The first platform administrator must be bootstrapped manually; password recovery, MFA, institutional SSO and external identity verification remain incomplete. Production simulation creation requires an authenticated account.
 2. Scoring is based on transparent but limited demonstration checks; it is not validated against faculty marking or OSCE performance.
 3. Exam settings include duration and pass mark; pass/fail decisions must be reviewed and formally validated before operational use.
 4. The case registry is loaded from built-in cases plus educator-approved cases persisted in SQLite. Case approval/publishing remains an educator attestation and is not independent clinical certification.
