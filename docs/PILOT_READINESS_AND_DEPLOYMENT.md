@@ -31,7 +31,7 @@ This build is suitable for supervised technical demonstrations and for collectin
 3. Keep LLM credentials server-side. Configure `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL` only if using a compatible provider.
 4. Run `docker compose up --build -d` on a managed host and place it behind HTTPS, with restricted network access and backups for the SQLite volume.
 5. Provision the initial platform administrator from a trusted server shell: `docker compose exec api python /app/scripts/provision_account.py --email admin@example.org --display-name "Platform Administrator" --role platform_admin`. The script prompts for the password without echoing it.
-6. Create institutions and institution-scoped accounts with `docker compose exec api python /app/scripts/provision_account.py --create-institution --institution-id inst-a --institution-name "Institution A"`, then create users with `--email`, `--display-name`, `--role educator|institution_admin|learner`, and `--institution-id inst-a`.
+6. Create institutions and institution-scoped accounts with `docker compose exec api python /app/scripts/provision_account.py --create-institution --institution-id inst-a --institution-name "Institution A"`, then create users with `--email`, `--display-name`, `--role educator` (or `institution_admin` or `learner`), and `--institution-id inst-a`.
 7. Confirm health endpoint, case list, account sign-in/password change, learner flow, educator flow, timeout enforcement and data persistence in staging.
 8. Do not use the development Vite server as a public service.
 
