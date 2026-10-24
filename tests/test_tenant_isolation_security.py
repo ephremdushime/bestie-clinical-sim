@@ -498,3 +498,43 @@ def test_production_case_publication_stays_with_originating_institution(tmp_path
         history = client.get(f"/api/educator/cases/{case_id}/versions",
             headers={"Authorization": "Bearer test"})
         assert history.status_code == 404
+
+def test_production_exam_creation_requires_active_tenant_and_blocks_cross_tenant_assignment(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    from identity import init_identity_schema
+    with main.conn() as db:
+        init_identity_schema(db)
+        for institution_id, name in (("institution-a", "Institution A"), ("institution-b", "Institution B")):
+            db.execute(
+                "INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+                (institution_id, name, main.now()),
+            )
+        db.commit()
+
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(main, "current_identity_user",
+            lambda request: identity("educator-a", "institution-a"))
+        created = client.post("/api/educator/exams", headers={"Authorization": "Bearer test"},
+            json={"title": "Institution A assessment", "case_id": "malaria-001"})
+        assert created.status_code == 200, created.text
+        assert created.json()["institution_id"] == "institution-a"
+
+        cross_tenant = client.post("/api/educator/exams", headers={"Authorization": "Bearer test"},
+            json={"title": "Misassigned assessment", "case_id": "malaria-001",
+                  "institution_id": "institution-b"})
+        assert cross_tenant.status_code == 403, cross_tenant.text
+
+        missing_tenant = client.post("/api/educator/exams", headers={"Authorization": "Bearer test"},
+            json={"title": "Unassigned assessment", "case_id": "malaria-001",
+                  "institution_id": "missing-institution"})
+        assert missing_tenant.status_code == 403, missing_tenant.text
+
+
+def test_production_platform_admin_must_select_an_active_institution_for_exam(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(main, "current_identity_user",
+            lambda request: identity("platform-admin", None, role="platform_admin"))
+        missing = client.post("/api/educator/exams", headers={"Authorization": "Bearer test"},
+            json={"title": "Unassigned admin exam", "case_id": "malaria-001"})
+        assert missing.status_code == 422, missing.text
