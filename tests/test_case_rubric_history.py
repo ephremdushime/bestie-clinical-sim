@@ -46,3 +46,9 @@ def test_history_endpoint_returns_case_and_rubric_hashes_without_mutating_snapsh
         assert detail.json()["case"]["id"] == "malaria-001"
         assert detail.json()["rubric_versions"]
         assert detail.json()["rubric_versions"][0]["rubric"]["source_case_id"] == "malaria-001"
+
+
+def test_patch_version_increment_handles_prefixed_semver():
+    assert main.increment_patch("heuristic-1.0.0") == "heuristic-1.0.1"
+    assert main.increment_patch("1.4.9") == "1.4.10"
+    assert main.increment_patch("custom-rubric-2.9.99") == "custom-rubric-2.9.100"
