@@ -154,3 +154,32 @@ def test_exam_sessions_never_issue_collaboration_room_tickets(tmp_path, monkeypa
             json={"room": room},
         )
         assert response.status_code == 403, response.text
+
+
+
+def test_expired_websocket_ticket_is_rejected(tmp_path, monkeypatch):
+    setup_accounts(tmp_path, monkeypatch)
+    with TestClient(main.app) as client:
+        token = login(client, "learner@ws.example", "learner-password-long")
+        headers = {"Authorization": f"Bearer {token}"}
+        started = client.post("/api/sessions", headers=headers, json={
+            "learner": "Learner", "case_id": "malaria-001", "mode": "practice"
+        })
+        room = f"session:{started.json()['session_id']}"
+        issued = client.post("/api/ws/ticket", headers=headers, json={"room": room})
+        assert issued.status_code == 200, issued.text
+        ticket = issued.json()["ticket"]
+        digest = __import__("hashlib").sha256(ticket.encode("utf-8")).hexdigest()
+
+        with sqlite3.connect(tmp_path / "websocket.db") as db:
+            db.execute(
+                "UPDATE websocket_tickets SET expires_at=? WHERE ticket_hash=?",
+                ("2000-01-01T00:00:00+00:00", digest),
+            )
+            db.commit()
+
+        try:
+            with client.websocket_connect(f"/ws/rooms/{room}?ticket={ticket}"):
+                raise AssertionError("Expired WebSocket tickets must be rejected")
+        except WebSocketDisconnect:
+            pass
