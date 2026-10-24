@@ -347,3 +347,97 @@ def test_session_without_pinned_rubric_version_fails_closed(tmp_path, monkeypatc
             )
         assert exc.value.status_code == 409
         assert "no pinned rubric version" in exc.value.detail
+
+def test_published_cases_are_not_visible_or_usable_across_institutions(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    private_case = {
+        "id": "generated-institution-b", "version": "1.0.0", "title": "Institution B private case",
+        "specialty": "Internal medicine", "level": "Clinical-year student", "age": 30,
+        "sex": "adult woman", "appearance": "Fictional patient", "opening": "I feel unwell.",
+        "diagnosis": "Private teaching diagnosis", "vitals": {}, "facts": {},
+        "investigations": {"fbc": {"name": "FBC", "result": "Fictional result",
+            "interpretation": "Fictional interpretation", "appropriate": True, "why": "Indicated"}},
+        "expected_differentials": [], "expected_actions": [], "critical_errors": [],
+    }
+    with main.conn() as db:
+        db.execute(
+            "INSERT INTO approved_cases(case_id,version,payload,approved_by,approved_at,institution_id) VALUES(?,?,?,?,?,?)",
+            (private_case["id"], private_case["version"], main.canonical_json(private_case),
+             "Institution B Educator", main.now(), "institution-b"),
+        )
+        db.execute(
+            "INSERT INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash,institution_id) VALUES(?,?,?,?,?,?,?,?,?)",
+            (private_case["id"], private_case["version"], main.canonical_json(private_case),
+             "Institution B Educator", "educator-b", main.now(), "Reviewed case",
+             main.content_digest(private_case), "institution-b"),
+        )
+        db.commit()
+
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(main, "current_identity_user",
+            lambda request: identity("educator-a", "institution-a"))
+        catalogue = client.get("/api/cases", headers={"Authorization": "Bearer test"})
+        assert catalogue.status_code == 200, catalogue.text
+        assert private_case["id"] not in {item["id"] for item in catalogue.json()["cases"]}
+
+        session = client.post("/api/sessions", headers={"Authorization": "Bearer test"},
+            json={"case_id": private_case["id"], "mode": "practice"})
+        assert session.status_code == 404, session.text
+
+        exam = client.post("/api/educator/exams", headers={"Authorization": "Bearer test"},
+            json={"title": "Cross-tenant attempt", "case_id": private_case["id"]})
+        assert exam.status_code == 404, exam.text
+
+        history = client.get(f"/api/educator/cases/{private_case['id']}/versions",
+            headers={"Authorization": "Bearer test"})
+        assert history.status_code == 404, history.text
+
+
+def test_unassigned_published_case_reconciliation_assigns_case_and_versions_with_audit(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    from identity import create_user, init_identity_schema
+    case_payload = {
+        "id": "legacy-approved-case", "version": "1.0.0", "title": "Legacy approved case",
+        "diagnosis": "Fictional diagnosis", "investigations": {},
+    }
+    with main.conn() as db:
+        init_identity_schema(db)
+        db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+                   ("institution-a", "Institution A", main.now()))
+        admin_id = create_user(db, email="case-reconcile-admin@example.test",
+            display_name="Platform Admin", password="case-reconcile-admin-password",
+            role="platform_admin")
+        db.execute(
+            "INSERT INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)",
+            (case_payload["id"], "1.0.0", main.canonical_json(case_payload), "Legacy reviewer", main.now()),
+        )
+        db.execute(
+            "INSERT INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash) VALUES(?,?,?,?,?,?,?,?)",
+            (case_payload["id"], "1.0.0", main.canonical_json(case_payload), "Legacy reviewer",
+             None, main.now(), "Legacy version", main.content_digest(case_payload)),
+        )
+        db.commit()
+
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(main, "current_identity_user",
+            lambda request: identity(admin_id, None, role="platform_admin"))
+        queue = client.get("/api/platform-admin/ownership-reconciliation")
+        assert queue.status_code == 200, queue.text
+        assert queue.json()["counts"]["approved_cases"] == 1
+
+        result = client.post("/api/platform-admin/ownership-reconciliation", json={
+            "resource_type": "approved_case", "resource_id": case_payload["id"],
+            "institution_id": "institution-a",
+            "reason": "Archived curriculum approval record confirms institution ownership.",
+        })
+        assert result.status_code == 200, result.text
+
+        with main.conn() as db:
+            approved = db.execute("SELECT institution_id FROM approved_cases WHERE case_id=?",
+                (case_payload["id"],)).fetchone()
+            version = db.execute("SELECT institution_id FROM case_versions WHERE case_id=? AND version='1.0.0'",
+                (case_payload["id"],)).fetchone()
+            audit = db.execute("SELECT action,outcome FROM audit_events WHERE action='ownership.reconciled' AND resource_type='approved_case'").fetchone()
+            assert approved["institution_id"] == "institution-a"
+            assert version["institution_id"] == "institution-a"
+            assert audit["outcome"] == "success"
