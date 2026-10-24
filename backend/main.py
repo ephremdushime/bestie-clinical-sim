@@ -875,8 +875,25 @@ def ownership_reconciliation_queue(request: Request):
  finally: c.close()
 
 @app.post('/api/platform-admin/ownership-reconciliation')
-def reconcile_historical_ownership(body: OwnershipReconciliationRequest, request: Request):
+def reconcile_historical_ownership(body: OwnershipReconciliationRequest, request: Request,
+                                  reviewer_authorization: str | None = Header(default=None, alias='X-Ownership-Reviewer-Authorization')):
  actor=_require_platform_admin(request)
+ # Require a second, independently authenticated platform administrator to approve
+ # every ownership write. A caller-supplied reviewer ID alone is not evidence of approval.
+ if not reviewer_authorization:
+  raise HTTPException(403,'An independently authenticated platform-admin reviewer is required.')
+ scheme, separator, reviewer_token = reviewer_authorization.partition(' ')
+ if not separator or scheme.lower()!='bearer' or not reviewer_token.strip():
+  raise HTTPException(401,'A valid reviewer bearer session is required.')
+ from identity import resolve_session
+ reviewer_db=conn()
+ try:
+  reviewer=resolve_session(reviewer_db,reviewer_token.strip())
+  reviewer_db.commit()
+ finally:
+  reviewer_db.close()
+ if not reviewer or reviewer['role']!='platform_admin' or reviewer['user_id']==actor.get('user_id'):
+  raise HTTPException(403,'Ownership reconciliation requires a different active platform administrator as reviewer.')
  c=conn()
  try:
   _identity_schema(c)
@@ -935,7 +952,7 @@ def reconcile_historical_ownership(body: OwnershipReconciliationRequest, request
   from identity import write_audit_event
   write_audit_event(c,actor_user_id=actor.get('user_id'),institution_id=body.institution_id,
    action='ownership.reconciled',resource_type=resource,resource_id=body.resource_id,outcome='success',
-   metadata_json=json.dumps({'reason':body.reason.strip(),'evidence_reference':body.evidence_reference.strip(),'assignment_method':'platform_admin_review_with_attributable_account_evidence'}))
+   metadata_json=json.dumps({'reason':body.reason.strip(),'evidence_reference':body.evidence_reference.strip(),'reviewer_user_id':reviewer['user_id'],'assignment_method':'two_person_platform_admin_review_with_attributable_account_evidence'}))
   c.commit()
   return {'reconciled':True,'resource_type':resource,'resource_id':body.resource_id,'institution_id':body.institution_id,'audit_recorded':True}
  except HTTPException:
