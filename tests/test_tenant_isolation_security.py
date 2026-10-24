@@ -390,6 +390,7 @@ def test_production_exam_session_rejects_mismatched_exam_version_pins(tmp_path, 
         session = {
             "mode": "exam", "exam_id": exam_id, "case_id": "malaria-001",
             "case_version": "1.0.0", "rubric_version": main.RUBRIC_VERSION,
+            "institution_id": "institution-a",
         }
         assert main.case_for_session(db, session)["id"] == "malaria-001"
         db.execute("UPDATE exams SET case_version='1.1.0' WHERE id=?", (exam_id,))
