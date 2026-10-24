@@ -219,22 +219,25 @@ def current_identity_user(request:Request):
  finally: db.close()
 
 def check_session_access(request:Request, session_row):
- # New identity-owned sessions require the same account; legacy pilot sessions retain their per-session secret.
  owner=session_row['owner_user_id'] if 'owner_user_id' in session_row.keys() else None
  identity=getattr(request.state,'identity_user',None) or current_identity_user(request)
  if owner:
   if not identity: raise HTTPException(401,'Sign in with the account that owns this session.')
-  if identity['user_id'] != owner and identity['role'] not in ('educator','institution_admin','platform_admin'):
-   raise HTTPException(403,'This learner session belongs to another account.')
-  return
+  if identity['user_id']==owner: return
+  if identity.get('role')=='platform_admin': return
+  if identity.get('role') in ('educator','institution_admin'):
+   if APP_ENV!='production': return
+   db=conn()
+   try: owner_user=db.execute('SELECT institution_id,status FROM users WHERE user_id=?',(owner,)).fetchone()
+   finally: db.close()
+   if owner_user and owner_user['status']=='active' and owner_user['institution_id'] and owner_user['institution_id']==identity.get('institution_id'): return
+  raise HTTPException(403,'This simulation session is outside your account or institution scope.')
  if APP_ENV!='production': return
  expected_hash=session_row['session_token_hash'] if 'session_token_hash' in session_row.keys() else None
  supplied=request.headers.get('X-Session-Token','')
- if not expected_hash or not supplied:
-  raise HTTPException(401,'Valid session access token required.')
+ if not expected_hash or not supplied: raise HTTPException(401,'Valid session access token required.')
  actual_hash=__import__('hashlib').sha256(supplied.encode('utf-8')).hexdigest()
- if not hmac.compare_digest(expected_hash,actual_hash):
-  raise HTTPException(403,'This session belongs to a different access token.')
+ if not hmac.compare_digest(expected_hash,actual_hash): raise HTTPException(403,'This session belongs to a different access token.')
 class StartSession(BaseModel): learner: str=Field(default='Student',min_length=1,max_length=80); case_id:str; mode:str='practice'; exam_code:str|None=None
 class Message(BaseModel): message:str=Field(min_length=1,max_length=3000)
 class Investigation(BaseModel): test_id:str; indication:str=Field(min_length=3,max_length=800)
@@ -589,11 +592,30 @@ def create_exam(body:ExamCreate,request:Request):
  finally: c.close()
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
- check_access(request,True); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report,result_released_at FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']; c.close()
- for s in sessions:
-  if s.get('report'): s['report']=json.loads(s['report'])
-  if s.get('events'): s['events']=json.loads(s['events'])
- return {'total_sessions':total,'completed_sessions':done,'sessions':sessions,'exams':exams}
+ check_access(request,True); actor=educator_actor(request); c=conn()
+ try:
+  scoped=APP_ENV=='production' and actor.get('role')!='platform_admin'
+  if scoped and not actor.get('institution_id'): raise HTTPException(403,'An institution-scoped educator account is required.')
+  if scoped:
+   institution_id=actor['institution_id']
+   sessions=[dict(r) for r in c.execute('''SELECT s.id,s.learner,s.case_id,s.mode,s.exam_id,s.created_at,s.status,s.events,s.report,s.result_released_at
+       FROM sessions s LEFT JOIN users u ON u.user_id=s.owner_user_id
+       LEFT JOIN exams e ON e.id=s.exam_id
+       WHERE u.institution_id=? OR e.institution_id=?
+       ORDER BY s.id DESC LIMIT 100''',(institution_id,institution_id))]
+   exams=[dict(r) for r in c.execute('SELECT * FROM exams WHERE institution_id=? ORDER BY id DESC LIMIT 100',(institution_id,))]
+   total=c.execute('''SELECT COUNT(*) n FROM sessions s LEFT JOIN users u ON u.user_id=s.owner_user_id LEFT JOIN exams e ON e.id=s.exam_id WHERE u.institution_id=? OR e.institution_id=?''',(institution_id,institution_id)).fetchone()['n']
+   done=c.execute('''SELECT COUNT(*) n FROM sessions s LEFT JOIN users u ON u.user_id=s.owner_user_id LEFT JOIN exams e ON e.id=s.exam_id WHERE (u.institution_id=? OR e.institution_id=?) AND s.status='completed' ''',(institution_id,institution_id)).fetchone()['n']
+  else:
+   sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report,result_released_at FROM sessions ORDER BY id DESC LIMIT 100')]
+   exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]
+   total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']
+   done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status=' + chr(34) + 'completed' + chr(34)).fetchone()['n']
+  for item in sessions:
+   if item.get('report'): item['report']=json.loads(item['report'])
+   if item.get('events'): item['events']=json.loads(item['events'])
+  return {'total_sessions':total,'completed_sessions':done,'sessions':sessions,'exams':exams}
+ finally: c.close()
 @app.post('/api/educator/sessions/{session_id}/release-result')
 def release_exam_result(session_id:int,request:Request):
  check_access(request,True); actor=educator_actor(request); c=conn()
