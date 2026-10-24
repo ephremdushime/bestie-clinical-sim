@@ -446,11 +446,12 @@ def _consume_websocket_ticket(token:str, room_name:str):
  try:
   c.execute('BEGIN IMMEDIATE')
   row=c.execute('''SELECT t.user_id,t.institution_id,t.room,t.expires_at,t.used_at,
-                          u.display_name,u.role,u.status AS user_status
+                          u.display_name,u.role,u.status AS user_status,i.status AS institution_status
                    FROM websocket_tickets t JOIN users u ON u.user_id=t.user_id
+                   LEFT JOIN institutions i ON i.institution_id=u.institution_id
                    WHERE t.ticket_hash=?''',(digest,)).fetchone()
   now_dt=datetime.now(timezone.utc)
-  if not row or row['used_at'] or row['room']!=room_name or row['user_status']!='active':
+  if not row or row['used_at'] or row['room']!=room_name or row['user_status']!='active' or (row['institution_id'] and row['institution_status']!='active'):
    c.rollback(); return None
   try:
    if datetime.fromisoformat(row['expires_at'])<=now_dt:
