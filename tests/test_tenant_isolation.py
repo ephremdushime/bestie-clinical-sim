@@ -45,7 +45,7 @@ def _setup(db_path, monkeypatch):
                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
             ("CODE-" + suffix.upper(), "Exam " + suffix.upper(), "malaria-001", 20, 70,
              "2026-10-24T10:00:00+00:00", "open", "Educator " + suffix.upper(),
-             iid, educator_a["user_id"] if suffix == "a" else educator_b["user_id"],
+             iid, educator_a if suffix == "a" else educator_b,
              "1.0.0", main.RUBRIC_VERSION),
         )
         db.execute(
@@ -62,7 +62,7 @@ def _setup(db_path, monkeypatch):
            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         ("Learner B", "malaria-001", "practice", None, "2026-10-24T10:00:00+00:00",
          "active", "[]", json.dumps({"private": "institution-b-report"}), "hash-b",
-         learner_b["user_id"], "1.0.0", main.RUBRIC_VERSION, "inst-b"),
+         learner_b, "1.0.0", main.RUBRIC_VERSION, "inst-b"),
     )
     db.commit()
     db.close()
