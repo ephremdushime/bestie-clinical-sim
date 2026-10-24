@@ -51,3 +51,16 @@ This build is suitable for supervised technical demonstrations and for collectin
 **Gate C — formal examination:** individual identity/authentication, exam security, immutable case/rubric versioning, validated scoring, independent faculty agreement, audit review and institution sign-off.
 
 **Gate D — VR/AR:** physical headset compatibility testing, real WebXR session implementation, validated patient assets, comfort/accessibility checks and specialist review.
+
+## Provisioning individual accounts for a controlled pilot
+
+Public self-registration and client-side role assignment are intentionally not available. After the first platform administrator has been bootstrapped on the trusted host, use the offline provisioning CLI to create an active institution and provision individual accounts. Run it from the repository root; it prompts for passwords without echoing them and writes audit events.
+
+```bash
+python backend/identity_provision.py --db backend/clinical_sim.db --actor-email platform-admin@example.org create-institution --id university-a --name "University A"
+python backend/identity_provision.py --db backend/clinical_sim.db --actor-email platform-admin@example.org create-user --email educator@example.org --display-name "Educator A" --role educator --institution-id university-a
+python backend/identity_provision.py --db backend/clinical_sim.db --actor-email platform-admin@example.org create-user --email learner@example.org --display-name "Learner A" --role learner --institution-id university-a
+python backend/identity_provision.py --db backend/clinical_sim.db --actor-email platform-admin@example.org list-users
+```
+
+The actor must be an active platform administrator. Do not place passwords in command-line arguments, shell history, source code, or issue trackers. Protect the SQLite database and its backups as security-sensitive data. This CLI is an operational provisioning tool, not a substitute for institution-specific administration UI, account recovery, SSO, or a formal production security review.
