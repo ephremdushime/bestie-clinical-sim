@@ -474,7 +474,13 @@ def review_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
  if row and APP_ENV=='production' and actor['role']!='platform_admin' and row['institution_id']!=actor.get('institution_id'):
   c.close(); raise HTTPException(404,'Draft not found.')
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
- d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
+ d=json.loads(row['payload'])
+ if APP_ENV=='production' and actor['role']!='platform_admin':
+  if row['creator_user_id'] and row['creator_user_id']==actor.get('user_id'):
+   c.close(); raise HTTPException(403,'A different educator must review the draft.')
+  if not body.review_notes.strip():
+   c.close(); raise HTTPException(422,'A substantive review note is required.')
+ d['status']='reviewed_not_approved'; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
 
 @app.post('/api/educator/case-drafts/{draft_id}/approve-and-publish')
 def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
@@ -485,7 +491,16 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
  if APP_ENV=='production' and actor['role']!='platform_admin' and row['institution_id']!=actor.get('institution_id'):
   c.close(); raise HTTPException(404,'Draft not found.')
- d=json.loads(row['payload']); case=d.get('case',{})
+ d=json.loads(row['payload'])
+ if APP_ENV=='production' and actor['role']!='platform_admin':
+  prior_review=d.get('review') or {}
+  if d.get('status')!='reviewed_not_approved' or not prior_review.get('reviewer_user_id') or not str(prior_review.get('notes') or '').strip():
+   c.close(); raise HTTPException(409,'A recorded independent review is required before publication.')
+  if actor.get('user_id') in (row['creator_user_id'],prior_review.get('reviewer_user_id')):
+   c.close(); raise HTTPException(403,'Publication requires an approver different from the draft creator and reviewer.')
+  if not body.review_notes.strip():
+   c.close(); raise HTTPException(422,'A publication attestation note is required.')
+ case=d.get('case',{})
  if not case.get('title') or not case.get('diagnosis') or not isinstance(case.get('investigations'),dict):
   c.close(); raise HTTPException(422,'Case requires title, hidden diagnosis and structured investigations before publishing.')
  if len(case.get('investigations',{})) < 2:
