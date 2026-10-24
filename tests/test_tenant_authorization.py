@@ -130,6 +130,15 @@ def test_institution_admin_cannot_close_another_institution_exam(tmp_path, monke
         response = client.post(f"/api/educator/exams/{exam_b['id']}/close", headers=admin_a)
         assert response.status_code == 403, response.text
 
+        educator_a = sign_in(client, "educator-a@example.org", "educator-password-a-long")
+        exam_a = create_exam(client, educator_a, "Institution A exam")
+        same_institution_close = client.post(
+            f"/api/educator/exams/{exam_a['id']}/close", headers=admin_a
+        )
+        assert same_institution_close.status_code == 403, same_institution_close.text
+        admin_dashboard = client.get("/api/educator/dashboard", headers=admin_a)
+        assert admin_dashboard.status_code == 403, admin_dashboard.text
+
 
 def test_platform_admin_has_explicit_cross_institution_dashboard_access(tmp_path, monkeypatch):
     setup(tmp_path, monkeypatch)
