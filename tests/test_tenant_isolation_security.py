@@ -308,6 +308,31 @@ def test_ownerless_historical_records_stay_quarantined(tmp_path, monkeypatch):
         assert queue.json()["counts"]["sessions"] == 1
 
 
+def test_ownership_reconciliation_requires_a_distinct_authenticated_reviewer(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    from identity import create_user, init_identity_schema, issue_session
+    with main.conn() as db:
+        init_identity_schema(db)
+        db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+                   ("institution-a", "Institution A", main.now()))
+        admin_id = create_user(db, email="same-admin@example.test", display_name="Same Admin",
+            password="same-admin-long-password", role="platform_admin")
+        same_admin_token = issue_session(db, admin_id)
+        db.commit()
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(main, "current_identity_user",
+            lambda request: identity(admin_id, None, role="platform_admin"))
+        response = client.post("/api/platform-admin/ownership-reconciliation",
+            headers={"X-Ownership-Reviewer-Authorization": f"Bearer {same_admin_token}"},
+            json={
+                "resource_type": "session", "resource_id": "999", "institution_id": "institution-a",
+                "reason": "This record needs an independent ownership review before assignment.",
+                "evidence_reference": "RECON-2026-SELF-REVIEW",
+            })
+        assert response.status_code == 403, response.text
+        assert "different active platform administrator" in response.json()["detail"]
+
+
 def test_ownership_reconciliation_rejects_non_platform_admin(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
     with TestClient(main.app) as client:
