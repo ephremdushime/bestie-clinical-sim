@@ -403,7 +403,7 @@ def investigate(sid:int,body:Investigation,request:Request):
  record={'type':'investigation','test_id':body.test_id,'test_name':test['name'],'indication':body.indication,'result':test['result'],'interpretation':test['interpretation'],'appropriate':test['appropriate']}
  save_event(c,sid,record); c.commit(); c.close(); image_available=bool(configured and body.test_id in ['chest-xray','ct-chest','ct-head','ct-trauma','e-fast','obstetric-ultrasound'] and not any(term in test['result'].lower() for term in ['not performed','not the first priority','not the immediate next step','not indicated','pending']))
  return {'test_id':body.test_id,'name':test['name'],'result':test['result'],'interpretation':test['interpretation'],'appropriate':test['appropriate'],'configured':configured,'image_available':image_available,'indication_feedback':('The indication is plausible for this case; interpret the result in clinical context.' if test['appropriate'] else 'Review whether this test is indicated now. Avoid unnecessary testing and do not delay stabilization or referral.')}
-def make_report(case,events,body):
+def make_report(case,events,body,rubric=None):
  text=' '.join(str(e.get('student_message','')) for e in events if e.get('type')=='chat').lower(); ordered=[e for e in events if e.get('type')=='investigation']
  domains={
  'Communication and history':any(k in text for k in ['hello','name','consent','history','when','how long','allerg','medicine','symptom','pregnan','smoke','accident']),
@@ -429,14 +429,28 @@ def make_report(case,events,body):
   if case['id']=='pregnancy-001' and not any(k in alltxt for k in ['obstetric','senior','urgent','escalat']): critical.append('No explicit urgent obstetric escalation detected.')
   if case['id']=='pediatric-001' and not any(k in alltxt for k in ['oxygen','saturation','danger','urgent','escalat','refer']): critical.append('No explicit pediatric danger-sign/oxygenation response detected.')
  score=round(100*correct/len(domains)); score=max(0,score- min(30,10*len(critical))-min(15,3*len(inappropriate)))
- return {'score':score,'status':'formative_unvalidated','domains':feedback,'critical_flags':critical,'unnecessary_or_unvalidated_tests':[x['test_name'] for x in inappropriate],'investigations_ordered':len(ordered),'differential_submitted':body.differential,'final_diagnosis_submitted':body.final_diagnosis,'hidden_case_diagnosis':case['diagnosis'],'summary':'Prototype feedback is based on transparent demonstration checks, not a validated clinical marking instrument. An educator must review results before any consequential use.','next_steps':['Review each criterion with a clinical educator.','Check local clinical guidance and the exact case version.','Do not use this score alone for progression, licensing or patient-care decisions.']}
+ # These criterion observations are deterministic and formative only; they are not validated competence scores.
+ rubric_evaluation=None
+ if isinstance(rubric,dict) and isinstance(rubric.get('criteria'),list):
+  differential_text=' '.join(body.differential).lower()
+  communication_observed=domains['Communication and history'] and any(k in text for k in ['consent','explain','respect','hello','my name','introduce'])
+  differential_anchors=[str(anchor).lower() for criterion in rubric['criteria'] if criterion.get('id')=='differential' for anchor in (criterion.get('anchors') or [])]
+  differential_observed=domains['Differential diagnosis'] and any(anchor in differential_text or any(len(token)>4 and token in differential_text for token in anchor.split()) for anchor in differential_anchors)
+  observed_by_id={'history_and_examination':domains['Communication and history'] and domains['Severity and examination'],'differential':differential_observed,'investigations':domains['Investigation selection and indication'] and domains['Result interpretation'],'management':domains['Management and safety'],'communication':communication_observed,'follow_up':domains['Referral and follow-up']}
+  criteria=[]; earned=0; available=0
+  for criterion in rubric['criteria']:
+   weight=max(0,int(criterion.get('weight') or 0)); observed=bool(observed_by_id.get(criterion.get('id'),False)); available+=weight; points=weight if observed else 0; earned+=points
+   criteria.append({'id':criterion.get('id'),'label':criterion.get('label'),'weight':weight,'observed_points':points,'evidence_status':'evidence observed' if observed else 'needs educator review','anchors':criterion.get('anchors') or []})
+  rubric_evaluation={'status':'formative_unvalidated','observed_points':earned,'available_points':available,'observed_percentage':round(100*earned/available) if available else None,'criteria':criteria,'notice':'Rule-based text checks are incomplete and unvalidated. Review evidence and anchors with a clinical educator; do not use this result for progression, licensing or patient-care decisions.'}
+ return {'score':score,'rubric_evaluation':rubric_evaluation,'status':'formative_unvalidated','domains':feedback,'critical_flags':critical,'unnecessary_or_unvalidated_tests':[x['test_name'] for x in inappropriate],'investigations_ordered':len(ordered),'differential_submitted':body.differential,'final_diagnosis_submitted':body.final_diagnosis,'hidden_case_diagnosis':case['diagnosis'],'summary':'Prototype feedback is based on transparent demonstration checks, not a validated clinical marking instrument. An educator must review results before any consequential use.','next_steps':['Review each criterion with a clinical educator.','Check local clinical guidance and the exact case version.','Do not use this score alone for progression, licensing or patient-care decisions.']}
 @app.post('/api/sessions/{sid}/finish')
 def finish(sid:int,body:Finish,request:Request):
  check_access(request); c=conn(); s=c.execute('SELECT * FROM sessions WHERE id=?',(sid,)).fetchone()
  if not s: c.close(); raise HTTPException(404,'Session not found.')
  check_session_access(request,s)
  if s['status']!='active': c.close(); raise HTTPException(409,'Session already submitted.')
- events=json.loads(s['events'] or '[]'); pinned_case=case_for_session(c,s); pinned_rubric=rubric_for_session(c,s); report=make_report(pinned_case,events,body); report['mode']=s['mode']; report['case_id']=s['case_id']; report['case_version']=s['case_version']; report['rubric_version']=s['rubric_version']; report['rubric_snapshot']=pinned_rubric; report['rubric_snapshot_hash']=content_digest(pinned_rubric); report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
+ events=json.loads(s['events'] or '[]'); pinned_case=case_for_session(c,s); pinned_rubric=rubric_for_session(c,s); report=make_report(pinned_case,events,body,pinned_rubric)
+ if isinstance(report.get('rubric_evaluation'),dict): report['rubric_evaluation']['rubric_version']=s['rubric_version'] report['mode']=s['mode']; report['case_id']=s['case_id']; report['case_version']=s['case_version']; report['rubric_version']=s['rubric_version']; report['rubric_snapshot']=pinned_rubric; report['rubric_snapshot_hash']=content_digest(pinned_rubric); report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
  if s['mode']=='exam' and s['exam_id']:
   ex=c.execute('SELECT pass_mark FROM exams WHERE id=?',(s['exam_id'],)).fetchone(); report['demo_threshold']=int(ex['pass_mark']) if ex else None; report['threshold_status']=('critical_review_required' if report['critical_flags'] else ('meets_demo_threshold' if report['score']>=int(ex['pass_mark']) else 'below_demo_threshold')) if ex else 'not_set'
  c.execute('UPDATE sessions SET status="completed",report=? WHERE id=?',(json.dumps(report),sid)); save_event(c,sid,{'type':'session_finished','score':report['score']}); c.commit(); c.close()
