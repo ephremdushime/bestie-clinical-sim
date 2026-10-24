@@ -178,16 +178,18 @@ def _validate_exam_session_pins(db,session_row):
  exam_id=session_row['exam_id'] if 'exam_id' in session_row.keys() else None
  if not exam_id:
   raise HTTPException(409,'Controlled examination session has no linked examination record.')
- exam=db.execute('SELECT case_id,case_version,rubric_version FROM exams WHERE id=?',(exam_id,)).fetchone()
+ exam=db.execute('SELECT case_id,case_version,rubric_version,institution_id FROM exams WHERE id=?',(exam_id,)).fetchone()
  if not exam:
   raise HTTPException(409,'Linked examination record is unavailable; assessment integrity cannot be verified.')
  session_case_version=session_row['case_version'] if 'case_version' in session_row.keys() else None
  session_rubric_version=session_row['rubric_version'] if 'rubric_version' in session_row.keys() else None
- if (not exam['case_version'] or not exam['rubric_version'] or
+ session_institution_id=session_row['institution_id'] if 'institution_id' in session_row.keys() else None
+ if (not exam['case_version'] or not exam['rubric_version'] or not exam['institution_id'] or
      exam['case_id']!=session_row['case_id'] or
      exam['case_version']!=session_case_version or
-     exam['rubric_version']!=session_rubric_version):
-  raise HTTPException(409,'Examination and session version pins do not match; this attempt is blocked for integrity review.')
+     exam['rubric_version']!=session_rubric_version or
+     exam['institution_id']!=session_institution_id):
+  raise HTTPException(409,'Examination and session ownership/version pins do not match; this attempt is blocked for integrity review.')
 def case_for_session(db,session_row):
  _validate_exam_session_pins(db,session_row)
  version=session_row['case_version'] if 'case_version' in session_row.keys() else None; case_id=session_row['case_id']
