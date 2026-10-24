@@ -59,15 +59,30 @@ def test_published_case_versions_are_immutable_and_increment(tmp_path, monkeypat
         assert second.status_code == 200, second.text
         assert second.json()["version"] == "1.0.1"
 
+        # A change to assessment-critical criteria increments the rubric version,
+        # while the preceding narrative-only edit did not.
+        rubric_changed_case = dict(updated_case)
+        rubric_changed_case["critical_errors"] = ["Missing a time-critical escalation"]
+        with sqlite3.connect(path) as db:
+            db.execute("UPDATE case_drafts SET payload=? WHERE draft_id=?",
+                       (json.dumps({"case": rubric_changed_case, "generation_mode": "llm"}),
+                        "draft-version-test"))
+        third = client.post("/api/educator/case-drafts/draft-version-test/approve-and-publish", json=payload)
+        assert third.status_code == 200, third.text
+        assert third.json()["version"] == "1.0.2"
+
     with sqlite3.connect(path) as db:
         rows = db.execute(
             "SELECT version,payload,rubric_version,rubric_json FROM case_versions WHERE case_id=? ORDER BY version",
             (case_id,),
         ).fetchall()
-        assert [row[0] for row in rows] == ["1.0.0", "1.0.1"]
+        assert [row[0] for row in rows] == ["1.0.0", "1.0.1", "1.0.2"]
+        assert [row[2] for row in rows] == ["1.0.0", "1.0.0", "1.0.1"]
         assert json.loads(rows[0][1])["title"] == "Versioned fictional case"
         assert json.loads(rows[1][1])["title"] == "Versioned fictional case revised"
+        assert json.loads(rows[2][1])["critical_errors"] == ["Missing a time-critical escalation"]
         assert json.loads(rows[0][3])["version"] == rows[0][2]
+        assert json.loads(rows[2][3])["version"] == rows[2][2]
 
 
 def test_exam_uses_frozen_case_and_rubric_snapshot_without_leaking_answers(tmp_path, monkeypatch):
