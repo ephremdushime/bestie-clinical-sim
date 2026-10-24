@@ -377,6 +377,29 @@ def test_tampered_pinned_rubric_snapshot_is_rejected_without_substitution(tmp_pa
         assert "integrity check" in exc.value.detail
 
 
+
+def test_production_exam_session_rejects_mismatched_exam_version_pins(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    with main.conn() as db:
+        db.execute(
+            "INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,status,creator,case_version,rubric_version,institution_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            ("PINNED-EXAM", "Pinned exam", "malaria-001", 20, 70, main.now(), "open",
+             "Educator", "1.0.0", main.RUBRIC_VERSION, "institution-a"),
+        )
+        exam_id = db.execute("SELECT id FROM exams WHERE code='PINNED-EXAM'").fetchone()["id"]
+        session = {
+            "mode": "exam", "exam_id": exam_id, "case_id": "malaria-001",
+            "case_version": "1.0.0", "rubric_version": main.RUBRIC_VERSION,
+        }
+        assert main.case_for_session(db, session)["id"] == "malaria-001"
+        db.execute("UPDATE exams SET case_version='1.1.0' WHERE id=?", (exam_id,))
+        db.commit()
+        with pytest.raises(HTTPException) as exc:
+            main.case_for_session(db, session)
+        assert exc.value.status_code == 409
+        assert "version pins do not match" in exc.value.detail
+
+
 def test_session_without_pinned_rubric_version_fails_closed(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
     with main.conn() as db:
