@@ -433,14 +433,41 @@ def create_exam(body:ExamCreate,request:Request):
  c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version,case_snapshot_json,rubric_snapshot_json,institution_id,created_by_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),actor['display_name'] if actor else body.creator,str(case.get('version') or '1.0.0'),rubric['version'],case_json,rubric_json,institution_id,actor_id)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return {'id':ex['id'],'code':ex['code'],'title':ex['title'],'duration':ex['duration'],'pass_mark':ex['pass_mark'],'status':ex['status'],'case_version':ex['case_version'],'rubric_version':ex['rubric_version']}
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
- check_access(request,True); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']; c.close()
+ check_access(request,True); actor=getattr(request.state,'identity_user',None) or current_identity_user(request); c=conn()
+ if APP_ENV=='production' and actor and actor['role']!='platform_admin':
+  institution_id=actor['institution_id']
+  if not institution_id: c.close(); raise HTTPException(403,'Institution-scoped educator account required.')
+  sessions=[dict(r) for r in c.execute('''SELECT s.id,s.learner,s.case_id,s.mode,s.exam_id,s.created_at,s.status,s.events,s.report
+     FROM sessions s LEFT JOIN users u ON u.user_id=s.owner_user_id
+     LEFT JOIN exams e ON e.id=s.exam_id
+     WHERE (s.mode='exam' AND e.institution_id=?) OR (s.mode!='exam' AND u.institution_id=?)
+     ORDER BY s.id DESC LIMIT 100''',(institution_id,institution_id))]
+  exams=[dict(r) for r in c.execute('SELECT id,code,title,case_id,duration,pass_mark,created_at,status,creator,case_version,rubric_version FROM exams WHERE institution_id=? ORDER BY id DESC LIMIT 100',(institution_id,))]
+  total=c.execute('''SELECT COUNT(*) n FROM sessions s LEFT JOIN users u ON u.user_id=s.owner_user_id LEFT JOIN exams e ON e.id=s.exam_id
+     WHERE (s.mode='exam' AND e.institution_id=?) OR (s.mode!='exam' AND u.institution_id=?)''',(institution_id,institution_id)).fetchone()['n']
+  done=c.execute('''SELECT COUNT(*) n FROM sessions s LEFT JOIN users u ON u.user_id=s.owner_user_id LEFT JOIN exams e ON e.id=s.exam_id
+     WHERE s.status='completed' AND ((s.mode='exam' AND e.institution_id=?) OR (s.mode!='exam' AND u.institution_id=?))''',(institution_id,institution_id)).fetchone()['n']
+ else:
+  sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions ORDER BY id DESC LIMIT 100')]
+  exams=[dict(r) for r in c.execute('SELECT id,code,title,case_id,duration,pass_mark,created_at,status,creator,case_version,rubric_version FROM exams ORDER BY id DESC LIMIT 100')]
+  total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']
+ c.close()
  for s in sessions:
   if s.get('report'): s['report']=json.loads(s['report'])
   if s.get('events'): s['events']=json.loads(s['events'])
+  # Historical reports remain available only within the authorized scope.
  return {'total_sessions':total,'completed_sessions':done,'sessions':sessions,'exams':exams}
 @app.post('/api/educator/exams/{exam_id}/close')
 def close_exam(exam_id:int,request:Request):
- check_access(request,True); c=conn(); c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); c.close(); return {'closed':True}
+ check_access(request,True); actor=getattr(request.state,'identity_user',None) or current_identity_user(request); c=conn()
+ if APP_ENV=='production' and actor and actor['role']!='platform_admin':
+  row=c.execute('SELECT institution_id FROM exams WHERE id=?',(exam_id,)).fetchone()
+  if not row or row['institution_id']!=actor['institution_id']:
+   c.close(); raise HTTPException(404,'Examination not found.')
+ cur=c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,))
+ c.commit(); c.close()
+ if cur.rowcount!=1: raise HTTPException(404,'Examination not found.')
+ return {'closed':True}
 
 class WebSocketTicketRequest(BaseModel):
  room: str=Field(min_length=3,max_length=120)
