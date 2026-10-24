@@ -803,10 +803,22 @@ def _consume_websocket_ticket(ticket:str,requested_room:str):
  finally:
   c.close()
 
+def _websocket_origin_allowed(origin:str|None) -> bool:
+ # Browsers always send Origin on WebSocket handshakes. In production, reject
+ # absent and untrusted origins even when a ticket is otherwise valid.
+ if APP_ENV!='production':
+  return True
+ if not origin:
+  return False
+ allowed={value.strip().rstrip('/') for value in os.getenv('CORS_ORIGINS','').split(',') if value.strip()}
+ return origin.rstrip('/') in allowed
+
 # Lightweight collaboration chat; it does not synchronize clinical case state.
 rooms={}
 @app.websocket('/ws/rooms/{room}')
 async def room(ws:WebSocket,room:str):
+ if not _websocket_origin_allowed(ws.headers.get('origin')):
+  await ws.close(code=1008); return
  ticket=ws.query_params.get('ticket','')
  principal=_consume_websocket_ticket(ticket,room)
  if not principal:
