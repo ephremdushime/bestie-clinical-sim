@@ -477,8 +477,10 @@ def review_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
 
 @app.post('/api/educator/case-drafts/{draft_id}/approve-and-publish')
 def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
- check_access(request,True); c=conn(); row=c.execute('SELECT payload FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
+ check_access(request,True); actor=educator_actor(request,body.reviewer); c=conn(); row=c.execute('SELECT payload,institution_id FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
+ if actor['role']!='platform_admin' and (not actor.get('institution_id') or row['institution_id']!=actor['institution_id']):
+  c.close(); raise HTTPException(404,'Draft not found.')
  d=json.loads(row['payload']); case=d.get('case',{})
  if not case.get('title') or not case.get('diagnosis') or not isinstance(case.get('investigations'),dict):
   c.close(); raise HTTPException(422,'Case requires title, hidden diagnosis and structured investigations before publishing.')
