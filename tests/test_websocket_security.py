@@ -45,7 +45,7 @@ def test_ticket_endpoint_requires_individual_identity(tmp_path, monkeypatch):
 
 
 def test_ticket_is_room_scoped_short_lived_and_single_use(tmp_path, monkeypatch):
-    _, _, token_a, _ = provision(tmp_path / "ws-scope.db", monkeypatch)
+    learner_a, _, token_a, _ = provision(tmp_path / "ws-scope.db", monkeypatch)
     with TestClient(main.app) as client:
         headers = {"Authorization": f"Bearer {token_a}"}
         assert client.post("/api/ws/tickets", headers=headers,
@@ -59,7 +59,7 @@ def test_ticket_is_room_scoped_short_lived_and_single_use(tmp_path, monkeypatch)
 
         # A ticket cannot be moved to a different room.
         with pytest.raises(WebSocketDisconnect):
-            with client.websocket_connect(f"/ws/rooms/user-{main.current_identity_user.__name__}?ticket={ticket}"):
+            with client.websocket_connect(f"/ws/rooms/user-{learner_a}?ticket={ticket}"):
                 pass
 
         with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}") as socket:
