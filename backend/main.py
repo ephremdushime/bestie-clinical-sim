@@ -212,7 +212,7 @@ def create_session(body:StartSession,request:Request):
  c=conn(); cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id,case_version,rubric_version,case_snapshot_json,rubric_snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id,str(case_payload.get('version') or '1.0.0'),rubric_payload['version'],case_json,rubric_json)); sid=cur.lastrowid
  opening=case_payload['opening']; save_event(c,sid,{'type':'session_started','mode':body.mode,'case_id':case_id,'case_version':str(case_payload.get('version') or '1.0.0'),'rubric_version':rubric_payload['version']}); c.commit(); c.close()
  # Never expose the hidden case identifier/title to a controlled-exam participant.
- return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':CASES[case_id]['age'],'sex':CASES[case_id]['sex'],'appearance':CASES[case_id]['appearance'],'vitals':CASES[case_id]['vitals'] if body.mode=='practice' else None}}
+ return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':case_payload['age'],'sex':case_payload['sex'],'appearance':case_payload['appearance'],'vitals':case_payload['vitals'] if body.mode=='practice' else None}}
 
 def fallback(case,msg):
  m=msg.lower(); facts=case['facts']
@@ -301,7 +301,7 @@ def finish(sid:int,body:Finish,request:Request):
  # Controlled exams retain the full report for educator review, but the student response
  # must not reveal the hidden diagnosis, score, rubric decisions or pass-threshold result.
  if s['mode']=='exam':
-  return {'status':'submitted_pending_educator_review','mode':'exam','case_id':s['case_id'],'learner':s['learner'],'submitted_at':report['submitted_at'],'time_expired':report['time_expired'],'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
+  return {'status':'submitted_pending_educator_review','mode':'exam','learner':s['learner'],'submitted_at':report['submitted_at'],'time_expired':report['time_expired'],'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
  return report
 class EvidenceSearchRequest(BaseModel):
  query: str = Field(min_length=3,max_length=300)
@@ -416,7 +416,7 @@ def create_exam(body:ExamCreate,request:Request):
  if body.case_id not in CASES: raise HTTPException(404,'Case not found.')
  code=secrets.token_urlsafe(5).replace('-','').replace('_','').upper()[:8]
  case=CASES[body.case_id]; case_json=json.dumps(case); rubric=rubric_for_case(case); rubric_json=json.dumps(rubric)
- c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version,case_snapshot_json,rubric_snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),body.creator,str(case.get('version') or '1.0.0'),rubric['version'],case_json,rubric_json)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
+ c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version,case_snapshot_json,rubric_snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),body.creator,str(case.get('version') or '1.0.0'),rubric['version'],case_json,rubric_json)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return {'id':ex['id'],'code':ex['code'],'title':ex['title'],'duration':ex['duration'],'pass_mark':ex['pass_mark'],'status':ex['status'],'case_version':ex['case_version'],'rubric_version':ex['rubric_version']}
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
  check_access(request,True); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']; c.close()
