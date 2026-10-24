@@ -327,7 +327,8 @@ def create_session(body:StartSession,request:Request):
  if body.mode=='exam':
   if APP_ENV=='production' and (not identity or identity['role']!='learner'):
    raise HTTPException(403,'A provisioned learner account is required to join an examination.')
-  client_key=request.client.host if request.client else 'unknown'
+  # The reverse proxy overwrites X-Real-IP; use it when deployed behind the bundled Nginx.
+  client_key=request.headers.get('X-Real-IP') or (request.client.host if request.client else 'unknown')
   code_hash=__import__('hashlib').sha256((body.exam_code or '').strip().upper().encode('utf-8')).hexdigest()
   c=conn(); cutoff=(datetime.now(timezone.utc)-timedelta(minutes=15)).isoformat(timespec='seconds')
   attempts=c.execute('SELECT COUNT(*) AS n FROM exam_join_attempts WHERE client_key=? AND attempted_at>=? AND succeeded=0',(client_key,cutoff)).fetchone()['n']
