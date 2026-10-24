@@ -42,9 +42,6 @@ def validate_production_configuration() -> None:
  if APP_ENV != 'production':
   return
  errors=[]
- if len(PILOT_TOKEN) < 32 or 'replace_with' in PILOT_TOKEN.lower(): errors.append('PILOT_ACCESS_TOKEN must be a unique random secret of at least 32 characters.')
- if len(EDUCATOR_TOKEN) < 32 or 'replace_with' in EDUCATOR_TOKEN.lower(): errors.append('EDUCATOR_ACCESS_TOKEN must be a unique random secret of at least 32 characters.')
- if PILOT_TOKEN and EDUCATOR_TOKEN and hmac.compare_digest(PILOT_TOKEN,EDUCATOR_TOKEN): errors.append('Pilot and educator access tokens must be different.')
  origins=[x.strip() for x in os.getenv('CORS_ORIGINS','').split(',') if x.strip()]
  if not origins or '*' in origins: errors.append('CORS_ORIGINS must list explicit trusted frontend origins; wildcard is not allowed.')
  if any(('localhost' in x or '127.0.0.1' in x) for x in origins): errors.append('Production CORS_ORIGINS must not contain localhost origins.')
@@ -215,9 +212,8 @@ def check_access(request:Request, educator=False):
   request.state.identity_user=identity
   return
  if APP_ENV!='production': return
- supplied=request.headers.get('X-Pilot-Token','')
- if not PILOT_TOKEN or not supplied or not hmac.compare_digest(PILOT_TOKEN,supplied):
-  raise HTTPException(401,'Valid access token required.')
+ # Session routes enforce account ownership or a per-session capability after loading the resource.
+ # Do not trust the retired shared pilot token as production identity.
 
 def educator_actor(request:Request, fallback_name:str='Educator') -> dict:
  user=getattr(request.state,'identity_user',None) or current_identity_user(request)
@@ -299,6 +295,8 @@ def create_session(body:StartSession,request:Request):
  if identity and identity['role'] not in ('learner','educator','institution_admin','platform_admin'):
   raise HTTPException(403,'An active account is required.')
  if body.mode not in ('practice','exam'): raise HTTPException(400,'Mode must be practice or exam.')
+ if APP_ENV=='production' and not identity:
+  raise HTTPException(401,'Sign in with a provisioned account before starting a simulation.')
  case_id=body.case_id; exam_id=None
  if body.mode=='exam':
   if APP_ENV=='production' and (not identity or identity['role']!='learner'):
@@ -323,7 +321,7 @@ def create_session(body:StartSession,request:Request):
  session_token_hash=__import__('hashlib').sha256(session_token.encode('utf-8')).hexdigest()
  # The authenticated account is authoritative for the learner label and session ownership.
  learner_name=identity['display_name'] if identity and identity['role']=='learner' else body.learner.strip()
- owner_user_id=identity['user_id'] if identity and identity['role']=='learner' else None
+ owner_user_id=identity['user_id'] if identity else None
  case_version=(ex['case_version'] if body.mode=='exam' and ex['case_version'] else CASES[case_id].get('version','1.0.0'))
  if body.mode=='exam' and ex['rubric_version']:
   rubric_version=ex['rubric_version']
