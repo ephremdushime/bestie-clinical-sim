@@ -2,7 +2,7 @@
 
 ## Current status
 
-This build is suitable for supervised technical demonstrations and for collecting feedback on the product workflow. It is **not yet approved for formal clinical education, research data collection, or high-stakes examination**. The seeded cases and rubrics are drafts; the front-end production build was not verified in this environment because dependency installation timed out.
+This build is suitable for supervised technical demonstrations and for collecting feedback on the product workflow. It is **not yet approved for formal clinical education, research data collection, or high-stakes examination**. CI verifies the frontend build and browser workflows, but deployment-like operations and clinical validation remain outstanding.
 
 ## Before a university demonstration
 
@@ -19,7 +19,7 @@ This build is suitable for supervised technical demonstrations and for collectin
 - [ ] Obtain applicable university/ethics approval if data are collected for research or publication.
 - [ ] Approve the cases, source provenance, rubric anchors, feedback and escalation rules in writing.
 - [ ] Define consent, student data access, retention/deletion, reporting and incident handling.
-- [ ] Validate exam identity, access control and result release policy; current shared tokens and codes are not sufficient for a high-stakes exam.
+- [ ] Validate tenant scoping, account ownership, exam identity and result-release policy in a deployment-like environment; no code-based access control alone is sufficient for high-stakes exams.
 - [ ] Conduct security, accessibility, privacy and load testing.
 - [ ] Pilot with low-stakes formative use and a faculty member present.
 - [ ] Evaluate usability, technical failures, educator agreement and adverse/unexpected behavior before expanding.
@@ -27,7 +27,7 @@ This build is suitable for supervised technical demonstrations and for collectin
 ## Environment and deployment
 
 1. Copy `.env.example` to `.env`.
-2. Set `APP_ENV=production` only after configuring strong unique `PILOT_ACCESS_TOKEN` and `EDUCATOR_ACCESS_TOKEN` secrets.
+2. Set `APP_ENV=production` only after setting explicit trusted `CORS_ORIGINS`, provisioning accounts through a trusted administrative process, and verifying bearer-session login/logout.
 3. Set `CORS_ORIGINS` to the exact HTTPS origin(s); avoid wildcard origins.
 4. Keep LLM credentials server-side. Configure `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL` only if using a compatible provider.
 5. Run `docker compose up --build -d` on a managed host and place it behind HTTPS, with restricted network access and backups for the SQLite volume.
@@ -36,9 +36,9 @@ This build is suitable for supervised technical demonstrations and for collectin
 
 ## Security limitations
 
-- Shared pilot/educator tokens are not per-user authentication and can be shared.
+- Shared pilot/educator tokens are retired for production session creation. Legacy unowned sessions may still require their per-session capability during migration.
 - Exam codes are not identity verification and are not designed to prevent impersonation.
-- No institutional SSO, role lifecycle, granular permissions, password recovery or account revocation workflow.
+- Account login/logout/current-user are available for pre-provisioned accounts; no account-provisioning UI/API, password recovery, MFA, institutional SSO or complete role lifecycle workflow exists.
 - SQLite is intended only for small supervised tests; concurrent writes, retention controls and backups need review.
 - API keys, network traffic, dependency versions and deployment logs need production security review.
 
