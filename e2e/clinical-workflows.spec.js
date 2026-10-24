@@ -34,7 +34,7 @@ test('learner completes a practice encounter from history to feedback', async ({
 
 test('educator creates an exam and learner submits without seeing the answer key', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Educator console' }).click();
+  await page.getByRole('button', { name: /Educator console/ }).click();
   await expect(page.getByRole('heading', { name: 'Create an examination' })).toBeVisible();
   await page.getByRole('button', { name: /Create exam and generate code/ }).click();
 
@@ -43,7 +43,7 @@ test('educator creates an exam and learner submits without seeing the answer key
   const examCode = (await code.textContent()).trim();
   expect(examCode.length).toBeGreaterThanOrEqual(7);
 
-  await page.getByRole('button', { name: 'Join an examination' }).click();
+  await page.getByRole('button', { name: /Join an examination/ }).click();
   await page.getByPlaceholder(/e.g. 7K2P9Q/).fill(examCode);
   await page.getByRole('button', { name: /Begin examination/ }).click();
   await expect(page.getByRole('heading', { name: 'Clinical assessment encounter' })).toBeVisible();
