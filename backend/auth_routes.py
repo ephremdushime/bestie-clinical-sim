@@ -1,8 +1,8 @@
 """Authentication endpoints for pre-provisioned Bestie Clinical Sim accounts.
 
-This router intentionally does not expose registration or role assignment. Existing
-simulation and educator routes must be migrated separately before claiming end-to-end
-identity enforcement.
+This router intentionally does not expose public registration or role assignment.
+Protected production simulation and educator routes resolve these provisioned bearer
+sessions; account onboarding and recovery remain trusted-operator responsibilities.
 """
 from __future__ import annotations
 
