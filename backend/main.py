@@ -466,7 +466,10 @@ def finish(sid:int,body:Finish,request:Request):
  cur=c.execute('UPDATE sessions SET status="completed",report=? WHERE id=? AND status="active"',(json.dumps(report),sid))
  if cur.rowcount!=1:
   c.rollback(); c.close(); raise HTTPException(409,'Session has already been submitted.')
- save_event(c,sid,{'type':'session_finished','score':report['score']}); c.commit(); c.close()
+ save_event(c,sid,{'type':'session_finished','score':report['score']})
+ from identity import write_audit_event
+ write_audit_event(c,actor_user_id=s['owner_user_id'],institution_id=s['institution_id'],action='session.submitted',resource_type='session',resource_id=str(sid),outcome='success',metadata_json=canonical_json({'mode':s['mode'],'status':report['status']}))
+ c.commit(); c.close()
  # Controlled exams retain the full report for educator review, but the student response
  # must not reveal the hidden diagnosis, score, rubric decisions or pass-threshold result.
  if s['mode']=='exam':
@@ -616,7 +619,10 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  rubric_payload=canonical_json(rubric_definition())
  c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],RUBRIC_VERSION,rubric_payload,case['approved_at'],content_digest(rubric_definition())))
  c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at,institution_id) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at'],case_institution_id))
- d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close()
+ d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id))
+ from identity import write_audit_event
+ write_audit_event(c,actor_user_id=actor.get('user_id'),institution_id=case_institution_id,action='case.published',resource_type='case',resource_id=case['id'],outcome='success',metadata_json=canonical_json({'version':case['version'],'draft_id':draft_id,'reviewer_user_id':(d.get('review') or {}).get('reviewer_user_id')}))
+ c.commit(); c.close()
  return {'status':d['status'],'case_id':case['id'],'version':case['version'],'message':'Published following educator attestation; this is not independent clinical certification.'}
 
 @app.post('/api/educator/case-draft')
@@ -678,7 +684,10 @@ def create_exam(body:ExamCreate,request:Request):
  c=conn()
  try:
   c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),actor['display_name'],case_version,RUBRIC_VERSION,institution_id,creator_user_id))
-  c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone()
+  ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone()
+  from identity import write_audit_event
+  write_audit_event(c,actor_user_id=creator_user_id,institution_id=institution_id,action='exam.created',resource_type='exam',resource_id=str(ex['id']),outcome='success',metadata_json=canonical_json({'code':code,'case_id':body.case_id,'case_version':case_version,'rubric_version':RUBRIC_VERSION}))
+  c.commit()
   return dict(ex)
  finally:
   c.close()
@@ -699,13 +708,18 @@ def dashboard(request:Request):
 def close_exam(exam_id:int,request:Request):
  check_access(request,True); actor=educator_actor(request); c=conn()
  try:
-  exam=c.execute('SELECT institution_id,creator_user_id FROM exams WHERE id=?',(exam_id,)).fetchone()
+  exam=c.execute('SELECT institution_id,creator_user_id,code,case_id,status FROM exams WHERE id=?',(exam_id,)).fetchone()
   if not exam: raise HTTPException(404,'Examination not found.')
   if APP_ENV=='production' and actor['role']!='platform_admin' and (not exam['institution_id'] or exam['institution_id']!=actor.get('institution_id')):
    raise HTTPException(404,'Examination not found in your institution.')
   if actor['role']!='platform_admin' and exam['creator_user_id'] and exam['creator_user_id']!=actor.get('user_id') and actor['role']!='institution_admin':
    raise HTTPException(403,'Only the exam creator or institution administrator may close this examination.')
-  c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); return {'closed':True}
+  if exam['status']!='closed':
+   c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,))
+   from identity import write_audit_event
+   write_audit_event(c,actor_user_id=actor.get('user_id'),institution_id=exam['institution_id'],action='exam.closed',resource_type='exam',resource_id=str(exam_id),outcome='success',metadata_json=canonical_json({'code':exam['code'],'case_id':exam['case_id']}))
+   c.commit()
+  return {'closed':True}
  finally:
   c.close()
 
