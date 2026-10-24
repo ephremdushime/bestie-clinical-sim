@@ -749,7 +749,9 @@ def reconcile_historical_ownership(body: OwnershipReconciliationRequest, request
   exam_id=row['exam_id'] if resource=='session' else None
   if exam_id:
    ex=c.execute("SELECT institution_id FROM exams WHERE id=?",(exam_id,)).fetchone()
-   if ex and ex['institution_id'] and ex['institution_id']!=body.institution_id:
+   if not ex or not ex['institution_id']:
+    raise HTTPException(409,'Reconcile the linked examination ownership before assigning this session.')
+   if ex['institution_id']!=body.institution_id:
     raise HTTPException(422,'Session institution would conflict with its examination institution.')
   if resource=='session':
    c.execute("UPDATE sessions SET institution_id=? WHERE id=? AND institution_id IS NULL",(body.institution_id,body.resource_id))
