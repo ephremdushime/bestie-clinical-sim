@@ -99,6 +99,8 @@ jobs:
         run: docker build --file Dockerfile.backend --tag bestie-clinical-sim-backend:ci .
       - name: Assert backend image uses an unprivileged user
         run: test "$(docker image inspect bestie-clinical-sim-backend:ci --format '{{.Config.User}}')" = "appuser"
+      - name: Assert unprivileged API user can write to the data directory
+        run: docker run --rm --entrypoint sh bestie-clinical-sim-backend:ci -c 'test -w /data && touch /data/.ci-write-test && rm /data/.ci-write-test'
       - name: Build frontend container
         run: docker build --file Dockerfile.frontend --tag bestie-clinical-sim-frontend:ci .
       - name: Validate Nginx configuration
