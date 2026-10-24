@@ -350,6 +350,16 @@ def test_session_without_pinned_rubric_version_fails_closed(tmp_path, monkeypatc
 
 def test_published_cases_are_not_visible_or_usable_across_institutions(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
+    # Production tenant checks depend on the identity/institution schema; initialize
+    # it explicitly so this isolation test exercises authorization, not missing DDL.
+    from identity import init_identity_schema
+    with main.conn() as db:
+        init_identity_schema(db)
+        db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+                   ("institution-a", "Institution A", main.now()))
+        db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+                   ("institution-b", "Institution B", main.now()))
+        db.commit()
     private_case = {
         "id": "generated-institution-b", "version": "1.0.0", "title": "Institution B private case",
         "specialty": "Internal medicine", "level": "Clinical-year student", "age": 30,
