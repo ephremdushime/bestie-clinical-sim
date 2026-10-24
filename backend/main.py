@@ -257,7 +257,7 @@ async def chat(sid:int,body:Message,request:Request):
  check_session_access(request,s)
  if s['status']!='active': c.close(); raise HTTPException(409,'Session is no longer active.')
  if session_expired(c,s): c.close(); raise HTTPException(409,'Examination time has expired. Submit your current work.')
- case=CASES[s['case_id']]; reply=await llm_patient(case,body.message,[]) or fallback(case,body.message)
+ case=json.loads(s['case_snapshot_json']) if s['case_snapshot_json'] else CASES[s['case_id']]; reply=await llm_patient(case,body.message,[]) or fallback(case,body.message)
  save_event(c,sid,{'type':'chat','student_message':body.message,'patient_reply':reply}); c.commit(); c.close(); return {'reply':reply,'model':'llm' if llm_configured() else 'deterministic-fallback'}
 @app.post('/api/sessions/{sid}/investigations')
 def investigate(sid:int,body:Investigation,request:Request):
@@ -266,7 +266,7 @@ def investigate(sid:int,body:Investigation,request:Request):
  check_session_access(request,s)
  if s['status']!='active': c.close(); raise HTTPException(409,'Session is no longer active.')
  if session_expired(c,s): c.close(); raise HTTPException(409,'Examination time has expired. Submit your current work.')
- case=CASES[s['case_id']]; test=case['investigations'].get(body.test_id); configured=bool(test)
+ case=json.loads(s['case_snapshot_json']) if s['case_snapshot_json'] else CASES[s['case_id']]; test=case['investigations'].get(body.test_id); configured=bool(test)
  if not test:
   # Generic non-indicated tests are explicitly not fabricated.
   test={'name':body.test_id,'result':'No case-specific result is configured for this test. It has not been performed in this simulation.','interpretation':'Do not infer a diagnosis from an unavailable result. Discuss the indication with an educator.','appropriate':False,'why':'This case does not include a validated result for this investigation.'}
