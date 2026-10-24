@@ -54,4 +54,10 @@ test('educator creates an exam and learner submits without seeing the answer key
   await expect(page.getByRole('heading', { name: 'Awaiting educator review' })).toBeVisible();
   await expect(page.locator('body')).not.toContainText('malaria-001');
   await expect(page.locator('body')).not.toContainText('FORMATIVE DEMONSTRATION SCORE');
+
+  // The educator, not the learner, controls when the detailed result becomes visible.
+  await page.getByRole('button', { name: /Educator console/ }).click();
+  await expect(page.getByRole('heading', { name: 'Educator console' })).toBeVisible();
+  await page.getByRole('button', { name: /Release results/ }).click();
+  await expect(page.getByText('Released')).toBeVisible();
 });
