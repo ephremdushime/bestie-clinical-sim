@@ -456,30 +456,30 @@ def case_version_history(case_id:str,request:Request):
 
 @app.get('/api/educator/case-drafts')
 def list_case_drafts(request: Request):
- check_access(request,True); actor=educator_actor(request); db=conn()
+ check_access(request,True); actor=educator_actor(request); identity=getattr(request.state,'identity_user',None) or current_identity_user(request); db=conn()
  try:
   if actor['role']=='platform_admin':
    rows=db.execute('SELECT draft_id,topic,specialty,status,payload,created_at,updated_at FROM case_drafts ORDER BY id DESC LIMIT 100').fetchall()
   elif actor.get('institution_id'):
    rows=db.execute('SELECT draft_id,topic,specialty,status,payload,created_at,updated_at FROM case_drafts WHERE institution_id=? ORDER BY id DESC LIMIT 100',(actor['institution_id'],)).fetchall()
-  elif APP_ENV=='production': raise HTTPException(403,'An institution assignment is required to access case drafts.')
+  elif APP_ENV=='production' or identity: raise HTTPException(403,'An institution assignment is required to access case drafts.')
   else: rows=db.execute('SELECT draft_id,topic,specialty,status,payload,created_at,updated_at FROM case_drafts ORDER BY id DESC LIMIT 100').fetchall()
  finally: db.close()
  return {'drafts':[{'draft_id':r['draft_id'],'topic':r['topic'],'specialty':r['specialty'],'status':r['status'],'created_at':r['created_at'],'updated_at':r['updated_at'],'case':json.loads(r['payload'])} for r in rows]}
 
 @app.post('/api/educator/case-drafts/{draft_id}/review')
 def review_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
- check_access(request,True); actor=educator_actor(request,body.reviewer); c=conn(); row=c.execute('SELECT payload,institution_id FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
+ check_access(request,True); actor=educator_actor(request,body.reviewer); identity=getattr(request.state,'identity_user',None) or current_identity_user(request); c=conn(); row=c.execute('SELECT payload,institution_id FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
- if actor['role']!='platform_admin' and (not actor.get('institution_id') or row['institution_id']!=actor['institution_id']):
+ if actor['role']!='platform_admin' and (identity or APP_ENV=='production') and (not actor.get('institution_id') or row['institution_id']!=actor['institution_id']):
   c.close(); raise HTTPException(404,'Draft not found.')
  d=json.loads(row['payload']); d['status']='reviewed_not_approved'; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); return {'draft_id':draft_id,'status':d['status'],'review':d['review']}
 
 @app.post('/api/educator/case-drafts/{draft_id}/approve-and-publish')
 def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request):
- check_access(request,True); actor=educator_actor(request,body.reviewer); c=conn(); row=c.execute('SELECT payload,institution_id FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
+ check_access(request,True); actor=educator_actor(request,body.reviewer); identity=getattr(request.state,'identity_user',None) or current_identity_user(request); c=conn(); row=c.execute('SELECT payload,institution_id FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
- if actor['role']!='platform_admin' and (not actor.get('institution_id') or row['institution_id']!=actor['institution_id']):
+ if actor['role']!='platform_admin' and (identity or APP_ENV=='production') and (not actor.get('institution_id') or row['institution_id']!=actor['institution_id']):
   c.close(); raise HTTPException(404,'Draft not found.')
  d=json.loads(row['payload']); case=d.get('case',{})
  if not case.get('title') or not case.get('diagnosis') or not isinstance(case.get('investigations'),dict):
@@ -520,8 +520,8 @@ async def draft_case(body:CaseDraftRequest,request:Request):
   except Exception: generated['generation_note']='Language model did not return valid case JSON; a structured scaffold was returned instead.'
  case=normalize_generated_case(generated,body); case['source_references']=refs; case['evidence_search']=evidence; case['generation_mode']=mode
  draft={'draft_id':secrets.token_urlsafe(12),'status':'draft_requires_clinical_review','topic':body.topic,'specialty':body.specialty,'learner_level':body.learner_level,'learning_objectives':objectives,'case':case,'source_references':refs,'evidence_search':evidence,'generation_mode':mode,'validation':{'status':'not_clinically_validated','automated_checks':{'has_title':bool(case.get('title')),'has_hidden_diagnosis':bool(case.get('diagnosis')),'has_investigation_structure':bool(case.get('investigations')),'has_source_search':bool(evidence.get('results')),'rubric_present':bool(case.get('marking_rubric'))},'required_before_publish':['Clinical educator verifies source claims and current local guidance','Check history, examination, results and hidden diagnosis are internally consistent','Check age, pregnancy, medication and dose safety where applicable','Confirm image provenance/licensing and investigation indications','Approve rubric and critical-error rules']}}
- actor=educator_actor(request)
- if APP_ENV=='production' and actor['role']!='platform_admin' and not actor.get('institution_id'):
+ actor=educator_actor(request); identity=getattr(request.state,'identity_user',None) or current_identity_user(request)
+ if (APP_ENV=='production' or identity) and actor['role']!='platform_admin' and not actor.get('institution_id'):
   raise HTTPException(403,'An institution assignment is required to create case drafts.')
  c=conn(); c.execute('INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at,institution_id,created_by_user_id) VALUES(?,?,?,?,?,?,?,?,?)',(draft['draft_id'],body.topic,body.specialty,draft['status'],json.dumps(draft),now(),now(),actor.get('institution_id'),actor.get('user_id'))); c.commit(); c.close(); return draft
 
@@ -529,8 +529,8 @@ async def draft_case(body:CaseDraftRequest,request:Request):
 def create_exam(body:ExamCreate,request:Request):
  check_access(request,True)
  if body.case_id not in CASES: raise HTTPException(404,'Case not found.')
- actor=educator_actor(request,body.creator)
- if APP_ENV=='production' and actor['role']!='platform_admin' and not actor.get('institution_id'):
+ actor=educator_actor(request,body.creator); identity=getattr(request.state,'identity_user',None) or current_identity_user(request)
+ if (APP_ENV=='production' or identity) and actor['role']!='platform_admin' and not actor.get('institution_id'):
   raise HTTPException(403,'An institution assignment is required to create examinations.')
  code=secrets.token_urlsafe(8).replace('-','').replace('_','').upper()[:12]
  case_version=CASES[body.case_id].get('version','1.0.0')
@@ -545,11 +545,11 @@ def create_exam(body:ExamCreate,request:Request):
   c.close()
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
- check_access(request,True); actor=educator_actor(request); db=conn()
+ check_access(request,True); actor=educator_actor(request); identity=getattr(request.state,'identity_user',None) or current_identity_user(request); db=conn()
  try:
   if actor['role']=='platform_admin': session_where=''; exam_where=''; params=()
   elif actor.get('institution_id'): session_where=' WHERE institution_id=?'; exam_where=' WHERE institution_id=?'; params=(actor['institution_id'],)
-  elif APP_ENV=='production': raise HTTPException(403,'An institution assignment is required to access the educator dashboard.')
+  elif APP_ENV=='production' or identity: raise HTTPException(403,'An institution assignment is required to access the educator dashboard.')
   else: session_where=''; exam_where=''; params=()
   sessions=[dict(r) for r in db.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions'+session_where+' ORDER BY id DESC LIMIT 100',params)]
   exams=[dict(r) for r in db.execute('SELECT * FROM exams'+exam_where+' ORDER BY id DESC LIMIT 100',params)]
@@ -563,11 +563,11 @@ def dashboard(request:Request):
 
 @app.post('/api/educator/exams/{exam_id}/close')
 def close_exam(exam_id:int,request:Request):
- check_access(request,True); actor=educator_actor(request); c=conn()
+ check_access(request,True); actor=educator_actor(request); identity=getattr(request.state,'identity_user',None) or current_identity_user(request); c=conn()
  try:
   exam=c.execute('SELECT institution_id,creator_user_id FROM exams WHERE id=?',(exam_id,)).fetchone()
   if not exam: raise HTTPException(404,'Examination not found.')
-  if actor['role']!='platform_admin' and (not actor.get('institution_id') or not exam['institution_id'] or exam['institution_id']!=actor.get('institution_id')):
+  if (APP_ENV=='production' or identity) and actor['role']!='platform_admin' and (not actor.get('institution_id') or not exam['institution_id'] or exam['institution_id']!=actor.get('institution_id')):
    raise HTTPException(403,'This examination belongs to another institution or has no trusted institution assignment.')
   c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); return {'closed':True}
  finally:
