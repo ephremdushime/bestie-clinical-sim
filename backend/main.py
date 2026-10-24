@@ -612,7 +612,7 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
   c.close(); raise HTTPException(422,'Investigation results and interpretations contain placeholders. Complete them before publishing.')
  if not body.review_notes.strip(): c.close(); raise HTTPException(422,'A clinical review note is required.')
  case['version']=next_case_version(c,case['id']); case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
- c.execute('INSERT INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash,institution_id) VALUES(?,?,?,?,?,?,?,?,?)',(case['id'],case['version'],canonical_json(case),actor['display_name'],actor['user_id'],case['approved_at'],body.review_notes,content_digest(case),actor.get('institution_id'))
+ c.execute('INSERT INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash,institution_id) VALUES(?,?,?,?,?,?,?,?,?)',(case['id'],case['version'],canonical_json(case),actor['display_name'],actor['user_id'],case['approved_at'],body.review_notes,content_digest(case),actor.get('institution_id')))
  rubric_value=rubric_for_case(case); rubric_payload=canonical_json(rubric_value)
  prior_rubric=c.execute('SELECT rubric_version,payload FROM rubric_versions WHERE case_id=? ORDER BY rowid DESC LIMIT 1',(case['id'],)).fetchone()
  if prior_rubric:
@@ -621,7 +621,7 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
   rubric_version=prior_rubric['rubric_version'] if prior_payload==rubric_payload else increment_patch(prior_rubric['rubric_version'])
  else: rubric_version=RUBRIC_VERSION
  c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash,approved_by_user_id) VALUES(?,?,?,?,?,?,?)',(case['id'],case['version'],rubric_version,rubric_payload,case['approved_at'],content_digest(rubric_value),actor['user_id']))
- c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at,institution_id) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at'],actor.get('institution_id'))
+ c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at,institution_id) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at'],actor.get('institution_id')))
  d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
  return {'status':d['status'],'case_id':case['id'],'version':case['version'],'message':'Published following educator attestation; this is not independent clinical certification.'}
 
