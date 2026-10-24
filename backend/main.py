@@ -456,7 +456,7 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  case_payload=dict(case); case_hash=content_digest(case_payload)
  c.execute('INSERT INTO case_versions(case_id,version,payload,content_hash,approved_by,approved_by_user_id,approved_at,created_at) VALUES(?,?,?,?,?,?,?,?)',(case['id'],case['version'],json.dumps(case_payload),case_hash,actor['display_name'],actor['user_id'],case['approved_at'],case['approved_at']))
  rubric_payload=rubric_for_case(case_payload); rubric_json=canonical_json(rubric_payload); rubric_hash=__import__('hashlib').sha256(rubric_json.encode('utf-8')).hexdigest()
- prior_rubric=c.execute('SELECT rv.rubric_version,rv.rubric_json FROM rubric_versions rv JOIN case_versions cv ON cv.case_id=rv.case_id AND cv.version=rv.case_version WHERE rv.case_id=? ORDER BY cv.created_at DESC,rv.created_at DESC LIMIT 1',(case['id'],)).fetchone()
+ prior_rubric=c.execute('SELECT rv.rubric_version,rv.rubric_json FROM rubric_versions rv JOIN case_versions cv ON cv.case_id=rv.case_id AND cv.version=rv.case_version WHERE rv.case_id=? ORDER BY cv.rowid DESC,rv.rowid DESC LIMIT 1',(case['id'],)).fetchone()
  rubric_version=(increment_patch(prior_rubric['rubric_version']) if prior_rubric and prior_rubric['rubric_json']!=rubric_json else (prior_rubric['rubric_version'] if prior_rubric else '1.0.0'))
  c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,rubric_json,content_hash,approved_by_user_id,created_at) VALUES(?,?,?,?,?,?,?)',(case['id'],case['version'],rubric_version,rubric_json,rubric_hash,actor['user_id'],case['approved_at']))
  c.execute('INSERT INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?) ON CONFLICT(case_id) DO UPDATE SET version=excluded.version,payload=excluded.payload,approved_by=excluded.approved_by,approved_at=excluded.approved_at',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at']))
@@ -484,6 +484,32 @@ async def draft_case(body:CaseDraftRequest,request:Request):
  case=normalize_generated_case(generated,body); case['source_references']=refs; case['evidence_search']=evidence; case['generation_mode']=mode
  draft={'draft_id':secrets.token_urlsafe(12),'status':'draft_requires_clinical_review','topic':body.topic,'specialty':body.specialty,'learner_level':body.learner_level,'learning_objectives':objectives,'case':case,'source_references':refs,'evidence_search':evidence,'generation_mode':mode,'validation':{'status':'not_clinically_validated','automated_checks':{'has_title':bool(case.get('title')),'has_hidden_diagnosis':bool(case.get('diagnosis')),'has_investigation_structure':bool(case.get('investigations')),'has_source_search':bool(evidence.get('results')),'rubric_present':bool(case.get('marking_rubric'))},'required_before_publish':['Clinical educator verifies source claims and current local guidance','Check history, examination, results and hidden diagnosis are internally consistent','Check age, pregnancy, medication and dose safety where applicable','Confirm image provenance/licensing and investigation indications','Approve rubric and critical-error rules']}}
  c=conn(); c.execute('INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',(draft['draft_id'],body.topic,body.specialty,draft['status'],json.dumps(draft),now(),now())); c.commit(); c.close(); return draft
+
+@app.get('/api/educator/cases/{case_id}/versions')
+def case_version_history(case_id:str,request:Request):
+ check_access(request,True)
+ c=conn()
+ try:
+  versions=[]
+  rows=c.execute('SELECT version,content_hash,approved_by,approved_by_user_id,approved_at,created_at FROM case_versions WHERE case_id=? ORDER BY rowid DESC',(case_id,)).fetchall()
+  if not rows: raise HTTPException(404,'No version history found for this case.')
+  for row in rows:
+   rubrics=c.execute('SELECT rubric_version,content_hash,approved_by_user_id,created_at FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC',(case_id,row['version'])).fetchall()
+   versions.append({'case_version':row['version'],'content_hash':row['content_hash'],'approved_by':row['approved_by'],'approved_by_user_id':row['approved_by_user_id'],'approved_at':row['approved_at'],'created_at':row['created_at'],'rubric_versions':[dict(rv) for rv in rubrics]})
+  return {'case_id':case_id,'latest_case_version':versions[0]['case_version'],'versions':versions}
+ finally: c.close()
+
+@app.get('/api/educator/cases/{case_id}/versions/{version}')
+def get_case_version_detail(case_id:str,version:str,request:Request):
+ check_access(request,True)
+ c=conn()
+ try:
+  row=c.execute('SELECT payload,content_hash,approved_by,approved_by_user_id,approved_at FROM case_versions WHERE case_id=? AND version=?',(case_id,version)).fetchone()
+  if not row: raise HTTPException(404,'Case version not found.')
+  case=json.loads(row['payload'])
+  rubrics=c.execute('SELECT rubric_version,rubric_json,content_hash,approved_by_user_id,created_at FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC',(case_id,version)).fetchall()
+  return {'case':case,'content_hash':row['content_hash'],'approved_by':row['approved_by'],'approved_by_user_id':row['approved_by_user_id'],'approved_at':row['approved_at'],'rubric_versions':[{'rubric_version':rv['rubric_version'],'rubric':json.loads(rv['rubric_json']),'content_hash':rv['content_hash'],'approved_by_user_id':rv['approved_by_user_id'],'created_at':rv['created_at']} for rv in rubrics]}
+ finally: c.close()
 
 @app.post('/api/educator/exams')
 def create_exam(body:ExamCreate,request:Request):
