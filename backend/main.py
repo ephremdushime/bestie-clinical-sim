@@ -117,17 +117,49 @@ def content_digest(value:dict) -> str:
  return hashlib.sha256(canonical_json(value).encode('utf-8')).hexdigest()
 def rubric_definition():
  return {'version':RUBRIC_VERSION,'status':'formative_unvalidated','domains':['Communication and history','Severity and examination','Investigation selection and indication','Result interpretation','Differential diagnosis','Final diagnosis','Management and safety','Referral and follow-up'],'critical_error_policy':'Flag scenario-specific omissions for educator review; automated text detection is not a validated competence measure.'}
+def rubric_for_case(case:dict) -> dict:
+ actions=case.get('expected_actions',[])
+ if not isinstance(actions,list): actions=[]
+ differentials=case.get('expected_differentials',case.get('differentials',[]))
+ if not isinstance(differentials,list): differentials=[]
+ critical=case.get('critical_errors',case.get('critical_safety_errors',[]))
+ if not isinstance(critical,list): critical=[]
+ return {'status':'formative_unvalidated','criteria':[
+  {'id':'history_and_examination','label':'Focused history and examination','weight':20,'anchors':['Relevant history','Focused examination','Recognizes red flags']},
+  {'id':'differential','label':'Prioritized differential diagnosis','weight':15,'anchors':differentials},
+  {'id':'investigations','label':'Indication-based investigations and interpretation','weight':20,'anchors':['Justifies test selection','Interprets results in context']},
+  {'id':'management','label':'Safe management and escalation','weight':25,'anchors':actions},
+  {'id':'communication','label':'Communication, consent and professionalism','weight':10,'anchors':['Clear explanation','Respectful communication','Consent where appropriate']},
+  {'id':'follow_up','label':'Reassessment, referral and safety-netting','weight':10,'anchors':['Reassess response','Referral or follow-up','Safety-netting']}
+ ],'critical_failures':critical,'scoring_policy':'Formative rubric draft; not a validated competence instrument.','source_case_id':case.get('id')}
+def increment_patch(version:str|None) -> str:
+ raw=str(version or '0.0.0')
+ prefix,separator,numeric=raw.rpartition('-')
+ parts=numeric.split('.') if separator else raw.split('.')
+ try:
+  major,minor,patch=(int(x) for x in parts)
+  next_version=f'{major}.{minor}.{patch+1}'
+  return f'{prefix}-{next_version}' if separator else next_version
+ except (ValueError,TypeError):
+  return '1.0.0'
 def ensure_version_snapshots():
  c=conn()
  try:
   for case in CASES.values():
    version=str(case.get('version') or '1.0.0'); approved_at=str(case.get('approved_at') or '2026-01-01T00:00:00+00:00')
    case_payload=canonical_json(case); case_hash=content_digest(case)
-   rubric_payload=canonical_json(rubric_definition()); rubric_hash=content_digest(rubric_definition())
    c.execute('INSERT OR IGNORE INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash) VALUES(?,?,?,?,?,?,?,?)',(case['id'],version,case_payload,case.get('approved_by'),case.get('approved_by_user_id'),approved_at,'Initial immutable snapshot imported from existing case catalogue.',case_hash))
    c.execute('UPDATE case_versions SET content_hash=? WHERE case_id=? AND version=? AND (content_hash IS NULL OR content_hash="")',(case_hash,case['id'],version))
-   c.execute('INSERT OR IGNORE INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],version,RUBRIC_VERSION,rubric_payload,approved_at,rubric_hash))
-   c.execute('UPDATE rubric_versions SET content_hash=? WHERE case_id=? AND case_version=? AND rubric_version=? AND (content_hash IS NULL OR content_hash="")',(rubric_hash,case['id'],version,RUBRIC_VERSION))
+   rubric_payload=canonical_json(rubric_for_case(case)); rubric_value=json.loads(rubric_payload); rubric_hash=content_digest(rubric_value)
+   latest=c.execute('SELECT rubric_version,payload FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC LIMIT 1',(case['id'],version)).fetchone()
+   if latest:
+    try: latest_payload=canonical_json(json.loads(latest['payload']))
+    except (TypeError,ValueError,json.JSONDecodeError): latest_payload=''
+    rubric_version=latest['rubric_version'] if latest_payload==rubric_payload else increment_patch(latest['rubric_version'])
+   else:
+    rubric_version=RUBRIC_VERSION
+   c.execute('INSERT OR IGNORE INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],version,rubric_version,rubric_payload,approved_at,rubric_hash))
+   c.execute('UPDATE rubric_versions SET content_hash=? WHERE case_id=? AND case_version=? AND rubric_version=? AND (content_hash IS NULL OR content_hash="")',(rubric_hash,case['id'],version,rubric_version))
   # Backfill hashes for older immutable versions without rewriting their payloads.
   for row in c.execute('SELECT case_id,version,payload FROM case_versions WHERE content_hash IS NULL OR content_hash=""').fetchall():
    try: digest=content_digest(json.loads(row['payload']))
