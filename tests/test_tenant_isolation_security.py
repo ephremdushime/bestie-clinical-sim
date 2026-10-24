@@ -532,9 +532,26 @@ def test_production_exam_creation_requires_active_tenant_and_blocks_cross_tenant
 
 def test_production_platform_admin_must_select_an_active_institution_for_exam(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
+    from identity import init_identity_schema
+    with main.conn() as db:
+        init_identity_schema(db)
+        db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+                   ("institution-a", "Institution A", main.now()))
+        db.commit()
     with TestClient(main.app) as client:
         monkeypatch.setattr(main, "current_identity_user",
             lambda request: identity("platform-admin", None, role="platform_admin"))
         missing = client.post("/api/educator/exams", headers={"Authorization": "Bearer test"},
             json={"title": "Unassigned admin exam", "case_id": "malaria-001"})
         assert missing.status_code == 422, missing.text
+
+        invalid = client.post("/api/educator/exams", headers={"Authorization": "Bearer test"},
+            json={"title": "Invalid institution exam", "case_id": "malaria-001",
+                  "institution_id": "missing-institution"})
+        assert invalid.status_code == 422, invalid.text
+
+        assigned = client.post("/api/educator/exams", headers={"Authorization": "Bearer test"},
+            json={"title": "Assigned admin exam", "case_id": "malaria-001",
+                  "institution_id": "institution-a"})
+        assert assigned.status_code == 200, assigned.text
+        assert assigned.json()["institution_id"] == "institution-a"
