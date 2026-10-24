@@ -42,7 +42,8 @@ def validate_production_configuration() -> None:
  if APP_ENV != 'production':
   return
  errors=[]
- # Shared pilot/educator tokens are development-only; production access uses provisioned accounts.\n origins=[x.strip() for x in os.getenv('CORS_ORIGINS','').split(',') if x.strip()]
+ # Shared pilot/educator tokens are development-only; production access uses provisioned accounts.
+ origins=[x.strip() for x in os.getenv('CORS_ORIGINS','').split(',') if x.strip()]
  if not origins or '*' in origins: errors.append('CORS_ORIGINS must list explicit trusted frontend origins; wildcard is not allowed.')
  if any(('localhost' in x or '127.0.0.1' in x) for x in origins): errors.append('Production CORS_ORIGINS must not contain localhost origins.')
  if errors: raise RuntimeError('Unsafe production configuration: '+' '.join(errors))
