@@ -13,7 +13,7 @@ test('learner completes the practice workflow from case selection to feedback', 
   await page.getByRole('button', { name: /Send/i }).click();
   await expect(page.getByText(/The fever started yesterday evening/i)).toBeVisible();
 
-  await page.getByLabel('Clinical indication').fill('Fever and chills in a malaria-endemic setting');
+  await page.getByPlaceholder('What clinical question will this test answer?').fill('Fever and chills in a malaria-endemic setting');
   await page.getByRole('button', { name: /Request test/i }).click();
   await expect(page.getByText(/Positive for malaria antigen/i)).toBeVisible();
 
