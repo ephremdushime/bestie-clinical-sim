@@ -48,5 +48,9 @@ jobs:
           node-version: "20"
       - name: Install frontend dependencies
         run: npm install --no-audit --no-fund
+      - name: Install Chromium for browser tests
+        run: npx playwright install --with-deps chromium
       - name: Build frontend
         run: npm run build
+      - name: Run browser workflows
+        run: npm run test:e2e
