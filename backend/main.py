@@ -108,6 +108,10 @@ def init_db():
  if 'institution_id' not in case_version_cols: c.execute('ALTER TABLE case_versions ADD COLUMN institution_id TEXT')
  rubric_version_cols={row['name'] for row in c.execute('PRAGMA table_info(rubric_versions)')}
  if 'content_hash' not in rubric_version_cols: c.execute("ALTER TABLE rubric_versions ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
+ # Initialize identity/institution tables in the same configured database during
+ # application bootstrap, not only after the first login request.
+ from identity import init_identity_schema
+ init_identity_schema(c)
  c.commit(); c.close()
 init_db()
 
