@@ -97,3 +97,16 @@ def test_empty_websocket_message_is_rejected_without_broadcasting(tmp_path, monk
             response = socket.receive_json()
             assert response["type"] == "error"
             assert response["message"] == "Message text is required."
+
+
+def test_oversized_websocket_message_is_rejected_not_truncated(tmp_path, monkeypatch):
+    db_path = tmp_path / "oversized-message.db"
+    _, token = provision(db_path, monkeypatch)
+    with TestClient(main.app) as client:
+        ticket = issue_ticket(client, token)
+        with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}") as socket:
+            assert socket.receive_json() == {"type": "history", "messages": []}
+            socket.send_json({"text": "x" * 1201})
+            response = socket.receive_json()
+            assert response["type"] == "error"
+            assert response["message"] == "Message exceeds the 1200-character limit."
