@@ -152,3 +152,91 @@ def test_legacy_development_exam_closure_remains_compatible(tmp_path, monkeypatc
         response = client.post("/api/educator/exams/1/close")
         assert response.status_code == 200, response.text
         assert response.json()["closed"] is True
+
+
+def test_legacy_ownership_reconciliation_requires_platform_admin_and_writes_audit(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    from identity import create_user, init_identity_schema
+    with main.conn() as db:
+        init_identity_schema(db)
+        db.execute(
+            "INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+            ("institution-a", "Institution A", main.now()),
+        )
+        admin_id = create_user(
+            db, email="platform-admin@example.test", display_name="Platform Admin",
+            password="platform-admin-long-password", role="platform_admin",
+        )
+        db.execute(
+            "INSERT INTO sessions(learner,case_id,mode,created_at,status,events,report) VALUES(?,?,?,?,?,?,?)",
+            ("Legacy Student", "malaria-001", "practice", main.now(), "completed", "[]", "{}"),
+        )
+        db.execute(
+            "INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+            ("legacy-draft", "Legacy topic", "General medicine", "draft", '{"case":{}}', main.now(), main.now()),
+        )
+        db.commit()
+
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(
+            main, "current_identity_user",
+            lambda request: identity(admin_id, None, role="platform_admin"),
+        )
+        queue = client.get("/api/platform-admin/ownership-reconciliation")
+        assert queue.status_code == 200, queue.text
+        assert queue.json()["counts"]["sessions"] == 1
+        assert queue.json()["counts"]["case_drafts"] == 1
+
+        assigned = client.post(
+            "/api/platform-admin/ownership-reconciliation",
+            json={
+                "resource_type": "session",
+                "resource_id": "1",
+                "institution_id": "institution-a",
+                "reason": "Institution registry and archived placement log confirm ownership.",
+            },
+        )
+        assert assigned.status_code == 200, assigned.text
+        assert assigned.json()["audit_recorded"] is True
+
+        with main.conn() as db:
+            row = db.execute("SELECT institution_id FROM sessions WHERE id=1").fetchone()
+            audit = db.execute(
+                "SELECT actor_user_id,action,resource_type,resource_id,outcome,metadata_json FROM audit_events WHERE action='ownership.reconciled'"
+            ).fetchone()
+            assert row["institution_id"] == "institution-a"
+            assert audit["actor_user_id"] == admin_id
+            assert audit["resource_type"] == "session"
+            assert audit["resource_id"] == "1"
+            assert audit["outcome"] == "success"
+            assert "archived placement log" in audit["metadata_json"]
+
+        duplicate = client.post(
+            "/api/platform-admin/ownership-reconciliation",
+            json={
+                "resource_type": "session",
+                "resource_id": "1",
+                "institution_id": "institution-a",
+                "reason": "Trying to repeat an already completed ownership assignment.",
+            },
+        )
+        assert duplicate.status_code == 409
+
+
+def test_ownership_reconciliation_rejects_non_platform_admin(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(
+            main, "current_identity_user",
+            lambda request: identity("educator-a", "institution-a", role="educator"),
+        )
+        response = client.post(
+            "/api/platform-admin/ownership-reconciliation",
+            json={
+                "resource_type": "session",
+                "resource_id": "1",
+                "institution_id": "institution-a",
+                "reason": "Documented ownership evidence from archived records.",
+            },
+        )
+        assert response.status_code == 403
