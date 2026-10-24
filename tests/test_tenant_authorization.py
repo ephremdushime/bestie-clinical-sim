@@ -32,6 +32,8 @@ def setup(tmp_path, monkeypatch):
     users = [
         ("educator-a@example.org", "Educator A", "educator-password-a-long", "educator", "inst-a"),
         ("educator-b@example.org", "Educator B", "educator-password-b-long", "educator", "inst-b"),
+        ("admin-a@example.org", "Institution Admin A", "institution-admin-password-a-long", "institution_admin", "inst-a"),
+        ("platform-admin@example.org", "Platform Admin", "platform-admin-password-long", "platform_admin", None),
         ("learner-a@example.org", "Learner A", "learner-password-a-long", "learner", "inst-a"),
         ("learner-b@example.org", "Learner B", "learner-password-b-long", "learner", "inst-b"),
     ]
@@ -122,8 +124,138 @@ def test_case_drafts_are_tenant_scoped_for_list_review_and_publish(tmp_path, mon
 def test_institution_admin_cannot_close_another_institution_exam(tmp_path, monkeypatch):
     setup(tmp_path, monkeypatch)
     with TestClient(main.app) as client:
-        educator_a = sign_in(client, "educator-a@example.org", "educator-password-a-long")
+        admin_a = sign_in(client, "admin-a@example.org", "institution-admin-password-a-long")
         educator_b = sign_in(client, "educator-b@example.org", "educator-password-b-long")
         exam_b = create_exam(client, educator_b, "Institution B exam")
-        response = client.post(f"/api/educator/exams/{exam_b['id']}/close", headers=educator_a)
+        response = client.post(f"/api/educator/exams/{exam_b['id']}/close", headers=admin_a)
+        assert response.status_code == 403, response.text
+
+        educator_a = sign_in(client, "educator-a@example.org", "educator-password-a-long")
+        exam_a = create_exam(client, educator_a, "Institution A exam")
+        same_institution_close = client.post(
+            f"/api/educator/exams/{exam_a['id']}/close", headers=admin_a
+        )
+        assert same_institution_close.status_code == 403, same_institution_close.text
+        admin_dashboard = client.get("/api/educator/dashboard", headers=admin_a)
+        assert admin_dashboard.status_code == 403, admin_dashboard.text
+
+
+def test_platform_admin_has_explicit_cross_institution_dashboard_access(tmp_path, monkeypatch):
+    setup(tmp_path, monkeypatch)
+    with TestClient(main.app) as client:
+        educator_a = sign_in(client, "educator-a@example.org", "educator-password-a-long")
+        educator_b = sign_in(client, "educator-b@example.org", "educator-password-b-long")
+        platform_admin = sign_in(client, "platform-admin@example.org", "platform-admin-password-long")
+        exam_a = create_exam(client, educator_a, "Institution A exam")
+        exam_b = create_exam(client, educator_b, "Institution B exam")
+        dashboard = client.get("/api/educator/dashboard", headers=platform_admin)
+        assert dashboard.status_code == 200, dashboard.text
+        assert {exam["id"] for exam in dashboard.json()["exams"]} == {exam_a["id"], exam_b["id"]}
+
+
+
+def test_published_cases_remain_private_to_the_owning_institution(tmp_path, monkeypatch):
+    db_path = setup(tmp_path, monkeypatch)
+    case_id = "generated-institution-b-private"
+    case = {
+        "id": case_id, "version": "1.0.0", "title": "Institution B private case",
+        "specialty": "Medicine", "level": "Clinical-year student",
+        "appearance": "Fictional adult patient", "age": 35, "sex": "adult",
+        "opening": "I feel unwell.", "diagnosis": "Fictional teaching diagnosis",
+        "vitals": {}, "facts": {}, "investigations": {},
+        "expected_actions": [], "expected_differentials": [], "critical_errors": [],
+    }
+    monkeypatch.setitem(main.CASES, case_id, case)
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """INSERT INTO approved_cases(case_id,version,payload,approved_by,approved_at,institution_id)
+               VALUES(?,?,?,?,?,?)""",
+            (case_id, "1.0.0", json.dumps(case), "Educator B",
+             "2026-10-24T00:00:00+00:00", "inst-b"),
+        )
+        db.execute(
+            """INSERT INTO case_versions(case_id,version,payload,approved_by,approved_at,
+               change_note,content_hash,institution_id) VALUES(?,?,?,?,?,?,?,?)""",
+            (case_id, "1.0.0", json.dumps(case), "Educator B",
+             "2026-10-24T00:00:00+00:00", "Initial version",
+             main.content_digest(case), "inst-b"),
+        )
+
+    with TestClient(main.app) as client:
+        educator_a = sign_in(client, "educator-a@example.org", "educator-password-a-long")
+        educator_b = sign_in(client, "educator-b@example.org", "educator-password-b-long")
+
+        cases_a = client.get("/api/cases", headers=educator_a)
+        cases_b = client.get("/api/cases", headers=educator_b)
+        assert cases_a.status_code == 200, cases_a.text
+        assert cases_b.status_code == 200, cases_b.text
+        assert case_id not in {item["id"] for item in cases_a.json()["cases"]}
+        assert case_id in {item["id"] for item in cases_b.json()["cases"]}
+
+        denied_session = client.post("/api/sessions", headers=educator_a, json={
+            "learner": "Educator A", "case_id": case_id, "mode": "practice"
+        })
+        assert denied_session.status_code == 403, denied_session.text
+
+        denied_exam = client.post("/api/educator/exams", headers=educator_a, json={
+            "title": "Unauthorized case exam", "case_id": case_id, "duration": 5, "pass_mark": 70
+        })
+        assert denied_exam.status_code == 403, denied_exam.text
+
+        denied_history = client.get(
+            f"/api/educator/cases/{case_id}/versions", headers=educator_a
+        )
+        assert denied_history.status_code == 403, denied_history.text
+        denied_detail = client.get(
+            f"/api/educator/cases/{case_id}/versions/1.0.0", headers=educator_a
+        )
+        assert denied_detail.status_code == 403, denied_detail.text
+
+        allowed_exam = client.post("/api/educator/exams", headers=educator_b, json={
+            "title": "Institution B case exam", "case_id": case_id, "duration": 5, "pass_mark": 70
+        })
+        assert allowed_exam.status_code == 200, allowed_exam.text
+
+
+def test_new_case_draft_is_bound_to_authenticated_creator_and_institution(tmp_path, monkeypatch):
+    db_path = setup(tmp_path, monkeypatch)
+    with TestClient(main.app) as client:
+        educator_a = sign_in(client, "educator-a@example.org", "educator-password-a-long")
+        me = client.get("/api/auth/me", headers=educator_a)
+        assert me.status_code == 200, me.text
+        actor_id = me.json()["user"]["user_id"]
+
+        created = client.post("/api/educator/case-draft", headers=educator_a, json={
+            "topic": "Fictional case for institution A",
+            "specialty": "General medicine",
+            "auto_retrieve": False,
+        })
+        assert created.status_code == 200, created.text
+        draft_id = created.json()["draft_id"]
+
+    with sqlite3.connect(db_path) as db:
+        row = db.execute(
+            "SELECT institution_id,creator_user_id FROM case_drafts WHERE draft_id=?",
+            (draft_id,),
+        ).fetchone()
+    assert row == ("inst-a", actor_id)
+
+
+def test_orphaned_generated_case_history_fails_closed(tmp_path, monkeypatch):
+    db_path = setup(tmp_path, monkeypatch)
+    orphan_id = "generated-without-owner"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """INSERT INTO case_versions(case_id,version,payload,approved_at,change_note,
+               content_hash,institution_id) VALUES(?,?,?,?,?,?,?)""",
+            (orphan_id, "1.0.0", json.dumps({"id": orphan_id, "version": "1.0.0"}),
+             "2026-10-24T00:00:00+00:00", "Orphaned legacy snapshot",
+             "not-a-valid-hash", None),
+        )
+
+    with TestClient(main.app) as client:
+        educator_a = sign_in(client, "educator-a@example.org", "educator-password-a-long")
+        response = client.get(
+            f"/api/educator/cases/{orphan_id}/versions", headers=educator_a
+        )
         assert response.status_code == 403, response.text
