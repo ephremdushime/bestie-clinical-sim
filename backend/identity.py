@@ -1,9 +1,10 @@
-"""Identity/RBAC primitives for Bestie Clinical Sim.
+"""Identity and session primitives for Bestie Clinical Sim.
 
-This module is deliberately isolated until the API routes are migrated to it.
-Passwords are PBKDF2-hashed; raw bearer tokens are returned once and never stored.
-Institution scope and role checks are explicit. Do not treat this module as a
-complete production authentication system until wired into every HTTP/WebSocket route.
+Passwords are PBKDF2-hashed; raw bearer tokens are returned once and only their
+hashes are persisted. Protected production HTTP routes resolve provisioned bearer
+sessions through this module. WebSocket access uses separately issued, short-lived,
+single-use room tickets. This is not a substitute for institutional SSO, MFA, or
+external identity verification.
 """
 from __future__ import annotations
 
