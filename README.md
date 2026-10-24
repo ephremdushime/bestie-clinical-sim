@@ -41,7 +41,7 @@ npm run dev
 
 Open the Vite URL shown in the terminal (normally `http://localhost:5173`). Vite proxies `/api` and `/ws` to `localhost:8000`.
 
-In development, token gates are open unless environment variables are set. For a controlled pilot, use separate strong `PILOT_ACCESS_TOKEN` and `EDUCATOR_ACCESS_TOKEN` values and set `APP_ENV=production`. These are shared pilot tokens, **not** per-user accounts or institutional SSO.
+In development, legacy token gates are available for local testing. Shared `PILOT_ACCESS_TOKEN` and `EDUCATOR_ACCESS_TOKEN` values are **not accepted for protected routes in production**. Production requires provisioned account bearer sessions. Provision accounts from the trusted server shell with `python scripts/provision_account.py`; the utility prompts for passwords without echoing them. Users can change their password from the signed-in sidebar. Account provisioning is not exposed as a public registration endpoint; institutional SSO, password recovery, and centralized lifecycle management are still not implemented.
 
 ## Optional language model
 
