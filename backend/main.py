@@ -391,6 +391,19 @@ class CaseReviewRequest(BaseModel):
  reviewer: str = Field(default='Educator',min_length=2,max_length=100)
  review_notes: str = Field(default='',max_length=4000)
 
+class RubricCriterion(BaseModel):
+ id: str = Field(min_length=2,max_length=80)
+ label: str = Field(min_length=3,max_length=160)
+ weight: int = Field(ge=1,le=100)
+ anchors: list[str] = Field(min_length=1,max_length=12)
+
+class RubricVersionRequest(BaseModel):
+ case_version: str = Field(min_length=1,max_length=40)
+ criteria: list[RubricCriterion] = Field(min_length=1,max_length=20)
+ critical_failures: list[str] = Field(default_factory=list,max_length=30)
+ scoring_policy: str = Field(default='formative rubric; not validated for high-stakes assessment',min_length=8,max_length=300)
+ review_notes: str = Field(min_length=5,max_length=2000)
+
 async def retrieve_evidence(query: str, max_results: int=8) -> dict:
  """Retrieve public citation metadata and abstracts as evidence leads, not medical approval."""
  results=[]; errors=[]
@@ -517,6 +530,38 @@ def get_case_version_detail(case_id:str,version:str,request:Request):
   case=json.loads(row['payload'])
   rubrics=c.execute('SELECT rubric_version,rubric_json,content_hash,approved_by_user_id,created_at FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC',(case_id,version)).fetchall()
   return {'case':case,'content_hash':row['content_hash'],'approved_by':row['approved_by'],'approved_by_user_id':row['approved_by_user_id'],'approved_at':row['approved_at'],'rubric_versions':[{'rubric_version':rv['rubric_version'],'rubric':json.loads(rv['rubric_json']),'content_hash':rv['content_hash'],'approved_by_user_id':rv['approved_by_user_id'],'created_at':rv['created_at']} for rv in rubrics]}
+ finally: c.close()
+
+@app.post('/api/educator/cases/{case_id}/rubrics')
+def create_rubric_version(case_id:str,body:RubricVersionRequest,request:Request):
+ check_access(request,True); actor=educator_actor(request); c=conn()
+ try:
+  case=get_case_snapshot(c,case_id)
+  current_case_version=str(case.get('version') or '1.0.0')
+  if body.case_version!=current_case_version: raise HTTPException(409,'Case version changed; refresh the case and review before editing its rubric.')
+  weights=[criterion.weight for criterion in body.criteria]
+  ids=[criterion.id.strip().casefold() for criterion in body.criteria]
+  if sum(weights)!=100: raise HTTPException(422,'Rubric criterion weights must total exactly 100.')
+  if len(ids)!=len(set(ids)): raise HTTPException(422,'Rubric criterion IDs must be unique.')
+  if any(not criterion.id.strip() or not criterion.label.strip() or any(not anchor.strip() for anchor in criterion.anchors) for criterion in body.criteria):
+   raise HTTPException(422,'Rubric IDs, labels and anchors cannot be blank.')
+  if len(set(body.critical_failures))!=len(body.critical_failures): raise HTTPException(422,'Critical failure rules must be unique.')
+  allowed_failures=set(case.get('critical_errors',[]))
+  if any(rule not in allowed_failures for rule in body.critical_failures):
+   raise HTTPException(422,'Critical failure rules must come from the approved case safety rules.')
+  ensure_case_version_record(c,case)
+  latest=c.execute('SELECT rubric_version,rubric_json FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC LIMIT 1',(case_id,current_case_version)).fetchone()
+  rubric={'criteria':[criterion.model_dump() for criterion in body.criteria],'critical_failures':body.critical_failures,'scoring_policy':body.scoring_policy,'source_case_id':case_id,'review_notes':body.review_notes}
+  rubric_json=canonical_json(rubric)
+  if latest and latest['rubric_json']==rubric_json:
+   return {'case_id':case_id,'case_version':current_case_version,'rubric_version':latest['rubric_version'],'unchanged':True,'message':'Rubric content is unchanged; no duplicate version was created.'}
+  rubric_version=increment_patch(latest['rubric_version'] if latest else None)
+  rubric_hash=__import__('hashlib').sha256(rubric_json.encode('utf-8')).hexdigest()
+  c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,rubric_json,content_hash,approved_by_user_id,created_at) VALUES(?,?,?,?,?,?,?)',(case_id,current_case_version,rubric_version,rubric_json,rubric_hash,actor.get('user_id'),now()))
+  from identity import write_audit_event
+  write_audit_event(c,actor_user_id=actor.get('user_id'),institution_id=actor.get('institution_id'),action='rubric.version_created',resource_type='rubric_version',resource_id=f'{case_id}@{current_case_version}/{rubric_version}',outcome='success',metadata_json=json.dumps({'criteria_count':len(body.criteria),'weight_total':sum(weights),'review_note_length':len(body.review_notes)},separators=(',',':')))
+  c.commit()
+  return {'case_id':case_id,'case_version':current_case_version,'rubric_version':rubric_version,'content_hash':rubric_hash,'unchanged':False,'message':'Rubric version recorded. Scoring remains formative until independently validated.'}
  finally: c.close()
 
 @app.post('/api/educator/exams')
