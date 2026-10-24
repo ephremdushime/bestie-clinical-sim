@@ -1,4 +1,5 @@
 """Additional WebSocket ticket lifecycle and payload validation regressions."""
+import hashlib
 import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
@@ -18,7 +19,11 @@ from identity import create_user, init_identity_schema, issue_session
 def provision(path, monkeypatch):
     monkeypatch.setattr(main, "DB_PATH", path)
     monkeypatch.setattr(auth_routes, "DB_PATH", path)
+    # Exercise production-only guards with safe, test-only configuration.
     monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setattr(main, "PILOT_TOKEN", "test-pilot-token-" + "p" * 40)
+    monkeypatch.setattr(main, "EDUCATOR_TOKEN", "test-educator-token-" + "e" * 40)
+    monkeypatch.setenv("CORS_ORIGINS", "https://clinical-sim.example.test")
     db = sqlite3.connect(path)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA foreign_keys=ON")
@@ -56,7 +61,7 @@ def test_expired_ticket_is_rejected_at_socket_handshake(tmp_path, monkeypatch):
         expired_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat(timespec="seconds")
         with sqlite3.connect(db_path) as db:
             db.execute("UPDATE websocket_tickets SET expires_at=? WHERE ticket_hash=?",
-                       (expired_at, __import__("hashlib").sha256(ticket.encode()).hexdigest()))
+                       (expired_at, hashlib.sha256(ticket.encode()).hexdigest()))
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}"):
                 pass
