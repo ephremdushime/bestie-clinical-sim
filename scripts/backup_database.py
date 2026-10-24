@@ -31,7 +31,7 @@ def main_cli() -> int:
         raise SystemExit(f"Database file does not exist: {source_path}")
     output_dir = Path(args.output_dir)
     output_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     final_path = output_dir / f"clinical_sim_{timestamp}.sqlite3"
     if final_path.exists():
         raise SystemExit(f"Backup destination already exists: {final_path}")
@@ -40,17 +40,22 @@ def main_cli() -> int:
     os.close(fd)
     temporary_path = Path(temporary_name)
     try:
-        source_uri = f"file:{source_path.resolve().as_posix()}?mode=ro"
-        with sqlite3.connect(source_uri, uri=True, timeout=30) as source:
-            with sqlite3.connect(temporary_path, timeout=30) as destination:
-                source.backup(destination, pages=256, sleep=0.05)
-                destination.commit()
-                integrity = destination.execute("PRAGMA integrity_check").fetchone()[0]
-                if integrity != "ok":
-                    raise RuntimeError(f"Backup integrity check failed: {integrity}")
+        source_uri = source_path.resolve().as_uri() + "?mode=ro"
+        source = sqlite3.connect(source_uri, uri=True, timeout=30)
+        destination = sqlite3.connect(temporary_path, timeout=30)
+        try:
+            source.backup(destination, pages=256, sleep=0.05)
+            destination.commit()
+            integrity = destination.execute("PRAGMA integrity_check").fetchone()[0]
+            if integrity != "ok":
+                raise RuntimeError(f"Backup integrity check failed: {integrity}")
+        finally:
+            destination.close()
+            source.close()
         os.chmod(temporary_path, 0o600)
         os.replace(temporary_path, final_path)
-        digest = hashlib.sha256(final_path.read_bytes()).hexdigest()
+        with final_path.open("rb") as backup_file:
+            digest = hashlib.file_digest(backup_file, "sha256").hexdigest()
         print(f"Backup verified: {final_path}")
         print(f"SHA-256: {digest}")
         print("Copy this file to encrypted off-host storage; retain the checksum with the backup record.")
