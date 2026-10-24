@@ -1,30 +1,39 @@
 # Bestie Clinical Sim 1.3.0 — release status
 
 ## Release classification
-**Hardened development build / technical pilot candidate. Not production-certified.** No deployment or hosting has been performed.
+**Hardened development build / technical demonstration candidate. Not production-certified, not clinically validated, and not institutionally approved.** No production deployment is recorded.
 
-## Changes verified in this release
-- Per-session random access secret is returned once to the browser; only its SHA-256 hash is persisted. In production, session chat, investigation, and finish endpoints require the session secret in addition to the pilot access gate.
-- Controlled-exam start response no longer exposes the case ID, case title, or pass mark. Student-facing exam submission remains a pending-review receipt.
-- Production startup validation rejects weak/placeholder pilot or educator secrets, identical secrets, wildcard CORS, and localhost origins.
-- Existing SQLite databases receive an additive session-token column migration.
-- Isolated regression tests cover the API, exam confidentiality, per-session authorization, production configuration guard, AI draft/publish flow, and persistence after module reload.
+## Verified engineering evidence
+The security and institution-isolation changes merged to main at `33e9394ac7c456fba67f56487a9755067e9dccc8`. Post-merge CI run [40138514028](https://github.com/ephremdushime/bestie-clinical-sim/actions/runs/40138514028) passed all four jobs:
+- backend release tests: 70 passed;
+- frontend production build and browser workflows: passed (6 browser checks);
+- live backend browser workflows: passed (2 checks);
+- Docker Compose validation, backend/frontend image builds, non-root API assertions and Nginx validation: passed.
 
-## Tests run in this environment
-- `python -m pytest -q`: **2 passed**.
-- `python -m compileall -q backend tests`: **passed**.
-- Mocked AI integration test: **passed** for draft creation, persistence, educator attestation, registry insertion, and reload. This does not prove a live model provider or external literature retrieval works.
-- Frontend production build: **not verified**. Package installation failed because the npm registry was unavailable and the required packages were not cached.
+These checks verify the tested code paths and build configuration only. They do not verify an institution's live database or replace independent clinical, institutional, operational or external security review.
 
-## Blocking requirements before production
-1. Verify frontend dependency installation/build on a network-enabled build runner; create and commit a lockfile and use reproducible installs (`npm ci`).
-2. Replace shared pilot/educator tokens with individual accounts, secure password storage, role-based authorization, session expiry/revocation, account recovery and educator identity/audit attribution. The per-session secret is an additional protection, not a replacement for accounts.
-3. Add rate limiting, brute-force controls, structured security logging, monitoring/alerting, automated backup and tested restore, and a documented incident response process.
-4. Conduct an independent security review, privacy impact assessment, data-retention review and institutional approval.
-5. Have qualified clinical educators validate every case, investigation result, management pathway, critical error and marking rubric against current Rwanda-relevant guidance. Current scoring is formative and unvalidated.
-6. Verify live LLM and PubMed/Europe PMC retrieval, provider timeout/error handling, citation provenance, content licensing, and prompt-injection protections.
-7. Complete accessibility testing and browser/device end-to-end tests.
-8. VR/AR 3D patient interaction, real headset support and surgical simulation are not implemented in this release.
+## Release gates — current state
 
-## Safe use
-Local technical evaluation with fictional data only. Do not enter real patient-identifiable information. Do not use scores for progression, licensing, clinical decisions or other high-stakes decisions. Do not expose this build publicly until the blocking requirements are closed and documented.
+| Gate | Status | Evidence needed to change status |
+|---|---|---|
+| Automated engineering checks | PASS for the recorded commit | Rerun on any release candidate and retain the run link |
+| Clinical/faculty review of each case and rubric | BLOCKED | Signed qualified review, source provenance, version/hash, conditions and review expiry |
+| Assessment validity/reliability | BLOCKED | Blueprint, anchored rubric, independent scoring evidence, fairness/accommodation review and approved intended use |
+| Institutional and ethics determination | BLOCKED | Written determination/approval and exact scope from the participating institution |
+| Privacy/data governance | BLOCKED | Approved data map, purpose, retention/deletion, notice/consent where applicable, provider/data-transfer review |
+| Staging deployment and operational controls | NOT RUN | HTTPS/network configuration, smoke tests, monitoring/incident process, rollback and access-boundary evidence |
+| Backup restoration | NOT RUN | Isolated restore drill and application-level integrity evidence; off-host encrypted backup |
+| Independent security assessment | NOT PERFORMED | Signed scope, assessor report, remediation and retest; no unresolved critical/high findings |
+| Load and full accessibility testing | NOT RUN | Authorized workload results and documented accessibility/browser/device review |
+
+See `docs/PRODUCTION_RELEASE_GATE.md` and the associated faculty, institutional, external-security and staging-rehearsal packs. Templates are not evidence of completed approvals.
+
+## Safe use while blocked
+Use only supervised technical demonstrations with fictional cases and synthetic data. Never enter real patient-identifiable information. Do not use scores for progression, licensing, credentialing, clinical decisions or other high-stakes decisions. Do not describe this release as clinically validated, penetration-tested, institutionally approved, or production-ready.
+
+## Outstanding product limitations
+- Scoring remains formative and unvalidated.
+- Educator attestation does not independently certify clinical accuracy.
+- Live LLM/evidence retrieval, provider terms, citation provenance and prompt-injection protections require independent verification.
+- Institutional SSO, MFA, self-service recovery, centralized account lifecycle management and several enterprise controls are not implemented.
+- VR/AR remains a compatibility scaffold, not a completed immersive clinical simulation.
