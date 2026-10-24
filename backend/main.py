@@ -582,6 +582,10 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
   c.close(); raise HTTPException(409,'Reconcile this draft to an institution before publishing; unassigned cases cannot enter the shared catalogue.')
  if APP_ENV!='production' and not case_institution_id:
   case_institution_id=actor.get('institution_id')
+ if APP_ENV=='production':
+  institution=c.execute("SELECT status FROM institutions WHERE institution_id=?",(case_institution_id,)).fetchone()
+  if not institution or institution['status']!='active':
+   c.close(); raise HTTPException(409,'Case publication requires an existing active institution.')
  c.execute('INSERT INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash,institution_id) VALUES(?,?,?,?,?,?,?,?,?)',(case['id'],case['version'],canonical_json(case),actor['display_name'],actor['user_id'],case['approved_at'],body.review_notes,content_digest(case),case_institution_id))
  rubric_payload=canonical_json(rubric_definition())
  c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],RUBRIC_VERSION,rubric_payload,case['approved_at'],content_digest(rubric_definition())))
