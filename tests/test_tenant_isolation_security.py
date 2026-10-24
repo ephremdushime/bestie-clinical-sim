@@ -136,3 +136,19 @@ def test_exam_close_requires_creator_or_institution_admin(tmp_path, monkeypatch)
         assert allowed.status_code == 200, allowed.text
         assert allowed.json()["closed"] is True
 
+
+
+def test_legacy_development_exam_closure_remains_compatible(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(main, "APP_ENV", "development")
+    with main.conn() as db:
+        db.execute(
+            "INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,status,creator) VALUES(?,?,?,?,?,?,?,?)",
+            ("LEGACY-EXAM", "Legacy exam", "malaria-001", 20, 70, main.now(), "open", "Legacy educator"),
+        )
+        db.commit()
+
+    with TestClient(main.app) as client:
+        response = client.post("/api/educator/exams/1/close")
+        assert response.status_code == 200, response.text
+        assert response.json()["closed"] is True
