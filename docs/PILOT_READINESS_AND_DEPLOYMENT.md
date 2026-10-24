@@ -43,6 +43,17 @@ This build is suitable for supervised technical demonstrations and for collectin
 - SQLite is intended only for small supervised tests; concurrent writes, retention controls and backups need review.
 - API keys, network traffic, dependency versions and deployment logs need production security review.
 
+## Governance and evidence packs
+
+The following templates prepare the evidence that must be produced by the responsible people; they do not approve the product:
+- `docs/CLINICAL_FACULTY_VALIDATION_PACK.md` — case-by-case clinical review, source provenance and rubric validation.
+- `docs/INSTITUTIONAL_APPROVAL_PACK.md` — institutional sponsor, ethics determination, privacy/data governance and written go/no-go.
+- `docs/EXTERNAL_SECURITY_ASSESSMENT.md` — independent assessor scope, findings, remediation and retest.
+- `docs/STAGING_DEPLOYMENT_REHEARSAL.md` — staging smoke tests, TLS/network checks, backup restore, observability, load/accessibility and rollback.
+- `docs/PRODUCTION_RELEASE_GATE.md` — consolidated release blocker and evidence register.
+
+Current status remains blocked for clinical/faculty validation, institutional/ethics approval, staging/restore rehearsal, and independent security assessment. Do not mark these complete from a CI run, code review, merge, or verbal agreement.
+
 ## Release gates
 
 **Gate A — demonstration:** API smoke tests pass; no real patient data; all UI limitations disclosed.
