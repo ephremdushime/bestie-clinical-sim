@@ -123,7 +123,7 @@ def _require_platform_admin(request: Request):
  return actor
 
 class OwnershipReconciliationRequest(BaseModel):
- resource_type: str = Field(pattern=r'^(session|case_draft|exam)$')
+ resource_type: str = Field(pattern=r'^(session|case_draft|exam|approved_case)
  resource_id: str = Field(min_length=1,max_length=160)
  institution_id: str = Field(min_length=1,max_length=160)
  reason: str = Field(min_length=20,max_length=2000, description='Non-PHI administrative evidence description; do not include patient identifiers or clinical details.')
@@ -765,18 +765,20 @@ async def room(ws:WebSocket,room:str):
 
 @app.get('/api/platform-admin/ownership-reconciliation')
 def ownership_reconciliation_queue(request: Request):
- actor=_require_platform_admin(request)
+ _require_platform_admin(request)
  c=conn()
  try:
   _identity_schema(c)
   sessions=[dict(r) for r in c.execute("SELECT id,case_id,mode,exam_id,created_at,status,owner_user_id FROM sessions WHERE institution_id IS NULL ORDER BY id LIMIT 500")]
   drafts=[dict(r) for r in c.execute("SELECT draft_id,topic,specialty,status,created_at,updated_at,creator_user_id FROM case_drafts WHERE institution_id IS NULL ORDER BY id LIMIT 500")]
   exams=[dict(r) for r in c.execute("SELECT id,code,title,case_id,created_at,status,creator_user_id FROM exams WHERE institution_id IS NULL ORDER BY id LIMIT 500")]
+  approved_cases=[dict(r) for r in c.execute("SELECT case_id,version,approved_by,approved_at FROM approved_cases WHERE institution_id IS NULL ORDER BY approved_at DESC LIMIT 500")]
   return {'policy':'No ownership is inferred or assigned automatically. Each assignment requires a platform administrator, documented evidence, and an audit event. Lists are capped at 500 records per resource type.',
-   'sessions':sessions,'case_drafts':drafts,'exams':exams,
+   'sessions':sessions,'case_drafts':drafts,'exams':exams,'approved_cases':approved_cases,
    'counts':{'sessions':c.execute('SELECT COUNT(*) n FROM sessions WHERE institution_id IS NULL').fetchone()['n'],
     'case_drafts':c.execute('SELECT COUNT(*) n FROM case_drafts WHERE institution_id IS NULL').fetchone()['n'],
-    'exams':c.execute('SELECT COUNT(*) n FROM exams WHERE institution_id IS NULL').fetchone()['n']}}
+    'exams':c.execute('SELECT COUNT(*) n FROM exams WHERE institution_id IS NULL').fetchone()['n'],
+    'approved_cases':c.execute('SELECT COUNT(*) n FROM approved_cases WHERE institution_id IS NULL').fetchone()['n']}}
  finally: c.close()
 
 @app.post('/api/platform-admin/ownership-reconciliation')
@@ -792,21 +794,27 @@ def reconcile_historical_ownership(body: OwnershipReconciliationRequest, request
   resource=body.resource_type
   if resource=='session':
    row=c.execute("SELECT institution_id,owner_user_id,exam_id FROM sessions WHERE id=?",(body.resource_id,)).fetchone()
-   table='sessions'; key='id'
   elif resource=='case_draft':
    row=c.execute("SELECT institution_id,creator_user_id,NULL AS exam_id FROM case_drafts WHERE draft_id=?",(body.resource_id,)).fetchone()
-   table='case_drafts'; key='draft_id'
-  else:
+  elif resource=='exam':
    row=c.execute("SELECT institution_id,creator_user_id,NULL AS exam_id FROM exams WHERE id=?",(body.resource_id,)).fetchone()
-   table='exams'; key='id'
+  else:
+   row=c.execute("SELECT institution_id,case_id,NULL AS exam_id FROM approved_cases WHERE case_id=?",(body.resource_id,)).fetchone()
   if not row: raise HTTPException(404,'Historical record not found.')
   if row['institution_id'] is not None:
    raise HTTPException(409,'Record already has an institution assignment; this workflow does not overwrite existing ownership.')
-  owner=row['owner_user_id'] if resource=='session' else row['creator_user_id']
-  if owner:
-   user=c.execute("SELECT institution_id FROM users WHERE user_id=?",(owner,)).fetchone()
-   if not user or user['institution_id']!=body.institution_id:
-    raise HTTPException(422,'Recorded account ownership conflicts with the requested institution. Resolve the conflict manually before assignment.')
+  if resource=='approved_case':
+   owners=c.execute("SELECT DISTINCT approved_by_user_id FROM case_versions WHERE case_id=? AND approved_by_user_id IS NOT NULL",(body.resource_id,)).fetchall()
+   for owner_row in owners:
+    user=c.execute("SELECT institution_id FROM users WHERE user_id=?",(owner_row['approved_by_user_id'],)).fetchone()
+    if not user or user['institution_id']!=body.institution_id:
+     raise HTTPException(422,'Recorded case approver ownership conflicts with the requested institution. Resolve the conflict manually before assignment.')
+  else:
+   owner=row['owner_user_id'] if resource=='session' else row['creator_user_id']
+   if owner:
+    user=c.execute("SELECT institution_id FROM users WHERE user_id=?",(owner,)).fetchone()
+    if not user or user['institution_id']!=body.institution_id:
+     raise HTTPException(422,'Recorded account ownership conflicts with the requested institution. Resolve the conflict manually before assignment.')
   exam_id=row['exam_id'] if resource=='session' else None
   if exam_id:
    ex=c.execute("SELECT institution_id FROM exams WHERE id=?",(exam_id,)).fetchone()
@@ -818,8 +826,12 @@ def reconcile_historical_ownership(body: OwnershipReconciliationRequest, request
    c.execute("UPDATE sessions SET institution_id=? WHERE id=? AND institution_id IS NULL",(body.institution_id,body.resource_id))
   elif resource=='case_draft':
    c.execute("UPDATE case_drafts SET institution_id=? WHERE draft_id=? AND institution_id IS NULL",(body.institution_id,body.resource_id))
-  else:
+  elif resource=='exam':
    c.execute("UPDATE exams SET institution_id=? WHERE id=? AND institution_id IS NULL",(body.institution_id,body.resource_id))
+  else:
+   c.execute("UPDATE approved_cases SET institution_id=? WHERE case_id=? AND institution_id IS NULL",(body.institution_id,body.resource_id))
+   if c.execute('SELECT changes()').fetchone()[0]==1:
+    c.execute("UPDATE case_versions SET institution_id=? WHERE case_id=? AND institution_id IS NULL",(body.institution_id,body.resource_id))
   if c.execute('SELECT changes()').fetchone()[0]!=1:
    raise HTTPException(409,'Record changed concurrently; refresh the reconciliation queue.')
   from identity import write_audit_event
