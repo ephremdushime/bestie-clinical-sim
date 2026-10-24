@@ -235,3 +235,23 @@ def test_new_case_draft_is_bound_to_authenticated_creator_and_institution(tmp_pa
             (draft_id,),
         ).fetchone()
     assert row == ("inst-a", actor_id)
+
+
+def test_orphaned_generated_case_history_fails_closed(tmp_path, monkeypatch):
+    db_path = setup(tmp_path, monkeypatch)
+    orphan_id = "generated-without-owner"
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """INSERT INTO case_versions(case_id,version,payload,approved_at,change_note,
+               content_hash,institution_id) VALUES(?,?,?,?,?,?,?)""",
+            (orphan_id, "1.0.0", json.dumps({"id": orphan_id, "version": "1.0.0"}),
+             "2026-10-24T00:00:00+00:00", "Orphaned legacy snapshot",
+             "not-a-valid-hash", None),
+        )
+
+    with TestClient(main.app) as client:
+        educator_a = sign_in(client, "educator-a@example.org", "educator-password-a-long")
+        response = client.get(
+            f"/api/educator/cases/{orphan_id}/versions", headers=educator_a
+        )
+        assert response.status_code == 403, response.text
