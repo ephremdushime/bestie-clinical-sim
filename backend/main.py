@@ -33,7 +33,7 @@ def llm_configured() -> bool:
 app=FastAPI(title='Bestie Clinical Sim API',version='1.3.0')
 app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv('CORS_ORIGINS','http://localhost:5173,http://127.0.0.1:5173').split(',') if x.strip()],allow_credentials=False,allow_methods=['GET','POST','OPTIONS'],allow_headers=['*','X-Pilot-Token','X-Educator-Token'])
 
-# Identity endpoints are additive; legacy route authorization is migrated separately.
+# Provisioned identity sessions guard protected production routes; development retains legacy demo compatibility.
 from auth_routes import router as auth_router
 app.include_router(auth_router)
 
@@ -289,10 +289,10 @@ def check_session_access(request:Request, session_row):
 class StartSession(BaseModel): learner: str=Field(default='Student',min_length=1,max_length=80); case_id:str; mode:str='practice'; exam_code:str|None=None
 class Message(BaseModel): message:str=Field(min_length=1,max_length=3000)
 class Investigation(BaseModel): test_id:str; indication:str=Field(min_length=3,max_length=800)
-class Finish(BaseModel): differential:list[str]=[]; final_diagnosis:str=''; management:list[str]=[]; reflection:str=''
+class Finish(BaseModel): differential:list[str]=Field(default_factory=list); final_diagnosis:str=''; management:list[str]=Field(default_factory=list); reflection:str=''
 class ExamCreate(BaseModel): title:str=Field(min_length=3,max_length=120); case_id:str; duration:int=Field(default=20,ge=5,le=180); pass_mark:int=Field(default=70,ge=1,le=100); creator:str=Field(default='Educator',max_length=80); institution_id:str|None=Field(default=None,min_length=1,max_length=160)
 class SubmitExam(BaseModel): learner:str; session_id:int; report:dict
-class CaseDraftRequest(BaseModel): topic:str=Field(min_length=3,max_length=180); specialty:str=Field(default='General medicine',max_length=100); learner_level:str=Field(default='Clinical-year student',max_length=100); learning_objectives:list[str]=[]; source_notes:str=Field(default='',max_length=12000); source_references:list[str]=[]; auto_retrieve:bool=True
+class CaseDraftRequest(BaseModel): topic:str=Field(min_length=3,max_length=180); specialty:str=Field(default='General medicine',max_length=100); learner_level:str=Field(default='Clinical-year student',max_length=100); learning_objectives:list[str]=Field(default_factory=list); source_notes:str=Field(default='',max_length=12000); source_references:list[str]=Field(default_factory=list); auto_retrieve:bool=True
 
 @app.get('/api/health')
 def health(): return {'status':'ok','version':'1.3.0','cases':len(CASES),'llm_configured':llm_configured(),'database':'sqlite','environment':APP_ENV,'xr':'WebXR compatibility is checked in browser; device support varies'}
