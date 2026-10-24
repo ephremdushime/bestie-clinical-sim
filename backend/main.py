@@ -24,14 +24,14 @@ def load_project_env(path: Path) -> None:
   pass
 load_project_env(ROOT.parent/".env")
 DB_PATH=Path(os.getenv("CLINICAL_SIM_DB",str(ROOT/"clinical_sim.db")))
-APP_ENV=os.getenv('APP_ENV','development').lower()
+APP_ENV=os.getenv('APP_ENV','development').strip().lower()
 PILOT_TOKEN=os.getenv('PILOT_ACCESS_TOKEN',''); EDUCATOR_TOKEN=os.getenv('EDUCATOR_ACCESS_TOKEN','')
 LLM_BASE=os.getenv('LLM_BASE_URL','').rstrip('/'); LLM_KEY=os.getenv('LLM_API_KEY',''); LLM_MODEL=os.getenv('LLM_MODEL','')
 def llm_configured() -> bool:
  values=(LLM_BASE,LLM_KEY,LLM_MODEL)
  return all(v.strip() and 'replace_with' not in v.lower() and 'your_model_name' not in v.lower() for v in values)
 app=FastAPI(title='Bestie Clinical Sim API',version='1.3.0')
-app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','http://localhost:5173,http://127.0.0.1:5173').split(','),allow_credentials=False,allow_methods=['GET','POST','OPTIONS'],allow_headers=['*','X-Pilot-Token','X-Educator-Token'])
+app.add_middleware(CORSMiddleware,allow_origins=[x.strip() for x in os.getenv('CORS_ORIGINS','http://localhost:5173,http://127.0.0.1:5173').split(',') if x.strip()],allow_credentials=False,allow_methods=['GET','POST','OPTIONS'],allow_headers=['*','X-Pilot-Token','X-Educator-Token'])
 
 # Identity endpoints are additive; legacy route authorization is migrated separately.
 from auth_routes import router as auth_router
