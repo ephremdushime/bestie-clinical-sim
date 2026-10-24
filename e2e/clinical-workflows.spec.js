@@ -1,7 +1,20 @@
+async function signIn(page, email, password, displayName) {
+  await page.getByPlaceholder('name@university.edu').fill(email);
+  await page.getByPlaceholder('Account password').fill(password);
+  await page.getByRole('button', { name: /Sign in with account/ }).click();
+  await expect(page.getByText(`Signed in: ${displayName}`)).toBeVisible();
+}
+
+async function signOut(page) {
+  await page.getByRole('button', { name: 'Sign out' }).click();
+  await expect(page.getByPlaceholder('name@university.edu')).toBeVisible();
+}
+
 import { test, expect } from '@playwright/test';
 
 test('learner completes a practice encounter from history to feedback', async ({ page }) => {
   await page.goto('/');
+  await signIn(page, 'learner@e2e.example', 'e2e-learner-password-123', 'Learner E2E');
   await expect(page).toHaveTitle(/Bestie Clinical Sim/);
   await expect(page.getByRole('heading', { name: /Practise the decisions/ })).toBeVisible();
 
@@ -34,6 +47,7 @@ test('learner completes a practice encounter from history to feedback', async ({
 
 test('educator creates an exam and learner submits without seeing the answer key', async ({ page }) => {
   await page.goto('/');
+  await signIn(page, 'educator@e2e.example', 'e2e-educator-password-123', 'Educator E2E');
   await page.getByRole('button', { name: /Educator console/ }).click();
   await expect(page.getByRole('heading', { name: 'Create an examination' })).toBeVisible();
   await page.getByRole('button', { name: /Create exam and generate code/ }).click();
@@ -43,6 +57,8 @@ test('educator creates an exam and learner submits without seeing the answer key
   const examCode = (await code.textContent()).trim();
   expect(examCode.length).toBeGreaterThanOrEqual(7);
 
+  await signOut(page);
+  await signIn(page, 'learner@e2e.example', 'e2e-learner-password-123', 'Learner E2E');
   await page.getByRole('button', { name: /Join examination/ }).click();
   await page.getByPlaceholder(/e.g. 7K2P9Q/).fill(examCode);
   await page.getByRole('button', { name: /Begin examination/ }).click();
@@ -56,6 +72,8 @@ test('educator creates an exam and learner submits without seeing the answer key
   await expect(page.locator('body')).not.toContainText('FORMATIVE DEMONSTRATION SCORE');
 
   // The educator, not the learner, controls when the detailed result becomes visible.
+  await signOut(page);
+  await signIn(page, 'educator@e2e.example', 'e2e-educator-password-123', 'Educator E2E');
   await page.getByRole('button', { name: /Educator console/ }).click();
   await expect(page.getByRole('heading', { name: 'Educator console' })).toBeVisible();
   await page.getByRole('button', { name: /Release results/ }).click();
