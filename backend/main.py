@@ -53,6 +53,10 @@ def validate_production_configuration() -> None:
 @app.on_event('startup')
 def _production_startup_guard():
  validate_production_configuration()
+ # The runtime database may be configured independently in tests and deployments.
+ # Ensure every known case has a durable initial snapshot in that active database.
+ init_db()
+ ensure_version_snapshots()
 
 CASES={
 'malaria-001':{'id':'malaria-001','version':'1.0.0','title':'Fever and chills','specialty':'Internal medicine / Infectious diseases','level':'Clinical-year student','age':24,'sex':'adult woman','appearance':'Adult woman, tired and febrile; no obvious respiratory distress.','opening':'I have had fever and chills since yesterday. My head hurts and my body feels weak.','diagnosis':'Uncomplicated malaria (fictional teaching case; positive rapid diagnostic test)','vitals':{'Temperature':'38.9 °C','Pulse':'108/min','Respiratory rate':'20/min','Blood pressure':'108/68 mmHg','SpO₂':'98% room air'},'facts':{'onset':'The fever started yesterday evening and comes with chills.','symptoms':'I have headache, muscle aches, poor appetite and nausea. I have not had a cough.','history':'I have not taken any medicines today. I do not know of any drug allergies.','risk':'I live in an area where malaria occurs. I have not used a bed net consistently.','danger':'I have not fainted, had a seizure, become confused or noticed yellow eyes. I can drink fluids.','exam':'I look tired and febrile. I am alert. No neck stiffness or respiratory distress is present.'},'investigations':{'malaria-rdt':{'name':'Malaria rapid diagnostic test','result':'Positive for malaria antigen.','interpretation':'Supports malaria in this clinical context; correlate with severity and local guidance.','appropriate':True,'why':'Fever in a malaria-endemic setting; test is indicated.'},'malaria-microscopy':{'name':'Thick/thin blood film for malaria','result':'Parasites detected; low-level parasitaemia reported in this fictional case.','interpretation':'Confirms parasitaemia; microscopy may help quantify and identify species where available.','appropriate':True,'why':'Confirm diagnosis and characterize parasitaemia where indicated.'},'fbc':{'name':'Full blood count (FBC)','result':'Hb 11.2 g/dL; WBC 5.4 ×10⁹/L; platelets 128 ×10⁹/L.','interpretation':'Mild anaemia and thrombocytopenia can occur; results do not independently establish malaria.','appropriate':True,'why':'Assess anaemia, platelet count and alternative causes/severity.'},'glucose':{'name':'Blood glucose','result':'5.1 mmol/L.','interpretation':'Within usual adult reference range; hypoglycaemia is not demonstrated in this sample.','appropriate':True,'why':'Check metabolic status, especially if severe illness or altered consciousness.'},'urinalysis':{'name':'Urinalysis and microscopy','result':'No significant pyuria or nitrites in this fictional sample.','interpretation':'Does not support a urinary source in this case.','appropriate':False,'why':'No urinary symptoms or findings currently indicate this test.'},'ct-head':{'name':'CT head','result':'Not performed; no current focal neurological signs or other indication in this scenario.','interpretation':'Not indicated as a routine test in this uncomplicated presentation.','appropriate':False,'why':'No neurological red flags or trauma to justify CT at this stage.'}},'expected_differentials':['malaria','viral illness','dengue','typhoid'],'expected_actions':['assess severity','malaria rapid diagnostic test or microscopy','check glucose when indicated','appropriate antimalarial treatment per current national guideline','safety-net and follow-up'],'critical_errors':['ignoring altered consciousness or seizures if present','prescribing without allergy and pregnancy considerations where relevant','failing to escalate if severe malaria features develop']},
@@ -70,7 +74,7 @@ def conn():
 
 def init_db():
  c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT);
- CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT);
+ CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT, institution_id TEXT, creator_user_id TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT);
  CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);
@@ -90,6 +94,8 @@ def init_db():
  exam_cols={row['name'] for row in c.execute('PRAGMA table_info(exams)')}
  if 'case_version' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN case_version TEXT')
  if 'rubric_version' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN rubric_version TEXT')
+ if 'institution_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN institution_id TEXT')
+ if 'creator_user_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN creator_user_id TEXT')
  c.commit(); c.close()
 init_db()
 try:
@@ -115,10 +121,15 @@ def ensure_version_snapshots():
 ensure_version_snapshots()
 def case_for_session(db,session_row):
  version=session_row['case_version'] if 'case_version' in session_row.keys() else None; case_id=session_row['case_id']
- if version:
-  row=db.execute('SELECT payload FROM case_versions WHERE case_id=? AND version=?',(case_id,version)).fetchone()
-  if row: return json.loads(row['payload'])
- return CASES[case_id]
+ if not version:
+  raise HTTPException(409,'This session has no pinned case version; historical case state cannot be reconstructed safely.')
+ row=db.execute('SELECT payload FROM case_versions WHERE case_id=? AND version=?',(case_id,version)).fetchone()
+ if not row:
+  raise HTTPException(409,'The pinned case version is unavailable; refusing to substitute the current case.')
+ try:
+  return json.loads(row['payload'])
+ except (TypeError,ValueError,json.JSONDecodeError):
+  raise HTTPException(409,'The pinned case version is corrupt; this session is blocked for integrity review.')
 def next_case_version(db,case_id):
  rows=db.execute('SELECT version FROM case_versions WHERE case_id=?',(case_id,)).fetchall(); numeric=[]
  for row in rows:
@@ -217,6 +228,10 @@ def create_session(body:StartSession,request:Request):
   c.execute('DELETE FROM exam_join_attempts WHERE attempted_at<?',((datetime.now(timezone.utc)-timedelta(days=2)).isoformat(timespec='seconds'),))
   c.commit(); c.close()
   if not ex: raise HTTPException(404,'Exam code is invalid or closed.')
+  if APP_ENV=='production':
+   if not identity or identity['role']!='learner': raise HTTPException(403,'A provisioned learner account is required to join an examination.')
+   if not ex['institution_id'] or not identity.get('institution_id') or ex['institution_id']!=identity['institution_id']:
+    raise HTTPException(403,'This examination is not assigned to your institution.')
   case_id=ex['case_id']; exam_id=ex['id']
  if case_id not in CASES: raise HTTPException(404,'Case not found.')
  session_token=secrets.token_urlsafe(32)
@@ -226,9 +241,24 @@ def create_session(body:StartSession,request:Request):
  owner_user_id=identity['user_id'] if identity and identity['role']=='learner' else None
  case_version=(ex['case_version'] if body.mode=='exam' and ex['case_version'] else CASES[case_id].get('version','1.0.0'))
  rubric_version=(ex['rubric_version'] if body.mode=='exam' and ex['rubric_version'] else RUBRIC_VERSION)
- c=conn(); cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id,case_version,rubric_version) VALUES(?,?,?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id,case_version,rubric_version)); sid=cur.lastrowid
- pinned_case=case_for_session(c,{'case_id':case_id,'case_version':case_version})
- opening=pinned_case['opening']; save_event(c,sid,{'type':'session_started','mode':body.mode,'case_id':case_id,'case_version':case_version,'rubric_version':rubric_version}); c.commit(); c.close()
+ c=conn()
+ try:
+  # Serialize starts so two concurrent requests cannot create duplicate attempts.
+  c.execute('BEGIN IMMEDIATE')
+  if APP_ENV=='production' and body.mode=='exam' and owner_user_id:
+   active_exam=c.execute('SELECT status,institution_id FROM exams WHERE id=?',(exam_id,)).fetchone()
+   if not active_exam or active_exam['status']!='open': raise HTTPException(409,'This examination is no longer open for new attempts.')
+   if not active_exam['institution_id'] or active_exam['institution_id']!=identity.get('institution_id'):
+    raise HTTPException(403,'This examination is not assigned to your institution.')
+   prior=c.execute('SELECT id FROM sessions WHERE exam_id=? AND owner_user_id=? AND mode="exam" LIMIT 1',(exam_id,owner_user_id)).fetchone()
+   if prior: raise HTTPException(409,'You have already started an attempt for this examination.')
+  cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id,case_version,rubric_version) VALUES(?,?,?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id,case_version,rubric_version)); sid=cur.lastrowid
+  pinned_case=case_for_session(c,{'case_id':case_id,'case_version':case_version})
+  opening=pinned_case['opening']; save_event(c,sid,{'type':'session_started','mode':body.mode,'case_id':case_id,'case_version':case_version,'rubric_version':rubric_version}); c.commit()
+ except HTTPException:
+  c.rollback(); raise
+ finally:
+  c.close()
  # Never expose the hidden case identifier/title to a controlled-exam participant.
  return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':pinned_case['age'],'sex':pinned_case['sex'],'appearance':pinned_case['appearance'],'vitals':pinned_case['vitals'] if body.mode=='practice' else None}}
 
@@ -254,7 +284,7 @@ def session_expired(c, s):
  if not ex: return False
  try: elapsed=(datetime.now(timezone.utc)-datetime.fromisoformat(s['created_at'])).total_seconds()/60
  except Exception: return False
- return elapsed > int(ex['duration'])
+ return elapsed >= int(ex['duration'])
 
 @app.post('/api/sessions/{sid}/chat')
 async def chat(sid:int,body:Message,request:Request):
@@ -435,9 +465,18 @@ async def draft_case(body:CaseDraftRequest,request:Request):
 def create_exam(body:ExamCreate,request:Request):
  check_access(request,True)
  if body.case_id not in CASES: raise HTTPException(404,'Case not found.')
- code=secrets.token_urlsafe(5).replace('-','').replace('_','').upper()[:8]
+ actor=educator_actor(request,body.creator)
+ code=secrets.token_urlsafe(8).replace('-','').replace('_','').upper()[:12]
  case_version=CASES[body.case_id].get('version','1.0.0')
- c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version) VALUES(?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),body.creator,case_version,RUBRIC_VERSION)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
+ institution_id=actor.get('institution_id')
+ creator_user_id=actor.get('user_id')
+ c=conn()
+ try:
+  c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),actor['display_name'],case_version,RUBRIC_VERSION,institution_id,creator_user_id))
+  c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone()
+  return dict(ex)
+ finally:
+  c.close()
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
  check_access(request,True); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']; c.close()
@@ -447,7 +486,15 @@ def dashboard(request:Request):
  return {'total_sessions':total,'completed_sessions':done,'sessions':sessions,'exams':exams}
 @app.post('/api/educator/exams/{exam_id}/close')
 def close_exam(exam_id:int,request:Request):
- check_access(request,True); c=conn(); c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); c.close(); return {'closed':True}
+ check_access(request,True); actor=educator_actor(request); c=conn()
+ try:
+  exam=c.execute('SELECT institution_id,creator_user_id FROM exams WHERE id=?',(exam_id,)).fetchone()
+  if not exam: raise HTTPException(404,'Examination not found.')
+  if APP_ENV=='production' and actor['role']!='platform_admin' and (not exam['institution_id'] or exam['institution_id']!=actor.get('institution_id')):
+   raise HTTPException(403,'This examination belongs to another institution or has no trusted institution assignment.')
+  c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); return {'closed':True}
+ finally:
+  c.close()
 
 # Collaboration rooms require an individually authenticated, one-time ticket.
 # The long-lived bearer token is never sent in a WebSocket URL.
@@ -549,6 +596,8 @@ async def room(ws:WebSocket,room:str):
    message_text=data.get('text','')
    if not isinstance(message_text,str) or not message_text.strip():
     await ws.send_json({'type':'error','message':'Message text is required.'}); continue
+   if len(message_text)>1200:
+    await ws.send_json({'type':'error','message':'Message exceeds the 1200-character limit.'}); continue
    msg={'type':'message','user_id':principal['user_id'],'name':'Participant',
         'role':principal['role'],'text':message_text[:1200],'created_at':now()}
    for peer in list(rooms.get(room,[])):
