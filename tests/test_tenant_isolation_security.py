@@ -286,6 +286,8 @@ def test_ownership_reconciliation_rejects_non_platform_admin(tmp_path, monkeypat
 def test_production_case_review_and_publication_require_separate_people(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
     with main.conn() as db:
+        db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+                   ("institution-a", "Institution A", main.now()))
         db.execute(
             "INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?)",
             ("draft-separation", "Test topic", "General medicine", "draft", '{"case":{}}',
@@ -530,6 +532,10 @@ def test_production_publication_fails_closed_when_creator_attribution_is_missing
 
 def test_production_case_publication_stays_with_originating_institution(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
+    with main.conn() as db:
+        db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+                   ("institution-a", "Institution A", main.now()))
+        db.commit()
     case_payload = {
         "id": "generated-institution-a-private", "version": "0.1.0-draft",
         "title": "Institution A teaching case", "specialty": "Internal medicine",
