@@ -16,7 +16,7 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: 'python -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000',
+      command: 'python tests/seed_e2e_users.py && python -m uvicorn main:app --app-dir backend --host 127.0.0.1 --port 8000',
       url: 'http://127.0.0.1:8000/api/health',
       reuseExistingServer: false,
       timeout: 120000,
