@@ -529,6 +529,19 @@ def create_websocket_ticket(body:WebSocketTicketRequest,request:Request):
  finally: c.close()
  return {'ticket':token,'expires_in':60,'room':body.room}
 
+def _websocket_identity_is_active(user:dict) -> bool:
+ # Re-check account and institution status during long-lived connections so
+ # disabling a user or suspending a tenant revokes their next chat action.
+ c=conn()
+ try:
+  row=c.execute('''SELECT u.status,u.role,u.institution_id,i.status AS institution_status
+                   FROM users u LEFT JOIN institutions i ON i.institution_id=u.institution_id
+                   WHERE u.user_id=?''',(user['user_id'],)).fetchone()
+  if not row or row['status']!='active' or row['role']!=user['role'] or row['institution_id']!=user.get('institution_id'):
+   return False
+  return not row['institution_id'] or row['institution_status']=='active'
+ finally: c.close()
+
 def _consume_websocket_ticket(token:str, room_name:str):
  if not token or len(token)>512: return None
  digest=__import__('hashlib').sha256(token.encode('utf-8')).hexdigest()
@@ -572,6 +585,8 @@ async def room(ws:WebSocket,room:str):
   await ws.send_json({'type':'history','messages':[]})
   while True:
    data=await ws.receive_json()
+   if not _websocket_identity_is_active(user) or not _authorize_room(user,room):
+    await ws.close(code=1008); break
    text_value=data.get('text','') if isinstance(data,dict) else ''
    if not isinstance(text_value,str) or not text_value.strip():
     await ws.send_json({'type':'error','detail':'Message text is required.'}); continue
