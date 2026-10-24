@@ -84,6 +84,25 @@ def test_educator_routes_require_provisioned_educator_identity(tmp_path, monkeyp
         assert review.json()["review"]["reviewer_user_id"] == reviewer_id
 
 
+
+def test_production_protected_routes_reject_shared_pilot_and_educator_tokens(tmp_path, monkeypatch):
+    _provision(tmp_path / "shared-token.db", monkeypatch)
+    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setattr(main, "PILOT_TOKEN", "p" * 40)
+    monkeypatch.setattr(main, "EDUCATOR_TOKEN", "e" * 40)
+    monkeypatch.setenv("CORS_ORIGINS", "https://sim.example.edu")
+    main.init_db()
+
+    with TestClient(main.app) as client:
+        pilot = client.post("/api/sessions",
+            headers={"X-Pilot-Token": "p" * 40},
+            json={"learner": "Unverified", "case_id": "malaria-001", "mode": "practice"})
+        assert pilot.status_code == 401, pilot.text
+        educator = client.get("/api/educator/dashboard",
+            headers={"X-Educator-Token": "e" * 40})
+        assert educator.status_code == 401, educator.text
+
+
 def test_authenticated_learner_session_is_bound_to_account(tmp_path, monkeypatch):
     learner_id, _ = _provision(tmp_path / "owner.db", monkeypatch)
     # The route test uses an isolated database; initialize the simulation schema too.
