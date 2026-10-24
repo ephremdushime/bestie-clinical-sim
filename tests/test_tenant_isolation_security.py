@@ -32,6 +32,18 @@ def identity(user_id, institution_id, role="educator"):
     }
 
 
+
+def test_database_bootstrap_initializes_identity_and_institution_schema(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    with main.conn() as db:
+        tables = {row["name"] for row in db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )}
+        assert {"institutions", "users", "auth_sessions", "audit_events"} <= tables
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(institutions)")}
+        assert {"institution_id", "name", "status", "created_at"} <= columns
+
+
 def test_educator_dashboard_is_limited_to_own_institution(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
     with main.conn() as db:
