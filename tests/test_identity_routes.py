@@ -86,6 +86,29 @@ def test_educator_routes_require_provisioned_educator_identity(tmp_path, monkeyp
 
 
 
+
+def test_login_throttle_does_not_lock_out_user_with_correct_password(tmp_path, monkeypatch):
+    _provision(tmp_path / "login-throttle.db", monkeypatch)
+    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setenv("CORS_ORIGINS", "https://sim.example.edu")
+    main.init_db()
+
+    with TestClient(main.app) as client:
+        headers = {"X-Real-IP": "198.51.100.77"}
+        for attempt in range(10):
+            failed = client.post("/api/auth/login", headers=headers, json={
+                "email": "learner@a.example", "password": f"incorrect-password-{attempt}"})
+            assert failed.status_code == 401, failed.text
+        throttled = client.post("/api/auth/login", headers=headers, json={
+            "email": "learner@a.example", "password": "incorrect-password-final"})
+        assert throttled.status_code == 429, throttled.text
+
+        # A valid credential remains usable even after the per-account failed-attempt threshold.
+        valid = client.post("/api/auth/login", headers=headers, json={
+            "email": "learner@a.example", "password": "learner-password-long"})
+        assert valid.status_code == 200, valid.text
+
+
 def test_password_change_requires_current_password_and_revokes_existing_sessions(tmp_path, monkeypatch):
     _provision(tmp_path / "password-change.db", monkeypatch)
     monkeypatch.setattr(main, "APP_ENV", "production")
