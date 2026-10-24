@@ -84,3 +84,20 @@ jobs:
         env:
           CI: "true"
         run: npx playwright test --config=playwright.backend.config.js
+
+  container-validation:
+    name: Container and deployment configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Validate Docker Compose configuration
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+      - name: Build backend container
+        run: docker build --file Dockerfile.backend --tag bestie-clinical-sim-backend:ci .
+      - name: Build frontend container
+        run: docker build --file Dockerfile.frontend --tag bestie-clinical-sim-frontend:ci .
+      - name: Validate Nginx configuration
+        run: docker run --rm --add-host api:127.0.0.1 --entrypoint nginx bestie-clinical-sim-frontend:ci -t
