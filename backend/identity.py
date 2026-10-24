@@ -124,6 +124,9 @@ def verify_password(db: sqlite3.Connection, email: str, password: str) -> sqlite
         # Spend a hash operation for unknown/disabled accounts to reduce timing leakage.
         _password_record(password if len(password) >= 12 else "invalid-password-placeholder", b"\0" * 16)
         return None
+    if row["role"] in {"learner", "educator", "institution_admin"} and not row["institution_id"]:
+        _password_record(password if len(password) >= 12 else "invalid-password-placeholder", b"\0" * 16)
+        return None
     if row["institution_id"]:
         institution = db.execute(
             "SELECT status FROM institutions WHERE institution_id=?",
@@ -171,6 +174,8 @@ def resolve_session(db: sqlite3.Connection, token: str) -> sqlite3.Row | None:
            WHERE s.token_hash=?""", (digest,)
     ).fetchone()
     if not row or row["status"] != "active" or row["revoked_at"]:
+        return None
+    if row["role"] in {"learner", "educator", "institution_admin"} and not row["institution_id"]:
         return None
     if row["institution_id"] and row["institution_status"] != "active":
         return None
