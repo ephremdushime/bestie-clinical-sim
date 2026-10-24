@@ -570,6 +570,9 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  check_access(request,True); actor=educator_actor(request); c=conn()
  if APP_ENV=='production' and actor['role']!='platform_admin' and not actor.get('institution_id'):
   c.close(); raise HTTPException(403,'An institution assignment is required.')
+ # Serialize version selection and publication so concurrent approvals cannot
+ # publish stale draft state or race the immutable version primary key.
+ c.execute('BEGIN IMMEDIATE')
  row=c.execute('SELECT payload,institution_id,creator_user_id FROM case_drafts WHERE draft_id=?',(draft_id,)).fetchone()
  if not row: c.close(); raise HTTPException(404,'Draft not found.')
  if APP_ENV=='production' and actor['role']!='platform_admin' and row['institution_id']!=actor.get('institution_id'):
