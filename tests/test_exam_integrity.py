@@ -111,6 +111,23 @@ def test_exam_submission_hides_case_identifier_and_scores_and_is_single_submit(t
         assert stored["case_version"] == exam["case_version"]
         assert stored["rubric_version"] == exam["rubric_version"]
 
+        unreleased = client.get(f"/api/sessions/{sid}/result", headers=learner)
+        assert unreleased.status_code == 403, unreleased.text
+        release = client.post(
+            f"/api/educator/sessions/{sid}/release-result", headers=educator, json={}
+        )
+        assert release.status_code == 200, release.text
+        assert release.json()["released"] is True
+        released = client.get(f"/api/sessions/{sid}/result", headers=learner)
+        assert released.status_code == 200, released.text
+        assert released.json()["result_released"] is True
+        assert "score" in released.json()["report"]
+        again = client.post(
+            f"/api/educator/sessions/{sid}/release-result", headers=educator, json={}
+        )
+        assert again.status_code == 200, again.text
+        assert again.json()["already_released"] is True
+
 
 def test_server_enforces_exam_deadline_for_actions_and_records_late_submission(tmp_path, monkeypatch):
     db_path = setup(tmp_path, monkeypatch)
