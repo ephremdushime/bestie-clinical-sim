@@ -55,17 +55,33 @@ def test_educator_routes_require_provisioned_educator_identity(tmp_path, monkeyp
                                headers={"Authorization": f"Bearer {educator_token}"})
         assert dashboard.status_code == 200, dashboard.text
 
-        # A request-body reviewer name must never override the verified account identity.
+        # A request-body reviewer name must never override verified identity,
+        # and production review must be performed by someone other than the creator.
         draft = client.post("/api/educator/case-draft", headers={
             "Authorization": f"Bearer {educator_token}"}, json={
-                "topic": "Test topic", "auto_retrieve": False})
+            "topic": "Test topic", "auto_retrieve": False})
         assert draft.status_code == 200, draft.text
-        review = client.post(f"/api/educator/case-drafts/{draft.json()['draft_id']}/review",
+        draft_id = draft.json()["draft_id"]
+        self_review = client.post(f"/api/educator/case-drafts/{draft_id}/review",
             headers={"Authorization": f"Bearer {educator_token}"}, json={
-                "reviewer": "Impersonated Platform Admin", "review_notes": "Reviewed for workflow testing"})
+                "reviewer": "Impersonated Platform Admin", "review_notes": "Self-review should be denied"})
+        assert self_review.status_code == 403, self_review.text
+
+        with main.conn() as db:
+            reviewer_id = create_user(db, email="reviewer@a.example",
+                display_name="Independent Reviewer", password="reviewer-password-long",
+                role="educator", institution_id="inst-a")
+            db.commit()
+        reviewer_login = client.post("/api/auth/login", json={
+            "email": "reviewer@a.example", "password": "reviewer-password-long"})
+        assert reviewer_login.status_code == 200, reviewer_login.text
+        reviewer_token = reviewer_login.json()["access_token"]
+        review = client.post(f"/api/educator/case-drafts/{draft_id}/review",
+            headers={"Authorization": f"Bearer {reviewer_token}"}, json={
+                "reviewer": "Impersonated Platform Admin", "review_notes": "Independent review for workflow testing"})
         assert review.status_code == 200, review.text
-        assert review.json()["review"]["reviewer"] == "Educator A"
-        assert review.json()["review"]["reviewer_user_id"] == educator_id
+        assert review.json()["review"]["reviewer"] == "Independent Reviewer"
+        assert review.json()["review"]["reviewer_user_id"] == reviewer_id
 
 
 def test_authenticated_learner_session_is_bound_to_account(tmp_path, monkeypatch):
