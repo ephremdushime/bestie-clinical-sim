@@ -33,6 +33,33 @@ def identity(user_id, institution_id, role="educator"):
 
 
 
+
+def test_institution_scoped_auth_rejects_missing_or_suspended_tenant(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    from identity import create_user, issue_session, resolve_session, verify_password
+    with main.conn() as db:
+        db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
+                   ("institution-auth", "Auth Institution", main.now()))
+        user_id = create_user(
+            db, email="tenant-user@example.test", display_name="Tenant User",
+            password="long-test-password-123", role="educator",
+            institution_id="institution-auth",
+        )
+        db.commit()
+        assert verify_password(db, "tenant-user@example.test", "long-test-password-123") is not None
+        token = issue_session(db, user_id)
+        db.execute("UPDATE institutions SET status='suspended' WHERE institution_id='institution-auth'")
+        db.commit()
+        assert verify_password(db, "tenant-user@example.test", "long-test-password-123") is None
+        assert resolve_session(db, token) is None
+
+        db.execute("UPDATE institutions SET status='active' WHERE institution_id='institution-auth'")
+        db.execute("UPDATE users SET institution_id=NULL WHERE user_id=?", (user_id,))
+        db.commit()
+        assert verify_password(db, "tenant-user@example.test", "long-test-password-123") is None
+        assert resolve_session(db, token) is None
+
+
 def test_database_bootstrap_initializes_identity_and_institution_schema(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
     with main.conn() as db:
