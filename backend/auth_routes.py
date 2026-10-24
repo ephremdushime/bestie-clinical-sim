@@ -80,7 +80,7 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login")
-def login(body: LoginRequest, request: Request):
+def login(body: LoginRequest, request: Request = None):
     """Authenticate a provisioned account with per-account and per-client throttling."""
     from datetime import datetime, timedelta, timezone
 
@@ -90,7 +90,7 @@ def login(body: LoginRequest, request: Request):
     cutoff = (now - timedelta(minutes=15)).isoformat(timespec="seconds")
     # The bundled reverse proxy overwrites X-Real-IP. The API must not be exposed
     # directly to the public network, otherwise this header is not trustworthy.
-    client_key = request.headers.get("X-Real-IP") or (request.client.host if request.client else "unknown")
+    client_key = (request.headers.get("X-Real-IP") or (request.client.host if request.client else "unknown")) if request is not None else "unknown"
     db = _db()
     try:
         client_attempts = db.execute(
