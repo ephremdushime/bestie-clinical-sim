@@ -70,7 +70,7 @@ def conn():
 
 def init_db():
  c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT);
- CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT);
+ CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT, case_version TEXT, rubric_version TEXT, institution_id TEXT, creator_user_id TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT);
  CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);
@@ -86,7 +86,7 @@ def init_db():
  for column in ('case_version','rubric_version','case_snapshot','rubric_snapshot'):
   if column not in cols: c.execute(f'ALTER TABLE sessions ADD COLUMN {column} TEXT')
  exam_cols={row['name'] for row in c.execute('PRAGMA table_info(exams)')}
- for column in ('case_version','rubric_version'):
+ for column in ('case_version','rubric_version','institution_id','creator_user_id'):
   if column not in exam_cols: c.execute(f'ALTER TABLE exams ADD COLUMN {column} TEXT')
  c.commit(); c.close()
 init_db()
@@ -239,7 +239,7 @@ class StartSession(BaseModel): learner: str=Field(default='Student',min_length=1
 class Message(BaseModel): message:str=Field(min_length=1,max_length=3000)
 class Investigation(BaseModel): test_id:str; indication:str=Field(min_length=3,max_length=800)
 class Finish(BaseModel): differential:list[str]=[]; final_diagnosis:str=''; management:list[str]=[]; reflection:str=''
-class ExamCreate(BaseModel): title:str=Field(min_length=3,max_length=120); case_id:str; duration:int=Field(default=20,ge=5,le=180); pass_mark:int=Field(default=70,ge=1,le=100); creator:str=Field(default='Educator',max_length=80)
+class ExamCreate(BaseModel): title:str=Field(min_length=3,max_length=120); case_id:str; duration:int=Field(default=20,ge=5,le=180); pass_mark:int=Field(default=70,ge=1,le=100); creator:str=Field(default='Educator',max_length=80); institution_id:str|None=None
 class SubmitExam(BaseModel): learner:str; session_id:int; report:dict
 class CaseDraftRequest(BaseModel): topic:str=Field(min_length=3,max_length=180); specialty:str=Field(default='General medicine',max_length=100); learner_level:str=Field(default='Clinical-year student',max_length=100); learning_objectives:list[str]=[]; source_notes:str=Field(default='',max_length=12000); source_references:list[str]=[]; auto_retrieve:bool=True
 
@@ -257,10 +257,18 @@ def create_session(body:StartSession,request:Request):
  if body.mode not in ('practice','exam'): raise HTTPException(400,'Mode must be practice or exam.')
  c=conn()
  try:
+  c.execute('BEGIN IMMEDIATE')
   exam=None; exam_id=None; case_id=body.case_id; pinned_case_version=None; pinned_rubric_version=None
   if body.mode=='exam':
+   if APP_ENV=='production' and (not identity or identity.get('role')!='learner'):
+    raise HTTPException(401,'A provisioned learner account is required to start an examination.')
    exam=c.execute('SELECT * FROM exams WHERE code=? AND status="open"',(body.exam_code or '',)).fetchone()
    if not exam: raise HTTPException(404,'Exam code is invalid or closed.')
+   if APP_ENV=='production':
+    if not exam['institution_id'] or identity.get('institution_id') != exam['institution_id']:
+     raise HTTPException(403,'This examination is not assigned to your institution.')
+    prior=c.execute('SELECT id,status FROM sessions WHERE exam_id=? AND owner_user_id=? LIMIT 1',(exam['id'],identity['user_id'])).fetchone()
+    if prior: raise HTTPException(409,'An attempt has already been started for this examination.')
    case_id=exam['case_id']; exam_id=exam['id']
    pinned_case_version=exam['case_version'] if 'case_version' in exam.keys() else None
    pinned_rubric_version=exam['rubric_version'] if 'rubric_version' in exam.keys() else None
@@ -308,7 +316,7 @@ def session_expired(c, s):
  if not ex: return False
  try: elapsed=(datetime.now(timezone.utc)-datetime.fromisoformat(s['created_at'])).total_seconds()/60
  except Exception: return False
- return elapsed > int(ex['duration'])
+ return elapsed >= int(ex['duration'])
 
 @app.post('/api/sessions/{sid}/chat')
 async def chat(sid:int,body:Message,request:Request):
@@ -373,7 +381,7 @@ def finish(sid:int,body:Finish,request:Request):
  # Controlled exams retain the full report for educator review, but the student response
  # must not reveal the hidden diagnosis, score, rubric decisions or pass-threshold result.
  if s['mode']=='exam':
-  return {'status':'submitted_pending_educator_review','mode':'exam','case_id':s['case_id'],'learner':s['learner'],'submitted_at':report['submitted_at'],'time_expired':report['time_expired'],'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
+  return {'status':'submitted_pending_educator_review','mode':'exam','learner':s['learner']},'submitted_at':report['submitted_at'],'time_expired':report['time_expired'],'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
  return report
 class EvidenceSearchRequest(BaseModel):
  query: str = Field(min_length=3,max_length=300)
@@ -515,15 +523,23 @@ def get_case_version_detail(case_id:str,version:str,request:Request):
 def create_exam(body:ExamCreate,request:Request):
  check_access(request,True)
  if body.case_id not in CASES: raise HTTPException(404,'Case not found.')
- code=secrets.token_urlsafe(5).replace('-','').replace('_','').upper()[:8]
+ actor=educator_actor(request,body.creator)
+ institution_id=actor.get('institution_id') or body.institution_id
+ if APP_ENV=='production' and not institution_id: raise HTTPException(422,'An institution must be assigned to every production examination.')
+ if APP_ENV=='production' and actor.get('role')!='platform_admin' and body.institution_id and body.institution_id!=actor.get('institution_id'): raise HTTPException(403,'Educators can only create examinations for their own institution.')
+ code=secrets.token_urlsafe(8).replace('-','').replace('_','').upper()[:10]
  c=conn()
  try:
+  if institution_id:
+   institution=c.execute('SELECT status FROM institutions WHERE institution_id=?',(institution_id,)).fetchone()
+   if not institution or institution['status']!='active': raise HTTPException(422,'The target institution is missing or inactive.')
   case_payload=get_case_snapshot(c,body.case_id)
   case_version=str(case_payload.get('version') or '1.0.0')
   ensure_case_version_record(c,case_payload)
-  rubric_row=c.execute('SELECT rubric_version FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY created_at DESC LIMIT 1',(body.case_id,case_version)).fetchone()
+  rubric_row=c.execute('SELECT rubric_version FROM rubric_versions WHERE case_id=? AND case_version=? ORDER BY rowid DESC LIMIT 1',(body.case_id,case_version)).fetchone()
   rubric_version=rubric_row['rubric_version'] if rubric_row else '1.0.0'
-  c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version) VALUES(?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),body.creator,case_version,rubric_version))
+  creator=actor.get('display_name') or body.creator
+  c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),creator,case_version,rubric_version,institution_id,actor.get('user_id')))
   c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); return dict(ex)
  finally: c.close()
 @app.get('/api/educator/dashboard')
@@ -535,7 +551,13 @@ def dashboard(request:Request):
  return {'total_sessions':total,'completed_sessions':done,'sessions':sessions,'exams':exams}
 @app.post('/api/educator/exams/{exam_id}/close')
 def close_exam(exam_id:int,request:Request):
- check_access(request,True); c=conn(); c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); c.close(); return {'closed':True}
+ check_access(request,True); actor=educator_actor(request); c=conn()
+ try:
+  exam=c.execute('SELECT institution_id FROM exams WHERE id=?',(exam_id,)).fetchone()
+  if not exam: raise HTTPException(404,'Examination not found.')
+  if APP_ENV=='production' and actor.get('role')!='platform_admin' and exam['institution_id']!=actor.get('institution_id'): raise HTTPException(403,'You cannot close an examination owned by another institution.')
+  c.execute('UPDATE exams SET status="closed" WHERE id=?',(exam_id,)); c.commit(); return {'closed':True}
+ finally: c.close()
 
 # Collaboration sockets require a short-lived, single-use ticket bound to a
 # specific owned simulation session. Long-lived bearer tokens are never accepted
