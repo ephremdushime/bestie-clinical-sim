@@ -202,3 +202,27 @@ def test_published_cases_remain_private_to_the_owning_institution(tmp_path, monk
             "title": "Institution B case exam", "case_id": case_id, "duration": 5, "pass_mark": 70
         })
         assert allowed_exam.status_code == 200, allowed_exam.text
+
+
+def test_new_case_draft_is_bound_to_authenticated_creator_and_institution(tmp_path, monkeypatch):
+    db_path = setup(tmp_path, monkeypatch)
+    with TestClient(main.app) as client:
+        educator_a = sign_in(client, "educator-a@example.org", "educator-password-a-long")
+        me = client.get("/api/auth/me", headers=educator_a)
+        assert me.status_code == 200, me.text
+        actor_id = me.json()["user"]["user_id"]
+
+        created = client.post("/api/educator/case-draft", headers=educator_a, json={
+            "topic": "Fictional case for institution A",
+            "specialty": "General medicine",
+            "auto_retrieve": False,
+        })
+        assert created.status_code == 200, created.text
+        draft_id = created.json()["draft_id"]
+
+    with sqlite3.connect(db_path) as db:
+        row = db.execute(
+            "SELECT institution_id,creator_user_id FROM case_drafts WHERE draft_id=?",
+            (draft_id,),
+        ).fetchone()
+    assert row == ("inst-a", actor_id)
