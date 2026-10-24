@@ -76,6 +76,8 @@ def init_db():
  CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);
   CREATE TABLE IF NOT EXISTS case_versions(case_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, approved_by TEXT, approved_by_user_id TEXT, approved_at TEXT NOT NULL, change_note TEXT NOT NULL DEFAULT '', PRIMARY KEY(case_id,version));
   CREATE TABLE IF NOT EXISTS rubric_versions(case_id TEXT NOT NULL, case_version TEXT NOT NULL, rubric_version TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(case_id,case_version,rubric_version));
+  CREATE TABLE IF NOT EXISTS exam_join_attempts(attempt_id INTEGER PRIMARY KEY AUTOINCREMENT, client_key TEXT NOT NULL, code_hash TEXT NOT NULL, attempted_at TEXT NOT NULL, succeeded INTEGER NOT NULL DEFAULT 0);
+  CREATE INDEX IF NOT EXISTS idx_exam_join_attempts ON exam_join_attempts(client_key,attempted_at,succeeded);
   CREATE TABLE IF NOT EXISTS websocket_tickets(ticket_hash TEXT PRIMARY KEY, room TEXT NOT NULL, user_id TEXT NOT NULL, auth_session_hash TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL);
   CREATE INDEX IF NOT EXISTS idx_websocket_tickets_expiry ON websocket_tickets(expires_at);''');
  # Safe additive migrations; never rebuild or discard existing pilot data.
@@ -203,7 +205,17 @@ def create_session(body:StartSession,request:Request):
  if body.mode not in ('practice','exam'): raise HTTPException(400,'Mode must be practice or exam.')
  case_id=body.case_id; exam_id=None
  if body.mode=='exam':
-  c=conn(); ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"',(body.exam_code or '',)).fetchone(); c.close()
+  if APP_ENV=='production' and (not identity or identity['role']!='learner'):
+   raise HTTPException(403,'A provisioned learner account is required to join an examination.')
+  client_key=request.client.host if request.client else 'unknown'
+  code_hash=__import__('hashlib').sha256((body.exam_code or '').strip().upper().encode('utf-8')).hexdigest()
+  c=conn(); cutoff=(datetime.now(timezone.utc)-timedelta(minutes=15)).isoformat(timespec='seconds')
+  attempts=c.execute('SELECT COUNT(*) AS n FROM exam_join_attempts WHERE client_key=? AND attempted_at>=? AND succeeded=0',(client_key,cutoff)).fetchone()['n']
+  if attempts>=10: c.close(); raise HTTPException(429,'Too many invalid examination codes. Try again later.')
+  ex=c.execute('SELECT * FROM exams WHERE code=? AND status="open"',(body.exam_code or '').strip().upper()).fetchone()
+  c.execute('INSERT INTO exam_join_attempts(client_key,code_hash,attempted_at,succeeded) VALUES(?,?,?,?)',(client_key,code_hash,now(),1 if ex else 0))
+  c.execute('DELETE FROM exam_join_attempts WHERE attempted_at<?',((datetime.now(timezone.utc)-timedelta(days=2)).isoformat(timespec='seconds'),))
+  c.commit(); c.close()
   if not ex: raise HTTPException(404,'Exam code is invalid or closed.')
   case_id=ex['case_id']; exam_id=ex['id']
  if case_id not in CASES: raise HTTPException(404,'Case not found.')
@@ -307,7 +319,7 @@ def finish(sid:int,body:Finish,request:Request):
  # Controlled exams retain the full report for educator review, but the student response
  # must not reveal the hidden diagnosis, score, rubric decisions or pass-threshold result.
  if s['mode']=='exam':
-  return {'status':'submitted_pending_educator_review','mode':'exam','case_id':s['case_id'],'learner':s['learner'],'submitted_at':report['submitted_at'],'time_expired':report['time_expired'],'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
+  return {'status':'submitted_pending_educator_review','mode':'exam','learner':s['learner'],'submitted_at':report['submitted_at'],'time_expired':report['time_expired'],'summary':'Your examination submission has been recorded. Results and case feedback will be released by your educator.'}
  return report
 class EvidenceSearchRequest(BaseModel):
  query: str = Field(min_length=3,max_length=300)
