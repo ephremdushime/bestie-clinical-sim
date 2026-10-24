@@ -479,10 +479,10 @@ def _authorize_room(user:dict, room_name:str) -> bool:
   if not raw_id.isdigit(): return False
   c=conn()
   try:
-   row=c.execute('''SELECT s.id,s.status,s.owner_user_id,u.institution_id AS owner_institution
+   row=c.execute('''SELECT s.id,s.status,s.mode,s.owner_user_id,u.institution_id AS owner_institution
                     FROM sessions s LEFT JOIN users u ON u.user_id=s.owner_user_id
                     WHERE s.id=?''',(int(raw_id),)).fetchone()
-   if not row or row['status']!='active' or not row['owner_user_id']: return False
+   if not row or row['status']!='active' or row['mode']!='practice' or not row['owner_user_id']: return False
    if user['role']=='platform_admin': return True
    if user['user_id']==row['owner_user_id']: return True
    return user['role'] in ('educator','institution_admin') and bool(user.get('institution_id')) and user['institution_id']==row['owner_institution']
