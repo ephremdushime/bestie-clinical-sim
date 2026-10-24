@@ -441,3 +441,60 @@ def test_unassigned_published_case_reconciliation_assigns_case_and_versions_with
             assert approved["institution_id"] == "institution-a"
             assert version["institution_id"] == "institution-a"
             assert audit["outcome"] == "success"
+
+def test_production_case_publication_stays_with_originating_institution(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    case_payload = {
+        "id": "generated-institution-a-private", "version": "0.1.0-draft",
+        "title": "Institution A teaching case", "specialty": "Internal medicine",
+        "level": "Clinical-year student", "age": 28, "sex": "adult man",
+        "appearance": "Fictional adult patient", "opening": "I have felt unwell.",
+        "diagnosis": "Fictional teaching diagnosis", "vitals": {},
+        "facts": {"onset": "Started today", "symptoms": "Fictional symptoms",
+                  "history": "No known allergies", "risk": "No known risk", "exam": "Stable"},
+        "investigations": {
+            "fbc": {"name": "Full blood count", "result": "Fictional result A",
+                    "interpretation": "Fictional interpretation A", "appropriate": True, "why": "Indicated"},
+            "glucose": {"name": "Blood glucose", "result": "Fictional result B",
+                        "interpretation": "Fictional interpretation B", "appropriate": True, "why": "Indicated"},
+        },
+        "expected_differentials": ["diagnosis A", "diagnosis B"],
+        "expected_actions": ["assess", "review"],
+        "critical_errors": [], "marking_rubric": [],
+    }
+    draft = {
+        "draft_id": "draft-private-publication", "status": "reviewed_not_approved",
+        "topic": "Institution A teaching case", "specialty": "Internal medicine",
+        "case": case_payload, "generation_mode": "llm_with_evidence_retrieval",
+        "review": {"reviewer": "Reviewer A", "reviewer_user_id": "reviewer-a",
+                   "notes": "Reviewed case consistency and investigation indications.", "reviewed_at": main.now()},
+    }
+    with main.conn() as db:
+        db.execute(
+            "INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?)",
+            (draft["draft_id"], draft["topic"], draft["specialty"], draft["status"],
+             main.canonical_json(draft), main.now(), main.now(), "institution-a", "creator-a"),
+        )
+        db.commit()
+
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(main, "current_identity_user",
+            lambda request: identity("approver-a", "institution-a"))
+        published = client.post(
+            f"/api/educator/case-drafts/{draft['draft_id']}/approve-and-publish",
+            json={"review_notes": "Independent approval after checking case consistency."},
+        )
+        assert published.status_code == 200, published.text
+        case_id = published.json()["case_id"]
+        assert case_id not in main.CASES
+
+        same_institution = client.get("/api/cases", headers={"Authorization": "Bearer test"})
+        assert case_id in {item["id"] for item in same_institution.json()["cases"]}
+
+        monkeypatch.setattr(main, "current_identity_user",
+            lambda request: identity("educator-b", "institution-b"))
+        other_institution = client.get("/api/cases", headers={"Authorization": "Bearer test"})
+        assert case_id not in {item["id"] for item in other_institution.json()["cases"]}
+        history = client.get(f"/api/educator/cases/{case_id}/versions",
+            headers={"Authorization": "Bearer test"})
+        assert history.status_code == 404
