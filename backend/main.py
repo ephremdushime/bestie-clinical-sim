@@ -79,7 +79,7 @@ def init_db():
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT);
  CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);
   CREATE TABLE IF NOT EXISTS case_versions(case_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, approved_by TEXT, approved_by_user_id TEXT, approved_at TEXT NOT NULL, change_note TEXT NOT NULL DEFAULT '', content_hash TEXT NOT NULL DEFAULT '', PRIMARY KEY(case_id,version));
-  CREATE TABLE IF NOT EXISTS rubric_versions(case_id TEXT NOT NULL, case_version TEXT NOT NULL, rubric_version TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, content_hash TEXT NOT NULL DEFAULT '', PRIMARY KEY(case_id,case_version,rubric_version));
+  CREATE TABLE IF NOT EXISTS rubric_versions(case_id TEXT NOT NULL, case_version TEXT NOT NULL, rubric_version TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, content_hash TEXT NOT NULL DEFAULT '', approved_by_user_id TEXT, PRIMARY KEY(case_id,case_version,rubric_version));
   CREATE TABLE IF NOT EXISTS exam_join_attempts(attempt_id INTEGER PRIMARY KEY AUTOINCREMENT, client_key TEXT NOT NULL, code_hash TEXT NOT NULL, attempted_at TEXT NOT NULL, succeeded INTEGER NOT NULL DEFAULT 0);
   CREATE INDEX IF NOT EXISTS idx_exam_join_attempts ON exam_join_attempts(client_key,attempted_at,succeeded);
   CREATE TABLE IF NOT EXISTS websocket_tickets(ticket_hash TEXT PRIMARY KEY, room TEXT NOT NULL, user_id TEXT NOT NULL, auth_session_hash TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL);
@@ -100,6 +100,7 @@ def init_db():
  if 'content_hash' not in case_version_cols: c.execute("ALTER TABLE case_versions ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
  rubric_version_cols={row['name'] for row in c.execute('PRAGMA table_info(rubric_versions)')}
  if 'content_hash' not in rubric_version_cols: c.execute("ALTER TABLE rubric_versions ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
+ if 'approved_by_user_id' not in rubric_version_cols: c.execute('ALTER TABLE rubric_versions ADD COLUMN approved_by_user_id TEXT')
  c.commit(); c.close()
 init_db()
 try:
@@ -531,7 +532,7 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
   except (TypeError,ValueError,json.JSONDecodeError): prior_payload=''
   rubric_version=prior_rubric['rubric_version'] if prior_payload==rubric_payload else increment_patch(prior_rubric['rubric_version'])
  else: rubric_version=RUBRIC_VERSION
- c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],rubric_version,rubric_payload,case['approved_at'],content_digest(rubric_value)))
+ c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash,approved_by_user_id) VALUES(?,?,?,?,?,?,?)',(case['id'],case['version'],rubric_version,rubric_payload,case['approved_at'],content_digest(rubric_value),actor['user_id']))
  c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at']))
  d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
  return {'status':d['status'],'case_id':case['id'],'version':case['version'],'message':'Published following educator attestation; this is not independent clinical certification.'}
