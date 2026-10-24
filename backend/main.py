@@ -171,12 +171,30 @@ def _validated_snapshot(row,kind:str):
  if not row['content_hash'] or not hmac.compare_digest(row['content_hash'],content_digest(value)):
   raise HTTPException(409,f'The pinned {kind} version failed its integrity check; this session is blocked for review.')
  return value
+def _validate_exam_session_pins(db,session_row):
+ if APP_ENV!='production' or session_row['mode']!='exam':
+  return
+ exam_id=session_row['exam_id'] if 'exam_id' in session_row.keys() else None
+ if not exam_id:
+  raise HTTPException(409,'Controlled examination session has no linked examination record.')
+ exam=db.execute('SELECT case_id,case_version,rubric_version FROM exams WHERE id=?',(exam_id,)).fetchone()
+ if not exam:
+  raise HTTPException(409,'Linked examination record is unavailable; assessment integrity cannot be verified.')
+ session_case_version=session_row['case_version'] if 'case_version' in session_row.keys() else None
+ session_rubric_version=session_row['rubric_version'] if 'rubric_version' in session_row.keys() else None
+ if (not exam['case_version'] or not exam['rubric_version'] or
+     exam['case_id']!=session_row['case_id'] or
+     exam['case_version']!=session_case_version or
+     exam['rubric_version']!=session_rubric_version):
+  raise HTTPException(409,'Examination and session version pins do not match; this attempt is blocked for integrity review.')
 def case_for_session(db,session_row):
+ _validate_exam_session_pins(db,session_row)
  version=session_row['case_version'] if 'case_version' in session_row.keys() else None; case_id=session_row['case_id']
  if not version: raise HTTPException(409,'This session has no pinned case version; historical case state cannot be reconstructed safely.')
  row=db.execute('SELECT payload,content_hash FROM case_versions WHERE case_id=? AND version=?',(case_id,version)).fetchone()
  return _validated_snapshot(row,'case')
 def rubric_for_session(db,session_row):
+ _validate_exam_session_pins(db,session_row)
  case_id=session_row['case_id']; case_version=session_row['case_version'] if 'case_version' in session_row.keys() else None
  rubric_version=session_row['rubric_version'] if 'rubric_version' in session_row.keys() else None
  if not case_version or not rubric_version: raise HTTPException(409,'This session has no pinned rubric version; assessment integrity cannot be verified.')
