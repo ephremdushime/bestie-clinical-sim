@@ -2,7 +2,7 @@
 
 ## Current status
 
-This build is suitable for supervised technical demonstrations and for collecting feedback on the product workflow. It is **not yet approved for formal clinical education, research data collection, or high-stakes examination**. The seeded cases and rubrics are drafts; the front-end production build was not verified in this environment because dependency installation timed out.
+This build is suitable for supervised technical demonstrations and for collecting feedback on the product workflow. It is **not yet approved for formal clinical education, research data collection, or high-stakes examination**. Automated backend, frontend-build, and browser workflows have passed on the current development branch; this is not a substitute for staging, load/security testing, clinical case validation, or institutional approval.
 
 ## Before a university demonstration
 
