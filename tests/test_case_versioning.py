@@ -59,6 +59,14 @@ def test_exam_and_session_pin_case_and_rubric_versions(tmp_path, monkeypatch):
         # The learner-facing exam response must not disclose the pinned case identifier.
         assert joined.json()["case_id"] is None
         assert joined.json()["patient"]["vitals"] is None
+        submitted = client.post(f"/api/sessions/{joined.json()['session_id']}/finish", json={
+            "differential": ["malaria", "viral illness"], "final_diagnosis": "malaria",
+            "management": ["urgent referral", "follow-up"], "reflection": "test result",
+        })
+        assert submitted.status_code == 200, submitted.text
+        assert submitted.json()["status"] == "submitted_pending_educator_review"
+        assert "case_id" not in submitted.json()
+        assert "score" not in submitted.json()
 
 
 def test_case_version_history_is_readable_and_does_not_expose_payload(tmp_path, monkeypatch):
@@ -74,3 +82,22 @@ def test_case_version_history_is_readable_and_does_not_expose_payload(tmp_path, 
         assert data["versions"]
         assert data["versions"][0]["version"] == "1.0.0"
         assert "payload" not in data["versions"][0]
+
+
+def test_invalid_exam_codes_are_rate_limited(tmp_path, monkeypatch):
+    db_path = tmp_path / "exam-throttle.db"
+    monkeypatch.setattr(main, "DB_PATH", db_path)
+    monkeypatch.setattr(main, "APP_ENV", "development")
+    main.init_db()
+    with TestClient(main.app) as client:
+        for _ in range(10):
+            response = client.post("/api/sessions", json={
+                "learner": "Test learner", "case_id": "malaria-001",
+                "mode": "exam", "exam_code": "INVALID-CODE",
+            })
+            assert response.status_code == 404
+        blocked = client.post("/api/sessions", json={
+            "learner": "Test learner", "case_id": "malaria-001",
+            "mode": "exam", "exam_code": "ANOTHER-CODE",
+        })
+        assert blocked.status_code == 429
