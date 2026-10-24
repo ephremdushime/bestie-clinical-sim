@@ -127,3 +127,63 @@ def test_institution_admin_cannot_close_another_institution_exam(tmp_path, monke
         exam_b = create_exam(client, educator_b, "Institution B exam")
         response = client.post(f"/api/educator/exams/{exam_b['id']}/close", headers=educator_a)
         assert response.status_code == 403, response.text
+
+
+
+def test_published_cases_remain_private_to_the_owning_institution(tmp_path, monkeypatch):
+    db_path = setup(tmp_path, monkeypatch)
+    case_id = "generated-institution-b-private"
+    case = {
+        "id": case_id, "version": "1.0.0", "title": "Institution B private case",
+        "specialty": "Medicine", "level": "Clinical-year student",
+        "appearance": "Fictional adult patient", "age": 35, "sex": "adult",
+        "opening": "I feel unwell.", "diagnosis": "Fictional teaching diagnosis",
+        "vitals": {}, "facts": {}, "investigations": {},
+        "expected_actions": [], "expected_differentials": [], "critical_errors": [],
+    }
+    monkeypatch.setitem(main.CASES, case_id, case)
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            """INSERT INTO approved_cases(case_id,version,payload,approved_by,approved_at,institution_id)
+               VALUES(?,?,?,?,?,?)""",
+            (case_id, "1.0.0", json.dumps(case), "Educator B",
+             "2026-10-24T00:00:00+00:00", "inst-b"),
+        )
+        db.execute(
+            """INSERT INTO case_versions(case_id,version,payload,approved_by,approved_at,
+               change_note,content_hash,institution_id) VALUES(?,?,?,?,?,?,?,?)""",
+            (case_id, "1.0.0", json.dumps(case), "Educator B",
+             "2026-10-24T00:00:00+00:00", "Initial version",
+             main.content_digest(case), "inst-b"),
+        )
+
+    with TestClient(main.app) as client:
+        educator_a = sign_in(client, "educator-a@example.org", "educator-password-a-long")
+        educator_b = sign_in(client, "educator-b@example.org", "educator-password-b-long")
+
+        cases_a = client.get("/api/cases", headers=educator_a)
+        cases_b = client.get("/api/cases", headers=educator_b)
+        assert cases_a.status_code == 200, cases_a.text
+        assert cases_b.status_code == 200, cases_b.text
+        assert case_id not in {item["id"] for item in cases_a.json()["cases"]}
+        assert case_id in {item["id"] for item in cases_b.json()["cases"]}
+
+        denied_session = client.post("/api/sessions", headers=educator_a, json={
+            "learner": "Educator A", "case_id": case_id, "mode": "practice"
+        })
+        assert denied_session.status_code == 403, denied_session.text
+
+        denied_exam = client.post("/api/educator/exams", headers=educator_a, json={
+            "title": "Unauthorized case exam", "case_id": case_id, "duration": 5, "pass_mark": 70
+        })
+        assert denied_exam.status_code == 403, denied_exam.text
+
+        denied_history = client.get(
+            f"/api/educator/cases/{case_id}/versions", headers=educator_a
+        )
+        assert denied_history.status_code == 403, denied_history.text
+
+        allowed_exam = client.post("/api/educator/exams", headers=educator_b, json={
+            "title": "Institution B case exam", "case_id": case_id, "duration": 5, "pass_mark": 70
+        })
+        assert allowed_exam.status_code == 200, allowed_exam.text
