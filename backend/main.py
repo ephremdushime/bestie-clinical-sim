@@ -77,8 +77,8 @@ def init_db():
  CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT, institution_id TEXT, creator_user_id TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT, institution_id TEXT, creator_user_id TEXT);
- CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);
-  CREATE TABLE IF NOT EXISTS case_versions(case_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, approved_by TEXT, approved_by_user_id TEXT, approved_at TEXT NOT NULL, change_note TEXT NOT NULL DEFAULT '', content_hash TEXT NOT NULL DEFAULT '', PRIMARY KEY(case_id,version));
+ CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT, institution_id TEXT);
+  CREATE TABLE IF NOT EXISTS case_versions(case_id TEXT NOT NULL, version TEXT NOT NULL, payload TEXT NOT NULL, approved_by TEXT, approved_by_user_id TEXT, approved_at TEXT NOT NULL, change_note TEXT NOT NULL DEFAULT '', content_hash TEXT NOT NULL DEFAULT '', institution_id TEXT, PRIMARY KEY(case_id,version));
   CREATE TABLE IF NOT EXISTS rubric_versions(case_id TEXT NOT NULL, case_version TEXT NOT NULL, rubric_version TEXT NOT NULL, payload TEXT NOT NULL, created_at TEXT NOT NULL, content_hash TEXT NOT NULL DEFAULT '', PRIMARY KEY(case_id,case_version,rubric_version));
   CREATE TABLE IF NOT EXISTS exam_join_attempts(attempt_id INTEGER PRIMARY KEY AUTOINCREMENT, client_key TEXT NOT NULL, code_hash TEXT NOT NULL, attempted_at TEXT NOT NULL, succeeded INTEGER NOT NULL DEFAULT 0);
   CREATE INDEX IF NOT EXISTS idx_exam_join_attempts ON exam_join_attempts(client_key,attempted_at,succeeded);
@@ -101,8 +101,11 @@ def init_db():
  if 'institution_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN institution_id TEXT')
  if 'creator_user_id' not in draft_cols: c.execute('ALTER TABLE case_drafts ADD COLUMN creator_user_id TEXT')
  if 'creator_user_id' not in exam_cols: c.execute('ALTER TABLE exams ADD COLUMN creator_user_id TEXT')
+ approved_case_cols={row['name'] for row in c.execute('PRAGMA table_info(approved_cases)')}
+ if 'institution_id' not in approved_case_cols: c.execute('ALTER TABLE approved_cases ADD COLUMN institution_id TEXT')
  case_version_cols={row['name'] for row in c.execute('PRAGMA table_info(case_versions)')}
  if 'content_hash' not in case_version_cols: c.execute("ALTER TABLE case_versions ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
+ if 'institution_id' not in case_version_cols: c.execute('ALTER TABLE case_versions ADD COLUMN institution_id TEXT')
  rubric_version_cols={row['name'] for row in c.execute('PRAGMA table_info(rubric_versions)')}
  if 'content_hash' not in rubric_version_cols: c.execute("ALTER TABLE rubric_versions ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''")
  c.commit(); c.close()
@@ -125,13 +128,7 @@ class OwnershipReconciliationRequest(BaseModel):
  institution_id: str = Field(min_length=1,max_length=160)
  reason: str = Field(min_length=20,max_length=2000, description='Non-PHI administrative evidence description; do not include patient identifiers or clinical details.')
 
-try:
- c0=conn()
- for row0 in c0.execute('SELECT payload FROM approved_cases'):
-  loaded=json.loads(row0['payload']); CASES[loaded['id']]=loaded
- c0.close()
-except Exception:
- pass
+# Published cases are resolved per request by institution; unassigned legacy rows are quarantined.
 
 RUBRIC_VERSION='heuristic-1.0.0'
 def canonical_json(value:dict) -> str:
@@ -228,6 +225,24 @@ def current_identity_user(request:Request):
   return ({key:user[key] for key in ('user_id','institution_id','display_name','role')} if user else None)
  finally: db.close()
 
+def resolve_case_for_actor(db, case_id: str, actor: dict | None):
+ if case_id in CASES:
+  return CASES[case_id]
+ if APP_ENV != 'production':
+  row=db.execute("SELECT payload FROM approved_cases WHERE case_id=? AND institution_id IS NOT NULL",(case_id,)).fetchone()
+ elif actor and actor.get('role') == 'platform_admin':
+  row=db.execute("SELECT payload FROM approved_cases WHERE case_id=? AND institution_id IS NOT NULL",(case_id,)).fetchone()
+ elif actor and actor.get('institution_id'):
+  row=db.execute("SELECT payload FROM approved_cases WHERE case_id=? AND (institution_id=? OR institution_id='__shared__')",(case_id,actor['institution_id'])).fetchone()
+ else:
+  row=db.execute("SELECT payload FROM approved_cases WHERE case_id=? AND institution_id='__shared__'",(case_id,)).fetchone()
+ if not row:
+  return None
+ try:
+  return json.loads(row['payload'])
+ except (TypeError,ValueError,json.JSONDecodeError):
+  return None
+
 def check_session_access(request:Request, session_row):
  # New identity-owned sessions require the same account; legacy pilot sessions retain their per-session secret.
  owner=session_row['owner_user_id'] if 'owner_user_id' in session_row.keys() else None
@@ -259,8 +274,25 @@ class CaseDraftRequest(BaseModel): topic:str=Field(min_length=3,max_length=180);
 @app.get('/api/health')
 def health(): return {'status':'ok','version':'1.3.0','cases':len(CASES),'llm_configured':llm_configured(),'database':'sqlite','environment':APP_ENV,'xr':'WebXR compatibility is checked in browser; device support varies'}
 @app.get('/api/cases')
-def cases():
- return {'cases':[{'id':c['id'],'title':c['title'],'specialty':c['specialty'],'level':c['level'],'version':c['version'],'appearance':c['appearance'],'age':c['age'],'sex':c['sex'],'generated':c['id'].startswith('generated-')} for c in CASES.values()]}
+def cases(request: Request):
+ available=list(CASES.values())
+ actor=current_identity_user(request)
+ c=conn()
+ try:
+  if APP_ENV != 'production':
+   rows=c.execute("SELECT payload FROM approved_cases WHERE institution_id IS NOT NULL").fetchall()
+  elif actor and actor.get('role')=='platform_admin':
+   rows=c.execute("SELECT payload FROM approved_cases WHERE institution_id IS NOT NULL").fetchall()
+  elif actor and actor.get('institution_id'):
+   rows=c.execute("SELECT payload FROM approved_cases WHERE institution_id=? OR institution_id='__shared__'",(actor['institution_id'],)).fetchall()
+  else:
+   rows=c.execute("SELECT payload FROM approved_cases WHERE institution_id='__shared__'").fetchall()
+  for row in rows:
+   try: available.append(json.loads(row['payload']))
+   except (TypeError,ValueError,json.JSONDecodeError): continue
+ finally:
+  c.close()
+ return {'cases':[{'id':item['id'],'title':item['title'],'specialty':item['specialty'],'level':item.get('level','Clinical-year student'),'version':item.get('version','1.0.0'),'appearance':item.get('appearance','Fictional patient'),'age':item.get('age',''),'sex':item.get('sex',''),'generated':item['id'].startswith('generated-')} for item in available]}
 @app.post('/api/sessions')
 def create_session(body:StartSession,request:Request):
  check_access(request)
@@ -287,13 +319,18 @@ def create_session(body:StartSession,request:Request):
    if not ex['institution_id'] or not identity.get('institution_id') or ex['institution_id']!=identity['institution_id']:
     raise HTTPException(403,'This examination is not assigned to your institution.')
   case_id=ex['case_id']; exam_id=ex['id']
- if case_id not in CASES: raise HTTPException(404,'Case not found.')
+ case_db=conn()
+ try:
+  case_definition=resolve_case_for_actor(case_db,case_id,identity)
+ finally:
+  case_db.close()
+ if not case_definition: raise HTTPException(404,'Case not found in your available catalogue.')
  session_token=secrets.token_urlsafe(32)
  session_token_hash=__import__('hashlib').sha256(session_token.encode('utf-8')).hexdigest()
  # The authenticated account is authoritative for the learner label and session ownership.
  learner_name=identity['display_name'] if identity and identity['role']=='learner' else body.learner.strip()
  owner_user_id=identity['user_id'] if identity and identity['role']=='learner' else None
- case_version=(ex['case_version'] if body.mode=='exam' and ex['case_version'] else CASES[case_id].get('version','1.0.0'))
+ case_version=(ex['case_version'] if body.mode=='exam' and ex['case_version'] else case_definition.get('version','1.0.0'))
  rubric_version=(ex['rubric_version'] if body.mode=='exam' and ex['rubric_version'] else RUBRIC_VERSION)
  c=conn()
  try:
@@ -457,7 +494,19 @@ async def evidence_search(body: EvidenceSearchRequest, request: Request):
 
 @app.get('/api/educator/cases/{case_id}/versions')
 def case_version_history(case_id:str,request:Request):
- check_access(request,True); c=conn(); rows=c.execute('SELECT case_id,version,approved_by,approved_by_user_id,approved_at,change_note FROM case_versions WHERE case_id=? ORDER BY approved_at DESC,version DESC',(case_id,)).fetchall(); c.close()
+ check_access(request,True); actor=educator_actor(request); c=conn()
+ try:
+  if APP_ENV=='production' and actor['role']!='platform_admin':
+   if case_id in CASES:
+    rows=c.execute('SELECT case_id,version,approved_by,approved_by_user_id,approved_at,change_note FROM case_versions WHERE case_id=? AND institution_id IS NULL ORDER BY approved_at DESC,version DESC',(case_id,)).fetchall()
+   elif actor.get('institution_id'):
+    rows=c.execute('SELECT case_id,version,approved_by,approved_by_user_id,approved_at,change_note FROM case_versions WHERE case_id=? AND institution_id=? ORDER BY approved_at DESC,version DESC',(case_id,actor['institution_id'])).fetchall()
+   else:
+    rows=[]
+  else:
+   rows=c.execute('SELECT case_id,version,approved_by,approved_by_user_id,approved_at,change_note FROM case_versions WHERE case_id=? ORDER BY approved_at DESC,version DESC',(case_id,)).fetchall()
+ finally:
+  c.close()
  if not rows: raise HTTPException(404,'No version history found for this case.')
  return {'case_id':case_id,'versions':[dict(row) for row in rows]}
 
@@ -518,11 +567,16 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
   c.close(); raise HTTPException(422,'Investigation results and interpretations contain placeholders. Complete them before publishing.')
  if not body.review_notes.strip(): c.close(); raise HTTPException(422,'A clinical review note is required.')
  case['version']=next_case_version(c,case['id']); case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
- c.execute('INSERT INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash) VALUES(?,?,?,?,?,?,?,?)',(case['id'],case['version'],canonical_json(case),actor['display_name'],actor['user_id'],case['approved_at'],body.review_notes,content_digest(case)))
+ case_institution_id=row['institution_id']
+ if APP_ENV=='production' and not case_institution_id:
+  c.close(); raise HTTPException(409,'Reconcile this draft to an institution before publishing; unassigned cases cannot enter the shared catalogue.')
+ if APP_ENV!='production' and not case_institution_id:
+  case_institution_id=actor.get('institution_id') or '__shared__'
+ c.execute('INSERT INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash,institution_id) VALUES(?,?,?,?,?,?,?,?,?)',(case['id'],case['version'],canonical_json(case),actor['display_name'],actor['user_id'],case['approved_at'],body.review_notes,content_digest(case),case_institution_id))
  rubric_payload=canonical_json(rubric_definition())
  c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],RUBRIC_VERSION,rubric_payload,case['approved_at'],content_digest(rubric_definition())))
- c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at']))
- d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
+ c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at,institution_id) VALUES(?,?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at'],case_institution_id))
+ d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close()
  return {'status':d['status'],'case_id':case['id'],'version':case['version'],'message':'Published following educator attestation; this is not independent clinical certification.'}
 
 @app.post('/api/educator/case-draft')
@@ -550,10 +604,15 @@ async def draft_case(body:CaseDraftRequest,request:Request):
 @app.post('/api/educator/exams')
 def create_exam(body:ExamCreate,request:Request):
  check_access(request,True)
- if body.case_id not in CASES: raise HTTPException(404,'Case not found.')
  actor=educator_actor(request,body.creator)
+ case_db=conn()
+ try:
+  case_definition=resolve_case_for_actor(case_db,body.case_id,actor)
+ finally:
+  case_db.close()
+ if not case_definition: raise HTTPException(404,'Case not found in your available catalogue.')
  code=secrets.token_urlsafe(8).replace('-','').replace('_','').upper()[:12]
- case_version=CASES[body.case_id].get('version','1.0.0')
+ case_version=case_definition.get('version','1.0.0')
  institution_id=actor.get('institution_id')
  creator_user_id=actor.get('user_id')
  c=conn()
