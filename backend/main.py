@@ -559,7 +559,7 @@ def create_rubric_version(case_id:str,body:RubricVersionRequest,request:Request)
   rubric_hash=__import__('hashlib').sha256(rubric_json.encode('utf-8')).hexdigest()
   c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,rubric_json,content_hash,approved_by_user_id,created_at) VALUES(?,?,?,?,?,?,?)',(case_id,current_case_version,rubric_version,rubric_json,rubric_hash,actor.get('user_id'),now()))
   from identity import write_audit_event
-  write_audit_event(c,actor_user_id=actor.get('user_id'),institution_id=actor.get('institution_id'),action='rubric.version_created',resource_type='rubric_version',resource_id=f'{case_id}@{current_case_version}/{rubric_version}',outcome='success',metadata_json=json.dumps({'criteria_count':len(body.criteria),'weight_total':sum(weights),'review_notes':body.review_notes},separators=(',',':')))
+  write_audit_event(c,actor_user_id=actor.get('user_id'),institution_id=actor.get('institution_id'),action='rubric.version_created',resource_type='rubric_version',resource_id=f'{case_id}@{current_case_version}/{rubric_version}',outcome='success',metadata_json=json.dumps({'criteria_count':len(body.criteria),'weight_total':sum(weights),'review_note_length':len(body.review_notes)},separators=(',',':')))
   c.commit()
   return {'case_id':case_id,'case_version':current_case_version,'rubric_version':rubric_version,'content_hash':rubric_hash,'unchanged':False,'message':'Rubric version recorded. Scoring remains formative until independently validated.'}
  finally: c.close()
