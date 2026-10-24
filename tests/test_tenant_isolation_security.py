@@ -113,3 +113,26 @@ def test_educator_cannot_access_learner_session_from_another_institution(tmp_pat
             headers={"Authorization": "Bearer test"},
         )
         assert response.status_code == 403, response.text
+
+def test_exam_close_requires_creator_or_institution_admin(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    with main.conn() as db:
+        db.execute(
+            "INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,status,creator,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            ("OWNED-EXAM", "Owned exam", "malaria-001", 20, 70, main.now(), "open", "creator", "institution-a", "educator-owner"),
+        )
+        db.commit()
+
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(main, "current_identity_user", lambda request: identity("educator-other", "institution-a"))
+        denied = client.post("/api/educator/exams/1/close", headers={"Authorization": "Bearer test"})
+        assert denied.status_code == 403, denied.text
+
+        monkeypatch.setattr(
+            main, "current_identity_user",
+            lambda request: identity("institution-admin", "institution-a", role="institution_admin"),
+        )
+        allowed = client.post("/api/educator/exams/1/close", headers={"Authorization": "Bearer test"})
+        assert allowed.status_code == 200, allowed.text
+        assert allowed.json()["closed"] is True
+
