@@ -85,9 +85,13 @@ def test_login_rate_limit_blocks_after_ten_failed_attempts(tmp_path, monkeypatch
         ))
     assert exc.value.status_code == 429
     with sqlite3.connect(db_path) as db:
+        # The blocked 11th request is audited but is not recorded as a credential attempt.
         assert db.execute(
             "SELECT COUNT(*) FROM auth_login_attempts WHERE succeeded=0"
         ).fetchone()[0] == 10
+        assert db.execute(
+            "SELECT COUNT(*) FROM audit_events WHERE action='auth.login_throttled'"
+        ).fetchone()[0] == 1
 
 
 def test_malformed_or_missing_bearer_token_is_rejected():

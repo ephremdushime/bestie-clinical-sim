@@ -3,7 +3,15 @@ WORKDIR /app
 COPY backend/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend ./backend
+COPY scripts ./scripts
+# Run the API as an unprivileged account. The named /data volume inherits the
+# ownership of this directory on first initialization.
+RUN groupadd --system app \
+    && useradd --system --gid app --home-dir /app --no-create-home appuser \
+    && mkdir -p /data \
+    && chown appuser:app /data
 WORKDIR /app/backend
 ENV PYTHONUNBUFFERED=1
 EXPOSE 8000
+USER appuser
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

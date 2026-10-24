@@ -2,7 +2,7 @@
 
 ## Current status
 
-This build is suitable for supervised technical demonstrations and for collecting feedback on the product workflow. It is **not yet approved for formal clinical education, research data collection, or high-stakes examination**. The seeded cases and rubrics are drafts; the front-end production build was not verified in this environment because dependency installation timed out.
+This build is suitable for supervised technical demonstrations and for collecting feedback on the product workflow. It is **not yet approved for formal clinical education, research data collection, or high-stakes examination**. Automated backend, frontend-build, and browser workflows have passed on the current development branch; this is not a substitute for staging, load/security testing, clinical case validation, or institutional approval.
 
 ## Before a university demonstration
 
@@ -27,18 +27,19 @@ This build is suitable for supervised technical demonstrations and for collectin
 ## Environment and deployment
 
 1. Copy `.env.example` to `.env`.
-2. Set `APP_ENV=production` only after configuring strong unique `PILOT_ACCESS_TOKEN` and `EDUCATOR_ACCESS_TOKEN` secrets.
-3. Set `CORS_ORIGINS` to the exact HTTPS origin(s); avoid wildcard origins.
-4. Keep LLM credentials server-side. Configure `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL` only if using a compatible provider.
-5. Run `docker compose up --build -d` on a managed host and place it behind HTTPS, with restricted network access and backups for the SQLite volume.
-6. Confirm health endpoint, case list, student flow, educator flow, timeout enforcement and data persistence in staging.
-7. Do not use the development Vite server as a public service.
+2. Set `APP_ENV=production` and `CORS_ORIGINS` to the exact trusted HTTPS frontend origin(s); wildcard and localhost origins are rejected. Shared pilot/educator tokens are development-only and are not accepted on protected production routes.
+3. Keep LLM credentials server-side. Configure `LLM_BASE_URL`, `LLM_API_KEY` and `LLM_MODEL` only if using a compatible provider.
+4. Run `docker compose up --build -d` on a managed host and place it behind HTTPS, with restricted network access and backups for the SQLite volume.
+5. Provision the initial platform administrator from a trusted server shell: `docker compose exec api python /app/scripts/provision_account.py --email admin@example.org --display-name "Platform Administrator" --role platform_admin`. The script prompts for the password without echoing it.
+6. Create institutions and institution-scoped accounts with `docker compose exec api python /app/scripts/provision_account.py --create-institution --institution-id inst-a --institution-name "Institution A"`, then create users with `--email`, `--display-name`, `--role educator` (or `institution_admin` or `learner`), and `--institution-id inst-a`.
+7. Confirm health endpoint, case list, account sign-in/password change, learner flow, educator flow, timeout enforcement and data persistence in staging.
+8. Do not use the development Vite server as a public service.
 
 ## Security limitations
 
-- Shared pilot/educator tokens are not per-user authentication and can be shared.
+- Production protected routes require provisioned account sessions; shared pilot/educator tokens are development-only. Account provisioning is a trusted-shell operation, not an in-app administration workflow.
 - Exam codes are not identity verification and are not designed to prevent impersonation.
-- No institutional SSO, role lifecycle, granular permissions, password recovery or account revocation workflow.
+- No institutional SSO or self-service password recovery. Password changes revoke existing sessions; a trusted server operator can reset a lost password using `docker compose exec api python /app/scripts/provision_account.py --reset-password --email user@example.org`, which records an audit event and revokes sessions.
 - SQLite is intended only for small supervised tests; concurrent writes, retention controls and backups need review.
 - API keys, network traffic, dependency versions and deployment logs need production security review.
 

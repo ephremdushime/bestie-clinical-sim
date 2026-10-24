@@ -1,20 +1,24 @@
 """Authentication endpoints for pre-provisioned Bestie Clinical Sim accounts.
 
-This router intentionally does not expose registration or role assignment. Existing
-simulation and educator routes must be migrated separately before claiming end-to-end
-identity enforcement.
+This router intentionally does not expose public registration or role assignment.
+Protected production simulation and educator routes resolve these provisioned bearer
+sessions; account onboarding and recovery remain trusted-operator responsibilities.
 """
 from __future__ import annotations
 
 import os
 import sqlite3
+import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from identity import (
+    PASSWORD_ITERATIONS,
+    _password_record,
     init_identity_schema,
     issue_session,
     resolve_session,
@@ -38,10 +42,15 @@ def _db() -> sqlite3.Connection:
         attempt_id INTEGER PRIMARY KEY AUTOINCREMENT,
         email_normalized TEXT NOT NULL,
         attempted_at TEXT NOT NULL,
-        succeeded INTEGER NOT NULL DEFAULT 0
+        succeeded INTEGER NOT NULL DEFAULT 0,
+        client_key TEXT NOT NULL DEFAULT 'unknown'
       )
     """)
+    attempt_columns = {row["name"] for row in db.execute("PRAGMA table_info(auth_login_attempts)")}
+    if "client_key" not in attempt_columns:
+        db.execute("ALTER TABLE auth_login_attempts ADD COLUMN client_key TEXT NOT NULL DEFAULT 'unknown'")
     db.execute("CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_email_time ON auth_login_attempts(email_normalized, attempted_at)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_auth_login_attempts_client_time ON auth_login_attempts(client_key, attempted_at)")
     db.commit()
     return db
 
@@ -71,31 +80,56 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login")
-def login(body: LoginRequest):
-    """Authenticate a provisioned account; never creates users."""
+def login(body: LoginRequest, request: Request = None):
+    """Authenticate a provisioned account with per-account and per-client throttling."""
     from datetime import datetime, timedelta, timezone
 
     email = body.email.strip().casefold()
     now = datetime.now(timezone.utc)
+    now_text = now.isoformat(timespec="seconds")
     cutoff = (now - timedelta(minutes=15)).isoformat(timespec="seconds")
+    # The bundled reverse proxy overwrites X-Real-IP. The API must not be exposed
+    # directly to the public network, otherwise this header is not trustworthy.
+    client_key = (request.headers.get("X-Real-IP") or (request.client.host if request.client else "unknown")) if request is not None else "unknown"
     db = _db()
     try:
-        attempts = db.execute(
+        client_attempts = db.execute(
+            "SELECT COUNT(*) AS n FROM auth_login_attempts WHERE client_key=? AND attempted_at>=? AND succeeded=0",
+            (client_key, cutoff),
+        ).fetchone()["n"]
+        if client_attempts >= 50:
+            write_audit_event(db, actor_user_id=None, institution_id=None,
+                              action="auth.login_throttled", resource_type="client",
+                              resource_id=None, outcome="denied",
+                              metadata_json='{"reason":"client_attempt_limit"}')
+            db.commit()
+            raise HTTPException(429, "Too many sign-in attempts from this network. Try again later.")
+
+        user = verify_password(db, email, body.password)
+        # Serialize the final decision and attempt recording so concurrent failures
+        # cannot all pass a stale count and exceed the account/network limits.
+        db.execute("BEGIN IMMEDIATE")
+        current_client_attempts = db.execute(
+            "SELECT COUNT(*) AS n FROM auth_login_attempts WHERE client_key=? AND attempted_at>=? AND succeeded=0",
+            (client_key, cutoff),
+        ).fetchone()["n"]
+        current_account_attempts = db.execute(
             "SELECT COUNT(*) AS n FROM auth_login_attempts WHERE email_normalized=? AND attempted_at>=? AND succeeded=0",
             (email, cutoff),
         ).fetchone()["n"]
-        # Per-account throttle; generic error avoids confirming account existence.
-        if attempts >= 10:
+        if current_client_attempts >= 50 or (not user and current_account_attempts >= 10):
+            reason = "client_attempt_limit" if current_client_attempts >= 50 else "account_attempt_limit"
             write_audit_event(db, actor_user_id=None, institution_id=None,
-                              action="auth.login_throttled", resource_type="user",
+                              action="auth.login_throttled", resource_type="client" if reason == "client_attempt_limit" else "user",
                               resource_id=None, outcome="denied",
-                              metadata_json='{"reason":"attempt_limit"}')
+                              metadata_json='{"reason":"' + reason + '"}')
             db.commit()
+            if reason == "client_attempt_limit":
+                raise HTTPException(429, "Too many sign-in attempts from this network. Try again later.")
             raise HTTPException(429, "Too many sign-in attempts. Try again later.")
-        user = verify_password(db, email, body.password)
         db.execute(
-            "INSERT INTO auth_login_attempts(email_normalized,attempted_at,succeeded) VALUES(?,?,?)",
-            (email, now.isoformat(timespec="seconds"), 1 if user else 0),
+            "INSERT INTO auth_login_attempts(email_normalized,attempted_at,succeeded,client_key) VALUES(?,?,?,?)",
+            (email, now_text, 1 if user else 0, client_key),
         )
         # Retain only the recent window plus a small margin.
         db.execute("DELETE FROM auth_login_attempts WHERE attempted_at<?",
@@ -114,6 +148,50 @@ def login(body: LoginRequest):
         db.commit()
         return {"access_token": token, "token_type": "bearer",
                 "expires_in": 28800, "user": _public_user(user)}
+    finally:
+        db.close()
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=12, max_length=1024)
+
+
+@router.post("/change-password")
+def change_password(body: PasswordChangeRequest, authorization: str | None = Header(default=None)):
+    """Change the authenticated user's password and revoke all existing sessions."""
+    token = _bearer(authorization)
+    db = _db()
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        session = resolve_session(db, token)
+        if not session:
+            raise HTTPException(401, "Session is invalid, expired, revoked, or account disabled.")
+        user = db.execute("SELECT * FROM users WHERE user_id=?", (session["user_id"],)).fetchone()
+        if not user or not verify_password(db, user["email_normalized"], body.current_password):
+            write_audit_event(db, actor_user_id=session["user_id"],
+                              institution_id=session["institution_id"],
+                              action="auth.password_change_failed", resource_type="user",
+                              resource_id=session["user_id"], outcome="denied")
+            db.commit()
+            raise HTTPException(403, "Current password is incorrect.")
+        salt = secrets.token_bytes(16)
+        password_hash = _password_record(body.new_password, salt, PASSWORD_ITERATIONS)
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        db.execute(
+            "UPDATE users SET password_salt=?,password_hash=?,password_iterations=?,updated_at=? WHERE user_id=?",
+            (salt.hex(), password_hash, PASSWORD_ITERATIONS, now, session["user_id"]),
+        )
+        db.execute(
+            "UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL",
+            (now, session["user_id"]),
+        )
+        write_audit_event(db, actor_user_id=session["user_id"],
+                          institution_id=session["institution_id"],
+                          action="auth.password_changed", resource_type="user",
+                          resource_id=session["user_id"], outcome="success")
+        db.commit()
+        return {"status": "password_changed", "reauthentication_required": True}
     finally:
         db.close()
 

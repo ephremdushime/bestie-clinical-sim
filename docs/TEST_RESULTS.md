@@ -1,20 +1,34 @@
-# Test results — Bestie Clinical Sim 1.3.0
+# Test results — Bestie Clinical Sim
 
-## Automated checks executed
+## Latest verified CI revision
+
+- Commit: `20f1c75ae6173c1d187267bb224cab5df9ccfb00`
+- GitHub Actions run: [40138208731](https://github.com/ephremdushime/bestie-clinical-sim/actions/runs/40138208731)
+- Result: all four CI jobs passed.
 
 | Check | Result | Scope / limitation |
 |---|---|---|
-| `python -m pytest -q` | PASS — 2 tests | Runs isolated API/security and mocked AI integration checks |
-| `python -m compileall -q backend tests` | PASS | Python syntax compilation only |
-| Session token enforcement | PASS | Production-mode API test: missing token denied, wrong token rejected, matching token accepted |
-| Exam start confidentiality | PASS | No case ID/title or pass mark returned to exam participant |
-| Exam submission confidentiality | PASS | Student response does not contain diagnosis or score |
-| Production config guard | PASS | Rejects unsafe defaults; accepts strong distinct test secrets and explicit HTTPS origin |
-| AI case draft lifecycle | PASS (mocked) | Draft, SQLite persistence, educator attestation, registry insertion and reload |
-| Live LLM provider | NOT TESTED | No live credentials/provider verification performed |
-| Live literature retrieval | NOT VERIFIED | External PubMed/Europe PMC calls were not verified in this release pass |
-| Frontend production build | NOT VERIFIED | npm dependency installation failed because registry access was unavailable and packages were not cached |
-| Full browser end-to-end | NOT RUN | Requires a successful frontend build and browser test environment |
-| Independent clinical/security review | NOT DONE | Required before institutional or production use |
+| Backend release suite | PASS — 70 tests | Isolated backend, identity, exam/session integrity, tenant isolation, reconciliation, backup and provisioning tests |
+| Frontend production build | PASS | Production frontend bundle compiled |
+| Frontend browser workflows | PASS — 6 tests | Responsive layout/browser checks at mobile and tablet widths |
+| Live backend browser workflows | PASS — 2 tests | Practice workflow and controlled-exam submission confidentiality |
+| Docker Compose validation | PASS | Configuration validation only |
+| Backend container build | PASS | Image builds as unprivileged `appuser`; writable data directory asserted |
+| Frontend container build | PASS | Container build completed |
+| Nginx configuration | PASS | Configuration syntax validated |
 
-Passing automated checks does not mean the platform is production-certified.
+## Security controls covered by regression tests
+
+- Production protected routes require provisioned bearer sessions; suspended or institution-unassigned accounts are denied.
+- Educator dashboards, exam actions, case drafts, published cases and learner sessions are institution-scoped.
+- Controlled exams enforce learner role, matching institution, one attempt per account, pinned case/rubric versions and snapshot hashes.
+- Session submission is one-time; the learner-facing exam response withholds the hidden diagnosis and scoring decisions.
+- Historical records with no attributable owner remain quarantined. Reconciliation requires an active platform administrator, a different independently authenticated platform-admin reviewer, an evidence reference, and consistent existing account/parent ownership.
+- WebSocket tickets are short-lived and single-use; production Origin, institution-room boundaries and message rate limits are checked.
+- Container and deployment configuration checks cover non-root API execution and Nginx syntax.
+
+## Important limitations
+
+CI does not inspect a live institution's production database or prove that a real historical record has been reconciled. No assignment should be inferred from these tests. Use `docs/HISTORICAL_DATA_RECONCILIATION.md` against an authorized, backed-up database and keep ambiguous records quarantined.
+
+The checks do **not** establish clinical validation, institutional approval, high-stakes examination validity, production deployment readiness, external penetration-test completion, load capacity, successful backup restoration, or incident-response readiness. Scoring remains formative and unvalidated; clinical cases and rubrics require qualified faculty review. A staging deployment rehearsal and institutional sign-off remain required before real learner data or consequential examinations are used.

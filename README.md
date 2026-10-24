@@ -7,7 +7,7 @@ Bestie Clinical Sim is a clinical education simulation prototype for medical and
 ## Included capabilities
 
 - **Practice mode:** patient dialogue, adjustable browser speech synthesis, optional browser dictation where supported, hints, investigations with a required clinical indication, case-configured results, management checklist, reflection and formative report.
-- **Examination mode:** teacher creates an exam with a hidden case and shareable code; the API enforces time limits on chat/investigation actions; the student-facing submission response does not reveal the hidden diagnosis, score, rubric decisions or threshold result. Full reports remain in the educator dashboard. This is still shared-token access, not per-user authentication.
+- **Examination mode:** an educator creates an institution-scoped exam with a hidden case and join code; in production, provisioned learner accounts must belong to that institution. The API enforces exam time limits, one attempt per learner account, and pinned case/rubric versions. The student-facing submission response does not reveal the hidden diagnosis, score, rubric decisions or threshold result. Full reports remain in the authorized educator dashboard.
 - **Case library:** malaria, severe respiratory presentation, burns with possible inhalation injury, road-traffic trauma, pregnancy with severe headache, and pediatric fever/fast breathing.
 - **Investigations:** case-specific fixed results for configured tests; unsupported tests do not receive invented findings. A test's indication is recorded. Synthetic imaging schematics are explicitly labeled as illustrations, not diagnostic-quality images.
 - **Educator console:** exam builder, exam codes, close-exam control, recent sessions, reports and event/decision logs.
@@ -41,7 +41,7 @@ npm run dev
 
 Open the Vite URL shown in the terminal (normally `http://localhost:5173`). Vite proxies `/api` and `/ws` to `localhost:8000`.
 
-In development, token gates are open unless environment variables are set. For a controlled pilot, use separate strong `PILOT_ACCESS_TOKEN` and `EDUCATOR_ACCESS_TOKEN` values and set `APP_ENV=production`. These are shared pilot tokens, **not** per-user accounts or institutional SSO.
+In development, legacy token gates are available for local testing. Shared `PILOT_ACCESS_TOKEN` and `EDUCATOR_ACCESS_TOKEN` values are **not accepted for protected routes in production**. Production requires provisioned account bearer sessions. Provision accounts from the trusted server shell with `python scripts/provision_account.py`; the utility prompts for passwords without echoing them. Users can change their password from the signed-in sidebar. Account provisioning is not exposed as a public registration endpoint; institutional SSO, password recovery, and centralized lifecycle management are still not implemented.
 
 ## Optional language model
 
@@ -88,14 +88,14 @@ Copy `.env.example` to `.env`, replace all example secrets, configure the exact 
 
 ## Known limitations and next steps
 
-1. No individual student/educator accounts, password reset, institutional SSO, identity verification, or per-user educator audit attribution; shared pilot/educator secrets remain a controlled-pilot mechanism, not a production identity system.
+1. Individual provisioned accounts, password changes, revocable bearer sessions, and per-user audit attribution are implemented. Institutional SSO, self-service account recovery, verified identity onboarding, MFA, and centralized account lifecycle management are not implemented; accounts must be provisioned through the trusted server shell.
 2. Scoring is based on transparent but limited demonstration checks; it is not validated against faculty marking or OSCE performance.
 3. Exam settings include duration and pass mark; pass/fail decisions must be reviewed and formally validated before operational use.
 4. The case registry is loaded from built-in cases plus educator-approved cases persisted in SQLite. Case approval/publishing remains an educator attestation and is not independent clinical certification.
 5. The source workflow accepts references and notes but does not crawl Google or external platforms, perform retrieval-augmented generation, verify URLs, or establish clinical evidence automatically.
 6. Imaging schematics are not real radiographs/CTs/ultrasounds. A validated synthetic image library and specialist review are required.
 7. The current VR/AR workspace is a compatibility scaffold, not a functional immersive clinical environment.
-8. No deployment or institutional approval has been completed. Frontend production compilation could not be verified because the npm registry was unreachable from this environment; the Docker frontend image is therefore not yet release-verified.
+8. CI currently passes the backend regression suite, frontend production build/browser workflows, live backend browser workflows, Docker image builds, Docker Compose validation, and Nginx configuration checks. This is not a substitute for a deployment rehearsal, TLS/domain configuration, external security assessment, load testing, backup restoration drill, monitoring/alerting, incident-response procedures, or institutional approval. No production deployment or clinical validation is claimed.
 
 See `docs/PRODUCT_SPECIFICATION.md`, `docs/AI_SOURCE_GOVERNANCE.md`, `docs/UNIPORT_VR_AR_TEST_PLAN.md`, and `docs/TEST_RESULTS.md`.
 
@@ -105,3 +105,18 @@ See `docs/PRODUCT_SPECIFICATION.md`, `docs/AI_SOURCE_GOVERNANCE.md`, `docs/UNIPO
 The educator console supports evidence-assisted case drafting. It can query PubMed and Europe PMC, pass retrieved citation metadata/eligible abstracts to the optional configured language model, persist drafts in SQLite, record review notes, and publish an educator-attested case into the case registry. See `docs/AI_CASE_FACTORY.md` for endpoints, controls and limitations.
 
 Important: the source search is evidence discovery, not clinical verification. A fallback draft is only a scaffold. Educator attestation does not independently certify clinical accuracy; complete the review checklist before publishing.
+
+Collaboration WebSocket security includes short-lived single-use tickets, production Origin allowlisting, same-institution room checks, and a per-connection message rate limit.
+
+### Existing Docker database volume upgrade note
+
+The API image runs as the unprivileged `appuser`. A newly initialized `clinical_sim_data` named volume receives the image's `/data` directory ownership. If upgrading a deployment whose existing volume was previously written by a root-running container, check ownership before starting the upgraded API. Back up the database first, stop the stack, then run this one-time ownership repair:
+
+```sh
+docker compose stop api
+docker compose run --rm --user root --entrypoint sh api -c 'chown -R appuser:app /data'
+docker compose up -d
+```
+
+Run the repair only when inspection confirms the volume is not writable by `appuser`; it recursively changes ownership of the mounted `/data` volume. Confirm the service is healthy and verify the database after the upgrade. This procedure is not a substitute for a tested backup and restore.
+

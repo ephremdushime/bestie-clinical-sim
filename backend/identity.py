@@ -1,9 +1,10 @@
-"""Identity/RBAC primitives for Bestie Clinical Sim.
+"""Identity and session primitives for Bestie Clinical Sim.
 
-This module is deliberately isolated until the API routes are migrated to it.
-Passwords are PBKDF2-hashed; raw bearer tokens are returned once and never stored.
-Institution scope and role checks are explicit. Do not treat this module as a
-complete production authentication system until wired into every HTTP/WebSocket route.
+Passwords are PBKDF2-hashed; raw bearer tokens are returned once and only their
+hashes are persisted. Protected production HTTP routes resolve provisioned bearer
+sessions through this module. WebSocket access uses separately issued, short-lived,
+single-use room tickets. This is not a substitute for institutional SSO, MFA, or
+external identity verification.
 """
 from __future__ import annotations
 
@@ -75,6 +76,12 @@ def init_identity_schema(db: sqlite3.Connection) -> None:
     );
     CREATE INDEX IF NOT EXISTS idx_audit_institution_time
       ON audit_events(institution_id, created_at);
+    CREATE TRIGGER IF NOT EXISTS audit_events_no_update
+      BEFORE UPDATE ON audit_events
+      BEGIN SELECT RAISE(ABORT, 'audit events are append-only'); END;
+    CREATE TRIGGER IF NOT EXISTS audit_events_no_delete
+      BEFORE DELETE ON audit_events
+      BEGIN SELECT RAISE(ABORT, 'audit events are append-only'); END;
     """)
 
 
@@ -124,6 +131,17 @@ def verify_password(db: sqlite3.Connection, email: str, password: str) -> sqlite
         # Spend a hash operation for unknown/disabled accounts to reduce timing leakage.
         _password_record(password if len(password) >= 12 else "invalid-password-placeholder", b"\0" * 16)
         return None
+    if row["role"] in {"learner", "educator", "institution_admin"} and not row["institution_id"]:
+        _password_record(password if len(password) >= 12 else "invalid-password-placeholder", b"\0" * 16)
+        return None
+    if row["institution_id"]:
+        institution = db.execute(
+            "SELECT status FROM institutions WHERE institution_id=?",
+            (row["institution_id"],),
+        ).fetchone()
+        if not institution or institution["status"] != "active":
+            _password_record(password if len(password) >= 12 else "invalid-password-placeholder", b"\0" * 16)
+            return None
     try:
         candidate = _password_record(password, bytes.fromhex(row["password_salt"]), row["password_iterations"])
     except (ValueError, TypeError):
@@ -157,11 +175,16 @@ def resolve_session(db: sqlite3.Connection, token: str) -> sqlite3.Row | None:
     digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
     row = db.execute(
         """SELECT u.user_id,u.institution_id,u.email_normalized,u.display_name,u.role,
-                  u.status,s.expires_at,s.revoked_at
+                  u.status,s.expires_at,s.revoked_at,i.status AS institution_status
            FROM auth_sessions s JOIN users u ON u.user_id=s.user_id
+           LEFT JOIN institutions i ON i.institution_id=u.institution_id
            WHERE s.token_hash=?""", (digest,)
     ).fetchone()
     if not row or row["status"] != "active" or row["revoked_at"]:
+        return None
+    if row["role"] in {"learner", "educator", "institution_admin"} and not row["institution_id"]:
+        return None
+    if row["institution_id"] and row["institution_status"] != "active":
         return None
     try:
         if datetime.fromisoformat(row["expires_at"]) <= datetime.now(timezone.utc):

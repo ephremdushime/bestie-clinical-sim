@@ -1,5 +1,6 @@
 """Regression tests for immutable case/rubric snapshots and exam pinning."""
 import sqlite3
+import pytest
 import sys
 from pathlib import Path
 
@@ -101,3 +102,41 @@ def test_invalid_exam_codes_are_rate_limited(tmp_path, monkeypatch):
             "mode": "exam", "exam_code": "ANOTHER-CODE",
         })
         assert blocked.status_code == 429
+
+def test_case_and_rubric_snapshot_tampering_fail_closed(tmp_path, monkeypatch):
+    db_path = tmp_path / "snapshot-tampering.db"
+    monkeypatch.setattr(main, "DB_PATH", db_path)
+    monkeypatch.setattr(main, "APP_ENV", "development")
+    main.init_db()
+    main.ensure_version_snapshots()
+
+    with sqlite3.connect(db_path) as db:
+        db.execute(
+            "UPDATE case_versions SET payload='{}' WHERE case_id=? AND version=?",
+            ("malaria-001", "1.0.0"),
+        )
+        db.execute(
+            "UPDATE rubric_versions SET payload='{}' WHERE case_id=? AND case_version=? AND rubric_version=?",
+            ("malaria-001", "1.0.0", main.RUBRIC_VERSION),
+        )
+        db.commit()
+        db.row_factory = sqlite3.Row
+        case_row = db.execute(
+            "SELECT payload,content_hash FROM case_versions WHERE case_id=? AND version=?",
+            ("malaria-001", "1.0.0"),
+        ).fetchone()
+        rubric_row = db.execute(
+            "SELECT payload,content_hash FROM rubric_versions WHERE case_id=? AND case_version=? AND rubric_version=?",
+            ("malaria-001", "1.0.0", main.RUBRIC_VERSION),
+        ).fetchone()
+
+    with pytest.raises(main.HTTPException) as case_error:
+        main._validated_snapshot(case_row, "case")
+    assert case_error.value.status_code == 409
+    assert "integrity check" in case_error.value.detail
+
+    with pytest.raises(main.HTTPException) as rubric_error:
+        main._validated_snapshot(rubric_row, "rubric")
+    assert rubric_error.value.status_code == 409
+    assert "integrity check" in rubric_error.value.detail
+

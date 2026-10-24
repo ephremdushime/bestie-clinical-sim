@@ -102,3 +102,80 @@ def test_invalid_or_missing_websocket_ticket_is_rejected(tmp_path, monkeypatch):
             with pytest.raises(WebSocketDisconnect):
                 with client.websocket_connect(url):
                     pass
+
+
+def test_expired_ticket_is_rejected(tmp_path, monkeypatch):
+    learner_id, _, token_a, _ = provision(tmp_path / "ws-expired.db", monkeypatch)
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/ws/tickets",
+            headers={"Authorization": f"Bearer {token_a}"},
+            json={"room": f"user-{learner_id}"},
+        )
+        assert response.status_code == 200, response.text
+        ticket = response.json()["ticket"]
+        import hashlib
+        digest = hashlib.sha256(ticket.encode("utf-8")).hexdigest()
+        db = sqlite3.connect(tmp_path / "ws-expired.db")
+        db.execute(
+            "UPDATE websocket_tickets SET expires_at=? WHERE ticket_hash=?",
+            ("2000-01-01T00:00:00+00:00", digest),
+        )
+        db.commit()
+        db.close()
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(f"/ws/rooms/user-{learner_id}?ticket={ticket}"):
+                pass
+
+
+def test_suspended_institution_cannot_use_issued_ticket(tmp_path, monkeypatch):
+    learner_id, _, token_a, _ = provision(tmp_path / "ws-suspended.db", monkeypatch)
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/ws/tickets",
+            headers={"Authorization": f"Bearer {token_a}"},
+            json={"room": "institution-inst-a"},
+        )
+        assert response.status_code == 200, response.text
+        ticket = response.json()["ticket"]
+        db = sqlite3.connect(tmp_path / "ws-suspended.db")
+        db.execute("UPDATE institutions SET status='suspended' WHERE institution_id='inst-a'")
+        db.commit()
+        db.close()
+        with pytest.raises(WebSocketDisconnect):
+            with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}"):
+                pass
+
+def test_production_websocket_requires_trusted_origin(tmp_path, monkeypatch):
+    provision(tmp_path / "ws-origin.db", monkeypatch)
+    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setenv("CORS_ORIGINS", "https://pilot.example.org,https://educator.example.org")
+
+    from types import SimpleNamespace
+    assert main._websocket_origin_allowed("https://pilot.example.org")
+    assert main._websocket_origin_allowed("https://educator.example.org")
+    assert not main._websocket_origin_allowed("https://attacker.example")
+    assert not main._websocket_origin_allowed(None)
+    assert not main._websocket_origin_allowed("")
+
+def test_websocket_message_rate_limit_applies_per_connection(tmp_path, monkeypatch):
+    learner_id, _, token_a, _ = provision(tmp_path / "ws-rate.db", monkeypatch)
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/api/ws/tickets",
+            headers={"Authorization": f"Bearer {token_a}"},
+            json={"room": f"user-{learner_id}"},
+        )
+        assert response.status_code == 200, response.text
+        ticket = response.json()["ticket"]
+        with client.websocket_connect(
+            f"/ws/rooms/user-{learner_id}?ticket={ticket}"
+        ) as socket:
+            assert socket.receive_json()["type"] == "history"
+            for index in range(30):
+                socket.send_json({"text": f"message {index}"})
+                assert socket.receive_json()["type"] == "message"
+            socket.send_json({"text": "one too many"})
+            limited = socket.receive_json()
+            assert limited["type"] == "error"
+            assert "rate limit" in limited["message"].lower()

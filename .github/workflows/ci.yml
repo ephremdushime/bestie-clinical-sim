@@ -32,7 +32,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r backend/requirements.txt pytest
       - name: Compile Python files
-        run: python -m compileall -q backend tests
+        run: python -m compileall -q backend tests scripts
       - name: Run release tests
         run: python -m pytest -q
 
@@ -84,3 +84,24 @@ jobs:
         env:
           CI: "true"
         run: npx playwright test --config=playwright.backend.config.js
+
+  container-validation:
+    name: Container and deployment configuration
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Validate Docker Compose configuration
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+      - name: Build backend container
+        run: docker build --file Dockerfile.backend --tag bestie-clinical-sim-backend:ci .
+      - name: Assert backend image uses an unprivileged user
+        run: test "$(docker image inspect bestie-clinical-sim-backend:ci --format '{{.Config.User}}')" = "appuser"
+      - name: Assert unprivileged API user can write to the data directory
+        run: docker run --rm --entrypoint sh bestie-clinical-sim-backend:ci -c 'test -w /data && touch /data/.ci-write-test && rm /data/.ci-write-test'
+      - name: Build frontend container
+        run: docker build --file Dockerfile.frontend --tag bestie-clinical-sim-frontend:ci .
+      - name: Validate Nginx configuration
+        run: docker run --rm --add-host api:127.0.0.1 --entrypoint nginx bestie-clinical-sim-frontend:ci -t
