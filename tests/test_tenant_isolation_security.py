@@ -197,7 +197,7 @@ def test_legacy_development_exam_closure_remains_compatible(tmp_path, monkeypatc
 
 def test_legacy_ownership_reconciliation_requires_platform_admin_and_writes_audit(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
-    from identity import create_user, init_identity_schema
+    from identity import create_user, init_identity_schema, issue_session
     with main.conn() as db:
         init_identity_schema(db)
         db.execute(
@@ -208,6 +208,11 @@ def test_legacy_ownership_reconciliation_requires_platform_admin_and_writes_audi
             db, email="platform-admin@example.test", display_name="Platform Admin",
             password="platform-admin-long-password", role="platform_admin",
         )
+        reviewer_id = create_user(
+            db, email="platform-reviewer@example.test", display_name="Platform Reviewer",
+            password="platform-reviewer-long-password", role="platform_admin",
+        )
+        reviewer_token = issue_session(db, reviewer_id)
         learner_id = create_user(
             db, email="legacy-student@example.test", display_name="Legacy Student",
             password="legacy-student-long-password", role="learner", institution_id="institution-a",
@@ -234,6 +239,7 @@ def test_legacy_ownership_reconciliation_requires_platform_admin_and_writes_audi
 
         assigned = client.post(
             "/api/platform-admin/ownership-reconciliation",
+            headers={"X-Ownership-Reviewer-Authorization": f"Bearer {reviewer_token}"},
             json={
                 "resource_type": "session",
                 "resource_id": "1",
@@ -259,6 +265,7 @@ def test_legacy_ownership_reconciliation_requires_platform_admin_and_writes_audi
 
         duplicate = client.post(
             "/api/platform-admin/ownership-reconciliation",
+            headers={"X-Ownership-Reviewer-Authorization": f"Bearer {reviewer_token}"},
             json={
                 "resource_type": "session",
                 "resource_id": "1",
@@ -272,20 +279,24 @@ def test_legacy_ownership_reconciliation_requires_platform_admin_and_writes_audi
 
 def test_ownerless_historical_records_stay_quarantined(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
-    from identity import create_user, init_identity_schema
+    from identity import create_user, init_identity_schema, issue_session
     with main.conn() as db:
         init_identity_schema(db)
         db.execute("INSERT INTO institutions(institution_id,name,created_at) VALUES(?,?,?)",
                    ("institution-a", "Institution A", main.now()))
         admin_id = create_user(db, email="platform-admin-quarantine@example.test",
             display_name="Platform Admin", password="platform-admin-long-password", role="platform_admin")
+        reviewer_id = create_user(db, email="platform-reviewer-quarantine@example.test",
+            display_name="Platform Reviewer", password="platform-reviewer-long-password", role="platform_admin")
+        reviewer_token = issue_session(db, reviewer_id)
         db.execute("INSERT INTO sessions(learner,case_id,mode,created_at,status,events,report) VALUES(?,?,?,?,?,?,?)",
             ("Unassigned Legacy Student", "malaria-001", "practice", main.now(), "completed", "[]", "{}"))
         db.commit()
     with TestClient(main.app) as client:
         monkeypatch.setattr(main, "current_identity_user",
             lambda request: identity(admin_id, None, role="platform_admin"))
-        response = client.post("/api/platform-admin/ownership-reconciliation", json={
+        response = client.post("/api/platform-admin/ownership-reconciliation",
+            headers={"X-Ownership-Reviewer-Authorization": f"Bearer {reviewer_token}"}, json={
             "resource_type": "session", "resource_id": "1", "institution_id": "institution-a",
             "reason": "The archived source is not yet attributable to a verified institution.",
             "evidence_reference": "RECON-2026-UNKNOWN",
