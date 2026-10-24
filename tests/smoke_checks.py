@@ -75,12 +75,13 @@ assert client.get('/api/educator/dashboard').status_code == 401
 assert client.get('/api/educator/dashboard', headers={'X-Educator-Token':'e'*40}).status_code == 401
 assert client.get('/api/educator/dashboard', headers={'Authorization':f'Bearer {learner_token}'}).status_code == 403
 assert client.get('/api/educator/dashboard', headers={'Authorization':f'Bearer {educator_token}'}).status_code == 200
-secure = client.post('/api/sessions', headers={'X-Pilot-Token':'test-pilot-secret'}, json={'learner':'Session owner','case_id':'malaria-001','mode':'practice'})
+legacy_start = client.post('/api/sessions', headers={'X-Pilot-Token':'test-pilot-secret'}, json={'learner':'Unverified session','case_id':'malaria-001','mode':'practice'})
+assert legacy_start.status_code == 401, legacy_start.text
+secure = client.post('/api/sessions', headers={'Authorization':f'Bearer {learner_token}'}, json={'learner':'Forged label','case_id':'malaria-001','mode':'practice'})
 assert secure.status_code == 200, secure.text
 secure_data = secure.json()
-assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'X-Pilot-Token':'test-pilot-secret'}, json={'message':'When did it start?'}).status_code == 401
-assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'X-Pilot-Token':'test-pilot-secret','X-Session-Token':'wrong-token'}, json={'message':'When did it start?'}).status_code == 403
-assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'X-Pilot-Token':'test-pilot-secret','X-Session-Token':secure_data['session_token']}, json={'message':'When did it start?'}).status_code == 200
+assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'X-Session-Token':secure_data['session_token']}, json={'message':'When did it start?'}).status_code == 401
+assert client.post(f"/api/sessions/{secure_data['session_id']}/chat", headers={'Authorization':f'Bearer {learner_token}'}, json={'message':'When did it start?'}).status_code == 200
 main.APP_ENV = 'development'
 
 case_draft = client.post('/api/educator/case-draft', json={'topic':'Pediatric dehydration','specialty':'Pediatrics','source_references':['educator supplied protocol']})
