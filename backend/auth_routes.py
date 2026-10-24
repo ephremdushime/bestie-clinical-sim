@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import secrets
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,8 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from identity import (
+    PASSWORD_ITERATIONS,
+    _password_record,
     init_identity_schema,
     issue_session,
     resolve_session,
@@ -114,6 +118,49 @@ def login(body: LoginRequest):
         db.commit()
         return {"access_token": token, "token_type": "bearer",
                 "expires_in": 28800, "user": _public_user(user)}
+    finally:
+        db.close()
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=12, max_length=1024)
+
+
+@router.post("/change-password")
+def change_password(body: PasswordChangeRequest, authorization: str | None = Header(default=None)):
+    """Change the authenticated user's password and revoke all existing sessions."""
+    token = _bearer(authorization)
+    db = _db()
+    try:
+        session = resolve_session(db, token)
+        if not session:
+            raise HTTPException(401, "Session is invalid, expired, revoked, or account disabled.")
+        user = db.execute("SELECT * FROM users WHERE user_id=?", (session["user_id"],)).fetchone()
+        if not user or not verify_password(db, user["email_normalized"], body.current_password):
+            write_audit_event(db, actor_user_id=session["user_id"],
+                              institution_id=session["institution_id"],
+                              action="auth.password_change_failed", resource_type="user",
+                              resource_id=session["user_id"], outcome="denied")
+            db.commit()
+            raise HTTPException(403, "Current password is incorrect.")
+        salt = secrets.token_bytes(16)
+        password_hash = _password_record(body.new_password, salt, PASSWORD_ITERATIONS)
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        db.execute(
+            "UPDATE users SET password_salt=?,password_hash=?,password_iterations=?,updated_at=? WHERE user_id=?",
+            (salt.hex(), password_hash, PASSWORD_ITERATIONS, now, session["user_id"]),
+        )
+        db.execute(
+            "UPDATE auth_sessions SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL",
+            (now, session["user_id"]),
+        )
+        write_audit_event(db, actor_user_id=session["user_id"],
+                          institution_id=session["institution_id"],
+                          action="auth.password_changed", resource_type="user",
+                          resource_id=session["user_id"], outcome="success")
+        db.commit()
+        return {"status": "password_changed", "reauthentication_required": True}
     finally:
         db.close()
 
