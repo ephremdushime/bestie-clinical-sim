@@ -100,3 +100,45 @@ def test_cross_institution_draft_review_and_learner_session_access_are_denied(tm
         session = client.post("/api/sessions/1/chat", headers=headers_a,
                               json={"message": "Please tell me when symptoms started"})
         assert session.status_code == 403, session.text
+
+
+def test_generated_cases_are_visible_and_usable_only_in_their_institution(tmp_path, monkeypatch):
+    _setup(tmp_path / "generated-case-tenant.db", monkeypatch)
+    generated = {
+        "id": "generated-private-b",
+        "version": "1.0.0",
+        "title": "Institution B private case",
+        "specialty": "Internal medicine",
+        "level": "Clinical-year student",
+        "appearance": "Fictional adult patient",
+        "age": 40,
+        "sex": "adult",
+    }
+    monkeypatch.setitem(main.CASES, generated["id"], generated)
+    db = sqlite3.connect(tmp_path / "generated-case-tenant.db")
+    db.execute(
+        """INSERT INTO approved_cases(case_id,version,payload,approved_by,approved_at,institution_id)
+           VALUES(?,?,?,?,?,?)""",
+        (generated["id"], generated["version"], json.dumps(generated), "Educator B",
+         "2026-10-24T10:00:00+00:00", "inst-b"),
+    )
+    db.commit()
+    db.close()
+
+    with TestClient(main.app) as client:
+        headers_a = _login(client, "educator-a@example.edu", "educator-a-password")
+        listed = client.get("/api/cases", headers=headers_a)
+        assert listed.status_code == 200, listed.text
+        assert generated["id"] not in {item["id"] for item in listed.json()["cases"]}
+
+        started = client.post("/api/sessions", headers=headers_a,
+                              json={"case_id": generated["id"], "mode": "practice"})
+        assert started.status_code == 404, started.text
+
+        exam = client.post("/api/educator/exams", headers=headers_a, json={
+            "title": "Cross-tenant exam", "case_id": generated["id"], "duration": 20,
+            "pass_mark": 70})
+        assert exam.status_code == 404, exam.text
+
+        history = client.get(f"/api/educator/cases/{generated['id']}/versions", headers=headers_a)
+        assert history.status_code == 404, history.text
