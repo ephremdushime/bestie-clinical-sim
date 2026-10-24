@@ -145,3 +145,15 @@ def test_suspended_institution_cannot_use_issued_ticket(tmp_path, monkeypatch):
         with pytest.raises(WebSocketDisconnect):
             with client.websocket_connect(f"/ws/rooms/institution-inst-a?ticket={ticket}"):
                 pass
+
+def test_production_websocket_requires_trusted_origin(tmp_path, monkeypatch):
+    provision(tmp_path / "ws-origin.db", monkeypatch)
+    monkeypatch.setattr(main, "APP_ENV", "production")
+    monkeypatch.setenv("CORS_ORIGINS", "https://pilot.example.org,https://educator.example.org")
+
+    from types import SimpleNamespace
+    assert main._websocket_origin_allowed("https://pilot.example.org")
+    assert main._websocket_origin_allowed("https://educator.example.org")
+    assert not main._websocket_origin_allowed("https://attacker.example")
+    assert not main._websocket_origin_allowed(None)
+    assert not main._websocket_origin_allowed("")
