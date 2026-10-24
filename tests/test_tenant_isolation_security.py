@@ -452,6 +452,43 @@ def test_unassigned_published_case_reconciliation_assigns_case_and_versions_with
             assert version["institution_id"] == "institution-a"
             assert audit["outcome"] == "success"
 
+
+def test_production_publication_fails_closed_when_creator_attribution_is_missing(tmp_path, monkeypatch):
+    setup_db(tmp_path, monkeypatch)
+    draft = {
+        "draft_id": "legacy-draft-no-creator", "status": "reviewed_not_approved",
+        "topic": "Legacy case", "specialty": "General medicine",
+        "case": {
+            "id": "legacy-case-no-creator", "title": "Legacy case",
+            "diagnosis": "Fictional diagnosis",
+            "investigations": {
+                "fbc": {"name": "FBC", "result": "Fictional result", "interpretation": "Fictional interpretation"},
+                "glucose": {"name": "Glucose", "result": "Fictional result", "interpretation": "Fictional interpretation"},
+            },
+        },
+        "review": {"reviewer_user_id": "reviewer-a", "notes": "Independent review completed."},
+    }
+    with main.conn() as db:
+        db.execute(
+            "INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?)",
+            (draft["draft_id"], draft["topic"], draft["specialty"], draft["status"],
+             main.canonical_json(draft), main.now(), main.now(), "institution-a", None),
+        )
+        db.commit()
+
+    with TestClient(main.app) as client:
+        monkeypatch.setattr(main, "current_identity_user",
+            lambda request: identity("approver-a", "institution-a"))
+        response = client.post(
+            f"/api/educator/case-drafts/{draft['draft_id']}/approve-and-publish",
+            json={"review_notes": "Publication attestation after independent review."},
+        )
+        assert response.status_code == 409, response.text
+        assert "creator attribution is missing" in response.json()["detail"]
+        with main.conn() as db:
+            assert db.execute("SELECT COUNT(*) n FROM approved_cases").fetchone()["n"] == 0
+
+
 def test_production_case_publication_stays_with_originating_institution(tmp_path, monkeypatch):
     setup_db(tmp_path, monkeypatch)
     case_payload = {
