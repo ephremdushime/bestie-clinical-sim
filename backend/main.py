@@ -35,7 +35,9 @@ app.add_middleware(CORSMiddleware,allow_origins=os.getenv('CORS_ORIGINS','http:/
 
 # Production session creation requires a provisioned bearer identity; legacy per-session capabilities are read-only compatibility.
 from auth_routes import router as auth_router
+from admin_routes import router as admin_router
 app.include_router(auth_router)
+app.include_router(admin_router)
 
 def validate_production_configuration() -> None:
  """Fail closed on common unsafe production configuration mistakes."""
