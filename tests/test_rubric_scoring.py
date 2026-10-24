@@ -59,7 +59,10 @@ def test_report_scores_against_rubric_anchors_and_preserves_formative_warning(tm
 
 
 def test_legacy_rubric_snapshot_is_migrated_once_without_rewriting_history(tmp_path, monkeypatch):
-    path = _setup(tmp_path, monkeypatch)
+    path = tmp_path / "legacy-rubric.db"
+    monkeypatch.setattr(main, "DB_PATH", path)
+    monkeypatch.setattr(main, "APP_ENV", "development")
+    main.init_db()
     case = main.CASES["malaria-001"]
     legacy = main.rubric_definition()
     with sqlite3.connect(path) as db:
