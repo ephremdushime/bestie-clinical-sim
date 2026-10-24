@@ -267,7 +267,7 @@ class StartSession(BaseModel): learner: str=Field(default='Student',min_length=1
 class Message(BaseModel): message:str=Field(min_length=1,max_length=3000)
 class Investigation(BaseModel): test_id:str; indication:str=Field(min_length=3,max_length=800)
 class Finish(BaseModel): differential:list[str]=[]; final_diagnosis:str=''; management:list[str]=[]; reflection:str=''
-class ExamCreate(BaseModel): title:str=Field(min_length=3,max_length=120); case_id:str; duration:int=Field(default=20,ge=5,le=180); pass_mark:int=Field(default=70,ge=1,le=100); creator:str=Field(default='Educator',max_length=80)
+class ExamCreate(BaseModel): title:str=Field(min_length=3,max_length=120); case_id:str; duration:int=Field(default=20,ge=5,le=180); pass_mark:int=Field(default=70,ge=1,le=100); creator:str=Field(default='Educator',max_length=80); institution_id:str|None=Field(default=None,min_length=1,max_length=160)
 class SubmitExam(BaseModel): learner:str; session_id:int; report:dict
 class CaseDraftRequest(BaseModel): topic:str=Field(min_length=3,max_length=180); specialty:str=Field(default='General medicine',max_length=100); learner_level:str=Field(default='Clinical-year student',max_length=100); learning_objectives:list[str]=[]; source_notes:str=Field(default='',max_length=12000); source_references:list[str]=[]; auto_retrieve:bool=True
 
@@ -605,6 +605,27 @@ async def draft_case(body:CaseDraftRequest,request:Request):
 def create_exam(body:ExamCreate,request:Request):
  check_access(request,True)
  actor=educator_actor(request,body.creator)
+ institution_id=actor.get('institution_id')
+ if APP_ENV=='production':
+  if actor.get('role')=='platform_admin':
+   institution_id=body.institution_id or institution_id
+   if not institution_id:
+    raise HTTPException(422,'Choose an active institution when creating a production examination.')
+  else:
+   if not actor.get('institution_id'):
+    raise HTTPException(403,'An institution assignment is required to create an examination.')
+   if body.institution_id and body.institution_id!=actor.get('institution_id'):
+    raise HTTPException(403,'Educators cannot assign examinations to another institution.')
+   institution_id=actor['institution_id']
+  institution_db=conn()
+  try:
+   institution=institution_db.execute("SELECT status FROM institutions WHERE institution_id=?",(institution_id,)).fetchone()
+  finally:
+   institution_db.close()
+  if not institution or institution['status']!='active':
+   raise HTTPException(422,'The examination must belong to an existing active institution.')
+ elif body.institution_id:
+  institution_id=body.institution_id
  case_db=conn()
  try:
   case_definition=resolve_case_for_actor(case_db,body.case_id,actor)
@@ -613,7 +634,6 @@ def create_exam(body:ExamCreate,request:Request):
  if not case_definition: raise HTTPException(404,'Case not found in your available catalogue.')
  code=secrets.token_urlsafe(8).replace('-','').replace('_','').upper()[:12]
  case_version=case_definition.get('version','1.0.0')
- institution_id=actor.get('institution_id')
  creator_user_id=actor.get('user_id')
  c=conn()
  try:
