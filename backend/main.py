@@ -461,7 +461,6 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
  c.execute('INSERT INTO rubric_versions(case_id,case_version,rubric_version,rubric_json,content_hash,approved_by_user_id,created_at) VALUES(?,?,?,?,?,?,?)',(case['id'],case['version'],rubric_version,rubric_json,rubric_hash,actor['user_id'],case['approved_at']))
  c.execute('INSERT INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?) ON CONFLICT(case_id) DO UPDATE SET version=excluded.version,payload=excluded.payload,approved_by=excluded.approved_by,approved_at=excluded.approved_at',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at']))
  d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
- c.commit(); c.close(); CASES[case['id']]=case
  return {'status':d['status'],'case_id':case['id'],'version':case['version'],'rubric_version':rubric_version,'message':'Published following educator attestation; this is not independent clinical certification.'}
 
 @app.post('/api/educator/case-draft')
