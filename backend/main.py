@@ -69,11 +69,12 @@ def conn():
  c=sqlite3.connect(DB_PATH,timeout=20); c.row_factory=sqlite3.Row; return c
 
 def init_db():
- c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT);
- CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT);
+ c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id INTEGER, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT, owner_user_id TEXT, case_version TEXT, rubric_version TEXT, case_snapshot_json TEXT, rubric_snapshot_json TEXT);
+ CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT, case_version TEXT, rubric_version TEXT, case_snapshot_json TEXT, rubric_snapshot_json TEXT);
  CREATE TABLE IF NOT EXISTS submissions(id INTEGER PRIMARY KEY AUTOINCREMENT, exam_id INTEGER, learner TEXT, session_id INTEGER, report TEXT, submitted_at TEXT);
  CREATE TABLE IF NOT EXISTS case_drafts(id INTEGER PRIMARY KEY AUTOINCREMENT, draft_id TEXT UNIQUE, topic TEXT, specialty TEXT, status TEXT, payload TEXT, created_at TEXT, updated_at TEXT);
  CREATE TABLE IF NOT EXISTS approved_cases(case_id TEXT PRIMARY KEY, version TEXT, payload TEXT, approved_by TEXT, approved_at TEXT);
+ CREATE TABLE IF NOT EXISTS case_versions(case_id TEXT NOT NULL, version TEXT NOT NULL, rubric_version TEXT NOT NULL, payload TEXT NOT NULL, rubric_json TEXT NOT NULL, approved_by TEXT NOT NULL, approved_by_user_id TEXT, approved_at TEXT NOT NULL, review_notes TEXT NOT NULL, PRIMARY KEY(case_id,version));
  CREATE TABLE IF NOT EXISTS websocket_tickets(
    ticket_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, institution_id TEXT,
    room TEXT NOT NULL, expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL
@@ -83,6 +84,11 @@ def init_db():
  cols={row['name'] for row in c.execute('PRAGMA table_info(sessions)')}
  if 'session_token_hash' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN session_token_hash TEXT')
  if 'owner_user_id' not in cols: c.execute('ALTER TABLE sessions ADD COLUMN owner_user_id TEXT')
+ for col,typ in [('case_version','TEXT'),('rubric_version','TEXT'),('case_snapshot_json','TEXT'),('rubric_snapshot_json','TEXT')]:
+  if col not in cols: c.execute(f'ALTER TABLE sessions ADD COLUMN {col} {typ}')
+ exam_cols={row['name'] for row in c.execute('PRAGMA table_info(exams)')}
+ for col,typ in [('case_version','TEXT'),('rubric_version','TEXT'),('case_snapshot_json','TEXT'),('rubric_snapshot_json','TEXT')]:
+  if col not in exam_cols: c.execute(f'ALTER TABLE exams ADD COLUMN {col} {typ}')
  c.commit(); c.close()
 init_db()
 try:
@@ -93,6 +99,26 @@ try:
 except Exception:
  pass
 def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
+def rubric_for_case(case:dict) -> dict:
+ # Explicit versioned formative rubric. It preserves current transparent checks;
+ # it does not claim psychometric validation or competence certification.
+ return {'version':str(case.get('rubric_version') or '1.0.0'),
+         'domains':['Communication and history','Severity and examination',
+                    'Investigation selection and indication','Result interpretation',
+                    'Differential diagnosis','Final diagnosis','Management and safety',
+                    'Referral and follow-up'],
+         'critical_errors':list(case.get('critical_errors') or []),
+         'expected_actions':list(case.get('expected_actions') or []),
+         'expected_differentials':list(case.get('expected_differentials') or []),
+         'scoring_status':'formative_unvalidated'}
+def next_case_version(previous:str|None) -> str:
+ if not previous: return '1.0.0'
+ parts=previous.split('.')
+ try:
+  major,minor,patch=(int(parts[i]) for i in range(3))
+ except (ValueError,IndexError):
+  return '1.0.0'
+ return f'{major}.{minor}.{patch+1}'
 def save_event(c,sid,event):
  row=c.execute('SELECT events FROM sessions WHERE id=?',(sid,)).fetchone(); ev=json.loads(row['events'] or '[]'); ev.append({'at':now(),**event}); c.execute('UPDATE sessions SET events=? WHERE id=?',(json.dumps(ev),sid))
 def check_access(request:Request, educator=False):
@@ -180,8 +206,11 @@ def create_session(body:StartSession,request:Request):
  # The authenticated account is authoritative for the learner label and session ownership.
  learner_name=identity['display_name'] if identity and identity['role']=='learner' else body.learner.strip()
  owner_user_id=identity['user_id'] if identity and identity['role']=='learner' else None
- c=conn(); cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id) VALUES(?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id)); sid=cur.lastrowid
- opening=CASES[case_id]['opening']; save_event(c,sid,{'type':'session_started','mode':body.mode,'case_id':case_id}); c.commit(); c.close()
+ case_payload=(json.loads(ex['case_snapshot_json']) if body.mode=='exam' and ex['case_snapshot_json'] else CASES[case_id])
+ rubric_payload=(json.loads(ex['rubric_snapshot_json']) if body.mode=='exam' and ex['rubric_snapshot_json'] else rubric_for_case(case_payload))
+ case_json=json.dumps(case_payload); rubric_json=json.dumps(rubric_payload)
+ c=conn(); cur=c.execute('INSERT INTO sessions(learner,case_id,mode,exam_id,created_at,session_token_hash,owner_user_id,case_version,rubric_version,case_snapshot_json,rubric_snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(learner_name,case_id,body.mode,exam_id,now(),session_token_hash,owner_user_id,str(case_payload.get('version') or '1.0.0'),rubric_payload['version'],case_json,rubric_json)); sid=cur.lastrowid
+ opening=case_payload['opening']; save_event(c,sid,{'type':'session_started','mode':body.mode,'case_id':case_id,'case_version':str(case_payload.get('version') or '1.0.0'),'rubric_version':rubric_payload['version']}); c.commit(); c.close()
  # Never expose the hidden case identifier/title to a controlled-exam participant.
  return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':CASES[case_id]['age'],'sex':CASES[case_id]['sex'],'appearance':CASES[case_id]['appearance'],'vitals':CASES[case_id]['vitals'] if body.mode=='practice' else None}}
 
@@ -265,7 +294,7 @@ def finish(sid:int,body:Finish,request:Request):
  if not s: c.close(); raise HTTPException(404,'Session not found.')
  check_session_access(request,s)
  if s['status']!='active': c.close(); raise HTTPException(409,'Session already submitted.')
- events=json.loads(s['events'] or '[]'); report=make_report(CASES[s['case_id']],events,body); report['mode']=s['mode']; report['case_id']=s['case_id']; report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
+ events=json.loads(s['events'] or '[]'); case_snapshot=json.loads(s['case_snapshot_json']) if s['case_snapshot_json'] else CASES[s['case_id']]; report=make_report(case_snapshot,events,body); report['mode']=s['mode']; report['case_id']=s['case_id']; report['case_version']=s['case_version'] or case_snapshot.get('version','1.0.0'); report['rubric_version']=s['rubric_version'] or '1.0.0'; report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
  if s['mode']=='exam' and s['exam_id']:
   ex=c.execute('SELECT pass_mark FROM exams WHERE id=?',(s['exam_id'],)).fetchone(); report['demo_threshold']=int(ex['pass_mark']) if ex else None; report['threshold_status']=('critical_review_required' if report['critical_flags'] else ('meets_demo_threshold' if report['score']>=int(ex['pass_mark']) else 'below_demo_threshold')) if ex else 'not_set'
  c.execute('UPDATE sessions SET status="completed",report=? WHERE id=?',(json.dumps(report),sid)); save_event(c,sid,{'type':'session_finished','score':report['score']}); c.commit(); c.close()
@@ -349,8 +378,13 @@ def approve_case_draft(draft_id: str, body: CaseReviewRequest, request: Request)
   c.close(); raise HTTPException(422,'Investigation results and interpretations contain placeholders. Complete them before publishing.')
  if not body.review_notes.strip(): c.close(); raise HTTPException(422,'A clinical review note is required.')
  actor=educator_actor(request,body.reviewer)
- case['version']='1.0.0'; case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
- c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],json.dumps(case),actor['display_name'],case['approved_at']))
+ current=c.execute('SELECT version FROM approved_cases WHERE case_id=?',(case['id'],)).fetchone()
+ case['version']=next_case_version(current['version'] if current else None)
+ case['rubric_version']=str(case.get('rubric_version') or '1.0.0')
+ case['status']='educator_approved'; case['approved_by']=actor['display_name']; case['approved_by_user_id']=actor['user_id']; case['approved_at']=now(); case['review_notes']=body.review_notes
+ rubric=rubric_for_case(case); case_json=json.dumps(case); rubric_json=json.dumps(rubric)
+ c.execute('INSERT INTO case_versions(case_id,version,rubric_version,payload,rubric_json,approved_by,approved_by_user_id,approved_at,review_notes) VALUES(?,?,?,?,?,?,?,?,?)',(case['id'],case['version'],case['rubric_version'],case_json,rubric_json,actor['display_name'],actor['user_id'],case['approved_at'],body.review_notes))
+ c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at) VALUES(?,?,?,?,?)',(case['id'],case['version'],case_json,actor['display_name'],case['approved_at']))
  d['status']='published_educator_attested'; d['case']=case; d['review']={'reviewer':actor['display_name'],'reviewer_user_id':actor['user_id'],'notes':body.review_notes,'reviewed_at':now()}; c.execute('UPDATE case_drafts SET status=?,payload=?,updated_at=? WHERE draft_id=?',(d['status'],json.dumps(d),now(),draft_id)); c.commit(); c.close(); CASES[case['id']]=case
  return {'status':d['status'],'case_id':case['id'],'version':case['version'],'message':'Published following educator attestation; this is not independent clinical certification.'}
 
@@ -381,7 +415,8 @@ def create_exam(body:ExamCreate,request:Request):
  check_access(request,True)
  if body.case_id not in CASES: raise HTTPException(404,'Case not found.')
  code=secrets.token_urlsafe(5).replace('-','').replace('_','').upper()[:8]
- c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator) VALUES(?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),body.creator)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
+ case=CASES[body.case_id]; case_json=json.dumps(case); rubric=rubric_for_case(case); rubric_json=json.dumps(rubric)
+ c=conn(); c.execute('INSERT INTO exams(code,title,case_id,duration,pass_mark,created_at,creator,case_version,rubric_version,case_snapshot_json,rubric_snapshot_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(code,body.title,body.case_id,body.duration,body.pass_mark,now(),body.creator,str(case.get('version') or '1.0.0'),rubric['version'],case_json,rubric_json)); c.commit(); ex=c.execute('SELECT * FROM exams WHERE code=?',(code,)).fetchone(); c.close(); return dict(ex)
 @app.get('/api/educator/dashboard')
 def dashboard(request:Request):
  check_access(request,True); c=conn(); sessions=[dict(r) for r in c.execute('SELECT id,learner,case_id,mode,exam_id,created_at,status,events,report FROM sessions ORDER BY id DESC LIMIT 100')]; exams=[dict(r) for r in c.execute('SELECT * FROM exams ORDER BY id DESC LIMIT 100')]; total=c.execute('SELECT COUNT(*) n FROM sessions').fetchone()['n']; done=c.execute('SELECT COUNT(*) n FROM sessions WHERE status="completed"').fetchone()['n']; c.close()
