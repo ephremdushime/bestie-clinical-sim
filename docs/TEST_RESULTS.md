@@ -1,16 +1,16 @@
 # Test results — Bestie Clinical Sim
 
-## Latest verified CI revision
+## Latest verified CI revision on main
 
-- Commit: `20f1c75ae6173c1d187267bb224cab5df9ccfb00`
-- GitHub Actions run: [40138208731](https://github.com/ephremdushime/bestie-clinical-sim/actions/runs/40138208731)
-- Result: all four CI jobs passed.
+- Merge commit: `33e9394ac7c456fba67f56487a9755067e9dccc8`
+- GitHub Actions run: [40138514028](https://github.com/ephremdushime/bestie-clinical-sim/actions/runs/40138514028)
+- Result: all four CI jobs passed after merge.
 
 | Check | Result | Scope / limitation |
 |---|---|---|
 | Backend release suite | PASS — 70 tests | Isolated backend, identity, exam/session integrity, tenant isolation, reconciliation, backup and provisioning tests |
 | Frontend production build | PASS | Production frontend bundle compiled |
-| Frontend browser workflows | PASS — 6 tests | Responsive layout/browser checks at mobile and tablet widths |
+| Frontend browser workflows | PASS — 6 tests | Browser workflow coverage; not full accessibility/device certification |
 | Live backend browser workflows | PASS — 2 tests | Practice workflow and controlled-exam submission confidentiality |
 | Docker Compose validation | PASS | Configuration validation only |
 | Backend container build | PASS | Image builds as unprivileged `appuser`; writable data directory asserted |
@@ -27,8 +27,10 @@
 - WebSocket tickets are short-lived and single-use; production Origin, institution-room boundaries and message rate limits are checked.
 - Container and deployment configuration checks cover non-root API execution and Nginx syntax.
 
-## Important limitations
+## What these results do not prove
 
 CI does not inspect a live institution's production database or prove that a real historical record has been reconciled. No assignment should be inferred from these tests. Use `docs/HISTORICAL_DATA_RECONCILIATION.md` against an authorized, backed-up database and keep ambiguous records quarantined.
 
 The checks do **not** establish clinical validation, institutional approval, high-stakes examination validity, production deployment readiness, external penetration-test completion, load capacity, successful backup restoration, or incident-response readiness. Scoring remains formative and unvalidated; clinical cases and rubrics require qualified faculty review. A staging deployment rehearsal and institutional sign-off remain required before real learner data or consequential examinations are used.
+
+The governance and operational evidence packs added in this branch are templates only. Their statuses remain BLOCKED / NOT PERFORMED until an accountable institution, qualified faculty and independent assessor produce evidence outside CI.
