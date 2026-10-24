@@ -107,3 +107,16 @@ The educator console supports evidence-assisted case drafting. It can query PubM
 Important: the source search is evidence discovery, not clinical verification. A fallback draft is only a scaffold. Educator attestation does not independently certify clinical accuracy; complete the review checklist before publishing.
 
 Collaboration WebSocket security includes short-lived single-use tickets, production Origin allowlisting, same-institution room checks, and a per-connection message rate limit.
+
+### Existing Docker database volume upgrade note
+
+The API image runs as the unprivileged `appuser`. A newly initialized `clinical_sim_data` named volume receives the image's `/data` directory ownership. If upgrading a deployment whose existing volume was previously written by a root-running container, check ownership before starting the upgraded API. Back up the database first, stop the stack, then run this one-time ownership repair:
+
+```sh
+docker compose stop api
+docker compose run --rm --user root --entrypoint sh api -c 'chown -R appuser:app /data'
+docker compose up -d
+```
+
+Run the repair only when inspection confirms the volume is not writable by `appuser`; it recursively changes ownership of the mounted `/data` volume. Confirm the service is healthy and verify the database after the upgrade. This procedure is not a substitute for a tested backup and restore.
+
