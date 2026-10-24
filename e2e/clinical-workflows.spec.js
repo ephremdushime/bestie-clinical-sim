@@ -43,7 +43,7 @@ test('educator creates an exam and learner submits without seeing the answer key
   const examCode = (await code.textContent()).trim();
   expect(examCode.length).toBeGreaterThanOrEqual(7);
 
-  await page.getByRole('button', { name: /Join an examination/ }).click();
+  await page.getByRole('button', { name: /Join examination/ }).click();
   await page.getByPlaceholder(/e.g. 7K2P9Q/).fill(examCode);
   await page.getByRole('button', { name: /Begin examination/ }).click();
   await expect(page.getByRole('heading', { name: 'Clinical assessment encounter' })).toBeVisible();
