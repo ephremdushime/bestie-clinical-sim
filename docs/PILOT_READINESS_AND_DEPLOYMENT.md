@@ -39,7 +39,7 @@ This build is suitable for supervised technical demonstrations and for collectin
 
 - Production protected routes require provisioned account sessions; shared pilot/educator tokens are development-only. Account provisioning is a trusted-shell operation, not an in-app administration workflow.
 - Exam codes are not identity verification and are not designed to prevent impersonation.
-- No institutional SSO or self-service password recovery. Password changes revoke existing sessions; lost-password recovery requires trusted server-side operator intervention, which should be formalized before a broad deployment.
+- No institutional SSO or self-service password recovery. Password changes revoke existing sessions; a trusted server operator can reset a lost password using `docker compose exec api python /app/scripts/provision_account.py --reset-password --email user@example.org`, which records an audit event and revokes sessions.
 - SQLite is intended only for small supervised tests; concurrent writes, retention controls and backups need review.
 - API keys, network traffic, dependency versions and deployment logs need production security review.
 
