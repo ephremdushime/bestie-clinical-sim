@@ -948,3 +948,649 @@ export function createRealisticVentilator() {
 }
 
 
+
+// --------------------------------------------------------------------------
+// 11. BEDSIDE MOBILE ULTRASOUND / eFAST CONSOLE (Mindray / Sonosite Style)
+// --------------------------------------------------------------------------
+export function createRealisticUltrasoundFast() {
+  const group = new THREE.Group();
+
+  // Mobile stand base with 4 medical casters
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.05, 0.42), mat(0x1e293b, 0.4, 0.7));
+  base.position.y = 0.08;
+  group.add(base);
+
+  [[-0.18, -0.18], [0.18, -0.18], [-0.18, 0.18], [0.18, 0.18]].forEach(([cx, cz]) => {
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.02, 16), mat(0x0f172a, 0.8, 0.1));
+    wheel.position.set(cx, 0.035, cz);
+    wheel.rotation.z = Math.PI / 2;
+    group.add(wheel);
+  });
+
+  // Vertical telescoping height-adjustable column
+  const column = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.82, 16), mat(0xe2e8f0, 0.15, 0.95));
+  column.position.set(0, 0.50, 0);
+  group.add(column);
+
+  // Ultrasound Main Console Unit
+  const consoleGroup = new THREE.Group();
+  consoleGroup.position.set(0, 0.96, 0);
+
+  // Lower keyboard deck
+  const deck = new THREE.Mesh(new THREE.BoxGeometry(0.40, 0.04, 0.32), mat(0xf8fafc, 0.3, 0.2));
+  deck.rotation.x = 0.15;
+  consoleGroup.add(deck);
+
+  // Transducer probe holster & ultrasound gel bottle on side
+  const holster = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.02, 0.08, 16), mat(0x334155, 0.4, 0.5));
+  holster.position.set(0.22, 0.02, 0.05);
+  consoleGroup.add(holster);
+
+  const gelBottle = new THREE.Mesh(new THREE.CylinderGeometry(0.022, 0.022, 0.10, 16), mat(0x0284c7, 0.2, 0.1, { transparent: true, opacity: 0.85 }));
+  gelBottle.position.set(0.22, 0.08, 0.05);
+  consoleGroup.add(gelBottle);
+
+  // Phased Array Ultrasound Transducer Probe in holster
+  const probe = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.11, 0.022), mat(0xf1f5f9, 0.2, 0.6));
+  probe.position.set(-0.22, 0.06, 0.05);
+  consoleGroup.add(probe);
+
+  const probeCord = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.45, 12), mat(0x1e293b, 0.8, 0.1));
+  probeCord.position.set(-0.22, -0.15, 0.05);
+  consoleGroup.add(probeCord);
+
+  // Upper articulating diagnostic monitor
+  const monFrame = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.28, 0.025), mat(0x0f172a, 0.4, 0.3));
+  monFrame.position.set(0, 0.20, -0.06);
+  monFrame.rotation.x = -0.15;
+  consoleGroup.add(monFrame);
+
+  // High-contrast B-Mode Diagnostic Ultrasound Display (Morrison's Pouch / eFAST)
+  const usTex = makeTexture(384, 288, (ctx) => {
+    ctx.fillStyle = '#020617';
+    ctx.fillRect(0, 0, 384, 288);
+
+    // Header
+    ctx.fillStyle = '#0284c7';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText('MINDRAY M9 · TRAUMA FAST EXAM', 12, 22);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '12px monospace';
+    ctx.fillText('PROBE: P4-2s CARDIAC/ABDO · MI: 1.1 · TIS: 0.8', 12, 40);
+
+    // Ultrasound Sector Fan Mask
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(192, 50);
+    ctx.arc(192, 50, 210, Math.PI * 0.35, Math.PI * 0.65);
+    ctx.closePath();
+    ctx.clip();
+
+    // Speckled B-Mode Echogenic Anatomy (Liver & Kidney - Morrison's Pouch)
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(40, 50, 304, 220);
+
+    // Liver parenchyma texture
+    for (let i = 0; i < 1500; i++) {
+      ctx.fillStyle = `rgba(180, 200, 220, ${Math.random() * 0.35})`;
+      ctx.fillRect(60 + Math.random() * 260, 60 + Math.random() * 100, 2, 2);
+    }
+
+    // Hyperechoic Morrison's Pouch interface line (Liver-Kidney Capsule)
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(90, 160);
+    ctx.bezierCurveTo(150, 150, 230, 175, 290, 165);
+    ctx.stroke();
+
+    // Renal parenchyma (darker cortex with bright central renal sinus)
+    ctx.fillStyle = '#0f172a';
+    ctx.beginPath();
+    ctx.ellipse(190, 205, 75, 40, -0.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#94a3b8';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Central bright renal sinus
+    ctx.fillStyle = '#e2e8f0';
+    ctx.beginPath();
+    ctx.ellipse(190, 205, 35, 15, -0.1, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+
+    // Clinical Finding Text Callout
+    ctx.fillStyle = '#22c55e';
+    ctx.fillRect(10, 252, 364, 26);
+    ctx.fillStyle = '#052e16';
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText("RUQ MORRISON'S POUCH: CLEAR (NO FREE FLUID)", 18, 270);
+  });
+
+  const screen = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.35, 0.25),
+    new THREE.MeshBasicMaterial({ map: usTex })
+  );
+  screen.position.set(0, 0.20, -0.046);
+  screen.rotation.x = -0.15;
+  screen.userData = { action: 'tool:ultrasound', label: 'Bedside eFAST Ultrasound Console' };
+  consoleGroup.add(screen);
+
+  group.add(consoleGroup);
+  return { group, screen };
+}
+
+// --------------------------------------------------------------------------
+// 12. WELCH ALLYN WALL-MOUNTED DIAGNOSTIC SYSTEM (Otoscope & Ophthalmoscope)
+// --------------------------------------------------------------------------
+export function createRealisticWallDiagnosticSet() {
+  const group = new THREE.Group();
+
+  // Transformer Wall Base Plate (Medical cream ABS)
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.24, 0.05), mat(0xf1f5f9, 0.3, 0.2));
+  group.add(base);
+
+  // Welch Allyn Brand Header
+  const labelTex = makeTexture(256, 64, (ctx) => {
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, 256, 64);
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 18px sans-serif';
+    ctx.fillText('WELCH ALLYN 777', 16, 28);
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('INTEGRATED WALL SYSTEM 3.5V', 16, 48);
+  });
+  const labelMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.07), new THREE.MeshBasicMaterial({ map: labelTex }));
+  labelMesh.position.set(0, 0.07, 0.026);
+  group.add(labelMesh);
+
+  // Dual Rheostat Optical Dial Switches
+  [-0.08, 0.08].forEach((rx) => {
+    const dial = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, 0.012, 16), mat(0x0284c7, 0.2, 0.8));
+    dial.rotation.x = Math.PI / 2;
+    dial.position.set(rx, -0.02, 0.028);
+    group.add(dial);
+
+    // Chrome knurled handle resting in magnetic cradle
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.16, 16), mat(0xe2e8f0, 0.1, 0.95));
+    handle.position.set(rx, -0.12, 0.035);
+    group.add(handle);
+
+    // Expanding black coiled cord
+    const cord = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.22, 12), mat(0x1e293b, 0.8, 0.1));
+    cord.position.set(rx, -0.32, 0.035);
+    group.add(cord);
+  });
+
+  // Left Instrument Head: MacroView Otoscope (Chrome with black speculum tip)
+  const otoscopeHead = new THREE.Mesh(new THREE.ConeGeometry(0.018, 0.05, 16), mat(0xe2e8f0, 0.1, 0.95));
+  otoscopeHead.position.set(-0.08, -0.02, 0.045);
+  group.add(otoscopeHead);
+
+  const speculumTip = new THREE.Mesh(new THREE.ConeGeometry(0.006, 0.03, 16), mat(0x18181b, 0.9, 0.1));
+  speculumTip.position.set(-0.08, 0.015, 0.045);
+  group.add(speculumTip);
+
+  // Right Instrument Head: Coaxial Ophthalmoscope (Rectangular aperture window)
+  const ophthHead = new THREE.Mesh(new THREE.BoxGeometry(0.032, 0.055, 0.028), mat(0x334155, 0.2, 0.7));
+  ophthHead.position.set(0.08, -0.02, 0.045);
+  group.add(ophthHead);
+
+  const apertureLens = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.004, 16), mat(0x38bdf8, 0.1, 0.9));
+  apertureLens.rotation.x = Math.PI / 2;
+  apertureLens.position.set(0.08, -0.01, 0.06);
+  group.add(apertureLens);
+
+  // Disposable ear specula dispenser tower next to wall set
+  const dispenser = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.32, 16), mat(0xe0f2fe, 0.2, 0.1, { transparent: true, opacity: 0.75 }));
+  dispenser.position.set(0.24, -0.05, 0.03);
+  group.add(dispenser);
+
+  group.userData = { action: 'tool:wall_diagnostic', label: 'Welch Allyn Diagnostic Center (Otoscope & Ophthalmoscope)' };
+  return { group };
+}
+
+// --------------------------------------------------------------------------
+// 13. OBSTETRIC CTG CARDIOTOCOGRAPHY MONITOR (Philips Avalon FM30)
+// --------------------------------------------------------------------------
+export function createRealisticCtgMonitor() {
+  const group = new THREE.Group();
+
+  // Monitor main chassis
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.30, 0.22), mat(0xf8fafc, 0.3, 0.2));
+  body.position.y = 0.95;
+  group.add(body);
+
+  // High-Resolution Dual CTG Waveform Display
+  const ctgTex = makeTexture(384, 288, (ctx) => {
+    ctx.fillStyle = '#020617';
+    ctx.fillRect(0, 0, 384, 288);
+
+    // Header Bar
+    ctx.fillStyle = '#db2777';
+    ctx.fillRect(0, 0, 384, 32);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText('PHILIPS AVALON FM30 · MATERNAL-FETAL CTG', 12, 22);
+
+    // Upper Graph: Fetal Heart Rate (FHR 50 - 210 bpm)
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(10, 40, 364, 115);
+    ctx.strokeStyle = '#475569';
+    ctx.lineWidth = 1;
+    [60, 90, 120, 150, 180].forEach((bpm) => {
+      const y = 150 - ((bpm - 50) / 160) * 105;
+      ctx.beginPath(); ctx.moveTo(10, y); ctx.lineTo(374, y); ctx.stroke();
+      ctx.fillStyle = '#94a3b8'; ctx.font = '10px monospace'; ctx.fillText(String(bpm), 14, y - 2);
+    });
+
+    // FHR Waveform (Green: Baseline 140 bpm with reassuring 10-15 bpm variability & accelerations)
+    ctx.strokeStyle = '#22c55e';
+    ctx.lineWidth = 2.0;
+    ctx.beginPath();
+    for (let x = 35; x < 370; x += 3) {
+      const varOffset = (Math.sin(x * 0.25) * 4) + (Math.sin(x * 0.08) * 6);
+      const accel = (x > 180 && x < 250) ? Math.sin((x - 180) / 70 * Math.PI) * 18 : 0;
+      const bpm = 140 + varOffset + accel;
+      const y = 150 - ((bpm - 50) / 160) * 105;
+      if (x === 35) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    ctx.fillStyle = '#4ade80';
+    ctx.font = 'bold 24px monospace';
+    ctx.fillText('140', 315, 68);
+    ctx.font = '11px sans-serif';
+    ctx.fillText('FHR 1 (bpm)', 310, 84);
+
+    // Lower Graph: Uterine Tocography (TOCO 0 - 100 mmHg)
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(10, 165, 364, 90);
+    ctx.strokeStyle = '#475569';
+    [20, 40, 60, 80].forEach((p) => {
+      const y = 250 - (p / 100) * 80;
+      ctx.beginPath(); ctx.moveTo(10, y); ctx.lineTo(374, y); ctx.stroke();
+      ctx.fillStyle = '#94a3b8'; ctx.font = '10px monospace'; ctx.fillText(String(p), 14, y - 2);
+    });
+
+    // TOCO Contraction Wave (Orange: smooth bell curves peaking at 55 mmHg)
+    ctx.strokeStyle = '#f97316';
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    for (let x = 35; x < 370; x += 3) {
+      const t = x % 160;
+      const tocoVal = t < 80 ? 12 + Math.sin(t / 80 * Math.PI) * 45 : 12;
+      const y = 250 - (tocoVal / 100) * 80;
+      if (x === 35) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+
+    ctx.fillStyle = '#fb923c';
+    ctx.font = 'bold 22px monospace';
+    ctx.fillText('18', 325, 195);
+    ctx.font = '11px sans-serif';
+    ctx.fillText('TOCO (mmHg)', 305, 210);
+
+    // Status Summary Footer
+    ctx.fillStyle = '#fbcfe8';
+    ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('CTG: REASSURING · ACCELERATIONS PRESENT · NO LATE DECELERATIONS', 14, 275);
+  });
+
+  const screen = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.34, 0.26),
+    new THREE.MeshBasicMaterial({ map: ctgTex })
+  );
+  screen.position.set(0, 0.95, 0.112);
+  screen.userData = { action: 'tool:ctg', label: 'Philips Avalon Fetal CTG Monitor' };
+  group.add(screen);
+
+  // Twin Ultrasound & Toco Sensor Transducer Belts hanging from side hook
+  const beltHook = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.06, 12), mat(0x94a3b8, 0.2, 0.8));
+  beltHook.rotation.z = Math.PI / 2;
+  beltHook.position.set(-0.20, 0.95, 0);
+  group.add(beltHook);
+
+  const usTransducer = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.02, 16), mat(0x0284c7, 0.3, 0.6));
+  usTransducer.position.set(-0.20, 0.82, 0.04);
+  group.add(usTransducer);
+
+  const tocoTransducer = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.02, 16), mat(0xea580c, 0.3, 0.6));
+  tocoTransducer.position.set(-0.20, 0.76, 0.04);
+  group.add(tocoTransducer);
+
+  return { group, screen };
+}
+
+// --------------------------------------------------------------------------
+// 14. NEONATAL RADIANT INFANT WARMER (GE Giraffe / Fisher & Paykel Style)
+// --------------------------------------------------------------------------
+export function createRealisticInfantWarmer() {
+  const group = new THREE.Group();
+
+  // Wheeled mobile base
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.06, 0.70), mat(0x334155, 0.4, 0.5));
+  base.position.y = 0.08;
+  group.add(base);
+
+  [[-0.24, -0.30], [0.24, -0.30], [-0.24, 0.30], [0.24, 0.30]].forEach(([cx, cz]) => {
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.025, 16), mat(0x0f172a, 0.8, 0.1));
+    wheel.position.set(cx, 0.04, cz);
+    wheel.rotation.z = Math.PI / 2;
+    group.add(wheel);
+  });
+
+  // Vertical support arch column
+  const archCol = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.75, 0.08), mat(0xe2e8f0, 0.2, 0.9));
+  archCol.position.set(0, 0.92, -0.30);
+  group.add(archCol);
+
+  // Infant Bassinet Bed Platform with transparent drop walls
+  const bedPlatform = new THREE.Mesh(new THREE.BoxGeometry(0.50, 0.08, 0.65), mat(0xf8fafc, 0.3, 0.2));
+  bedPlatform.position.set(0, 0.88, 0.05);
+  group.add(bedPlatform);
+
+  // Soft contoured neonatal mattress & pastel swaddle blanket
+  const mattress = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.05, 0.58), mat(0xbae6fd, 0.8, 0.05));
+  mattress.position.set(0, 0.93, 0.05);
+  group.add(mattress);
+
+  // Transparent acrylic perimeter safety walls
+  const wallM = new THREE.MeshStandardMaterial({ color: 0xe0f2fe, transparent: true, opacity: 0.45, roughness: 0.1 });
+  const frontWall = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.16, 0.015), wallM); frontWall.position.set(0, 1.02, 0.36); group.add(frontWall);
+  const backWall = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.16, 0.015), wallM); backWall.position.set(0, 1.02, -0.26); group.add(backWall);
+  const leftWall = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.16, 0.63), wallM); leftWall.position.set(-0.24, 1.02, 0.05); group.add(leftWall);
+  const rightWall = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.16, 0.63), wallM); rightWall.position.set(0.24, 1.02, 0.05); group.add(rightWall);
+
+  // Overhead Quartz Infrared Radiant Heating Module
+  const heaterHood = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.10, 0.28), mat(0xf1f5f9, 0.2, 0.8));
+  heaterHood.position.set(0, 1.82, 0.05);
+  group.add(heaterHood);
+
+  // Glowing orange heating element
+  const element = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.015, 0.015, 0.26, 16),
+    new THREE.MeshBasicMaterial({ color: 0xf97316 })
+  );
+  element.rotation.z = Math.PI / 2;
+  element.position.set(0, 1.78, 0.05);
+  group.add(element);
+
+  // Warmer Microprocessor Control Console
+  const warmerTex = makeTexture(256, 128, (ctx) => {
+    ctx.fillStyle = '#020617';
+    ctx.fillRect(0, 0, 256, 128);
+    ctx.fillStyle = '#38bdf8';
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText('INFANT WARMER · SERVO 36.5°C', 12, 24);
+    ctx.fillStyle = '#f97316';
+    ctx.font = 'bold 28px monospace';
+    ctx.fillText('36.5 °C', 12, 62);
+    ctx.fillStyle = '#22c55e';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText('HEATER: 45%', 145, 58);
+    ctx.fillStyle = '#facc15';
+    ctx.font = 'bold 15px monospace';
+    ctx.fillText('APGAR TIMER: 05:00', 12, 100);
+  });
+  const controlMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.12), new THREE.MeshBasicMaterial({ map: warmerTex }));
+  controlMesh.position.set(0, 1.35, -0.24);
+  group.add(controlMesh);
+
+  group.userData = { action: 'tool:infant_warmer', label: 'Neonatal Radiant Infant Warmer' };
+  return { group };
+}
+
+// --------------------------------------------------------------------------
+// 15. DIAGNOSTIC RADIOLOGY DUAL-SCREEN PACS WORKSTATION (Barco / Eizo Style)
+// --------------------------------------------------------------------------
+export function createRealisticPacsWorkstation() {
+  const group = new THREE.Group();
+
+  // Ergonomic Radiology Workstation Desk (Matte graphite with cable raceway)
+  const desk = new THREE.Mesh(new THREE.BoxGeometry(1.40, 0.05, 0.75), mat(0x1e293b, 0.6, 0.2));
+  desk.position.set(0, 0.75, 0);
+  group.add(desk);
+
+  // Twin Heavy-Duty Steel Desk Legs
+  [-0.60, 0.60].forEach((lx) => {
+    const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.73, 0.65), mat(0x0f172a, 0.4, 0.7));
+    leg.position.set(lx, 0.37, 0);
+    group.add(leg);
+  });
+
+  // Dual Articulating Monitor Mount Arm
+  const arm = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.45, 16), mat(0x475569, 0.2, 0.8));
+  arm.position.set(0, 0.98, -0.22);
+  group.add(arm);
+
+  // Left Diagnostic Display (Barco 5MP High-Contrast Chest X-Ray Viewer)
+  const leftBezel = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.42, 0.03), mat(0x020617, 0.3, 0.4));
+  leftBezel.position.set(-0.30, 1.15, -0.15);
+  leftBezel.rotation.y = 0.08;
+  group.add(leftBezel);
+
+  const cxrTex = makeTexture(384, 512, (ctx) => {
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(0, 0, 384, 512);
+
+    // Header
+    ctx.fillStyle = '#0284c7'; ctx.font = 'bold 14px monospace';
+    ctx.fillText('BESTIE PACS · CHEST AP ERECT', 14, 24);
+    ctx.fillStyle = '#94a3b8'; ctx.font = '11px monospace';
+    ctx.fillText('WINDOW: LUNG (W:1500, L:-500) · 100kV, 3.2mAs', 14, 40);
+
+    // Grayscale Thoracic Anatomy Radiograph
+    ctx.fillStyle = '#111827';
+    ctx.beginPath();
+    ctx.ellipse(192, 270, 140, 180, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Mediastinum & Cardiac Silhouette
+    ctx.fillStyle = '#d1d5db';
+    ctx.beginPath();
+    ctx.moveTo(192, 110);
+    ctx.bezierCurveTo(160, 200, 110, 320, 140, 390);
+    ctx.lineTo(240, 390);
+    ctx.bezierCurveTo(230, 300, 210, 200, 192, 110);
+    ctx.fill();
+
+    // Diaphragms
+    ctx.fillStyle = '#e5e7eb';
+    ctx.beginPath();
+    ctx.arc(120, 420, 95, Math.PI, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(264, 430, 90, Math.PI, Math.PI * 2);
+    ctx.fill();
+
+    // Dense Right Lower Lobe Alveolar Consolidation & Air Bronchograms
+    ctx.fillStyle = 'rgba(243, 244, 246, 0.88)';
+    ctx.beginPath();
+    ctx.ellipse(265, 330, 65, 55, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Dark patent tubular air bronchograms inside dense white consolidation
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(250, 305); ctx.lineTo(260, 345); ctx.lineTo(280, 360); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(260, 345); ctx.lineTo(250, 370); ctx.stroke();
+
+    // Diagnostic Callout Footer
+    ctx.fillStyle = '#ef4444'; ctx.fillRect(10, 475, 364, 28);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('REPORT: RIGHT LOWER LOBE CONSOLIDATION · BACTERIAL PNEUMONIA', 16, 494);
+  });
+
+  const leftScreen = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.51, 0.38),
+    new THREE.MeshBasicMaterial({ map: cxrTex })
+  );
+  leftScreen.position.set(-0.30, 1.15, -0.133);
+  leftScreen.rotation.y = 0.08;
+  group.add(leftScreen);
+
+  // Right Diagnostic Display (Barco 5MP Axial Trauma CT Series)
+  const rightBezel = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.42, 0.03), mat(0x020617, 0.3, 0.4));
+  rightBezel.position.set(0.30, 1.15, -0.15);
+  rightBezel.rotation.y = -0.08;
+  group.add(rightBezel);
+
+  const ctTex = makeTexture(384, 512, (ctx) => {
+    ctx.fillStyle = '#050505';
+    ctx.fillRect(0, 0, 384, 512);
+
+    ctx.fillStyle = '#38bdf8'; ctx.font = 'bold 14px monospace';
+    ctx.fillText('BESTIE PACS · CT THORAX/ABDOMEN', 14, 24);
+    ctx.fillStyle = '#94a3b8'; ctx.font = '11px monospace';
+    ctx.fillText('AXIAL CONTRAST · SLICE 48/120 · W:350, L:40', 14, 40);
+
+    // Axial Abdominal CT Slice Oval Contour
+    ctx.fillStyle = '#374151';
+    ctx.beginPath();
+    ctx.ellipse(192, 260, 150, 120, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Bright White Vertebral Body & Ribs (Dense Bone)
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(192, 335, 25, 20, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Contrast-filled Aorta & Vena Cava
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath(); ctx.arc(175, 310, 12, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(205, 310, 11, 0, Math.PI * 2); ctx.fill();
+
+    // Liver (Right Hemisphere)
+    ctx.fillStyle = '#6b7280';
+    ctx.beginPath(); ctx.ellipse(130, 245, 65, 45, -0.3, 0, Math.PI * 2); ctx.fill();
+
+    // Spleen (Left Hemisphere)
+    ctx.fillStyle = '#6b7280';
+    ctx.beginPath(); ctx.ellipse(265, 255, 35, 25, 0.3, 0, Math.PI * 2); ctx.fill();
+
+    ctx.fillStyle = '#22c55e'; ctx.fillRect(10, 475, 364, 28);
+    ctx.fillStyle = '#052e16'; ctx.font = 'bold 12px sans-serif';
+    ctx.fillText('CT FINDING: SOLID ORGANS INTACT · NO HEMOPERITONEUM', 16, 494);
+  });
+
+  const rightScreen = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.51, 0.38),
+    new THREE.MeshBasicMaterial({ map: ctTex })
+  );
+  rightScreen.position.set(0.30, 1.15, -0.133);
+  rightScreen.rotation.y = -0.08;
+  group.add(rightScreen);
+
+  // Ergonomic Radiologist High-Back Mesh Swivel Chair
+  const chairGroup = new THREE.Group();
+  chairGroup.position.set(0, 0, 0.45);
+
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.06, 0.42), mat(0x0f172a, 0.8, 0.1));
+  seat.position.y = 0.48;
+  chairGroup.add(seat);
+
+  const backrest = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.48, 0.04), mat(0x1e293b, 0.9, 0.1));
+  backrest.position.set(0, 0.74, 0.19);
+  chairGroup.add(backrest);
+
+  const pedestal = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.42, 16), mat(0x94a3b8, 0.2, 0.9));
+  pedestal.position.y = 0.24;
+  chairGroup.add(pedestal);
+
+  group.add(chairGroup);
+
+  group.userData = { action: 'tool:pacs', label: 'PACS Diagnostic Radiology Workstation (Chest X-Ray & CT)' };
+  return { group, leftScreen, rightScreen };
+}
+
+// --------------------------------------------------------------------------
+// 16. EMERGENCY SURGICAL MAYO STAND & CHEST DRAIN (Atrium Ocean Style)
+// --------------------------------------------------------------------------
+export function createRealisticProcedureMayoStand() {
+  const group = new THREE.Group();
+
+  // Polished chrome cantilever tray over stainless base
+  const base = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.04, 0.45), mat(0x475569, 0.2, 0.8));
+  base.position.y = 0.06;
+  group.add(base);
+
+  const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.88, 16), mat(0xe2e8f0, 0.1, 0.95));
+  leg.position.set(0.20, 0.50, 0);
+  group.add(leg);
+
+  const tray = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.025, 0.42), mat(0xe2e8f0, 0.1, 0.95));
+  tray.position.set(0, 0.94, 0);
+  group.add(tray);
+
+  // Sterile hospital teal procedure drape
+  const drape = new THREE.Mesh(new THREE.BoxGeometry(0.53, 0.005, 0.40), mat(0x0d9488, 0.85, 0.05));
+  drape.position.set(0, 0.954, 0);
+  group.add(drape);
+
+  // 14G Emergency Orange Decompression Cannula (for tension pneumothorax)
+  const cannula = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.12, 12), mat(0xf97316, 0.3, 0.2));
+  cannula.rotation.z = Math.PI / 2;
+  cannula.position.set(-0.14, 0.965, -0.08);
+  group.add(cannula);
+
+  // Stainless Steel Kelly Hemostat Forceps
+  const forceps = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.004, 0.14), mat(0xf1f5f9, 0.15, 0.95));
+  forceps.position.set(-0.02, 0.965, -0.06);
+  group.add(forceps);
+
+  // Size 10 Scalpel Handle & Blade
+  const scalpel = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.003, 0.13), mat(0xe2e8f0, 0.1, 0.98));
+  scalpel.position.set(0.08, 0.965, -0.06);
+  group.add(scalpel);
+
+  // Atrium Ocean Style Underwater Seal Chest Drain Canister next to stand
+  const chestDrain = new THREE.Group();
+  chestDrain.position.set(0, 0.28, 0.25);
+
+  const canisterBody = new THREE.Mesh(
+    new THREE.BoxGeometry(0.22, 0.34, 0.10),
+    mat(0xe0f2fe, 0.15, 0.1, { transparent: true, opacity: 0.80 })
+  );
+  chestDrain.add(canisterBody);
+
+  // 3-Chamber Graphic Label (Collection, Water Seal, Suction Control)
+  const drainTex = makeTexture(256, 384, (ctx) => {
+    ctx.fillStyle = '#0f172a'; ctx.fillRect(0, 0, 256, 384);
+    ctx.fillStyle = '#38bdf8'; ctx.font = 'bold 18px sans-serif'; ctx.fillText('ATRIUM CHEST DRAIN', 14, 30);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 13px sans-serif'; ctx.fillText('WATER SEAL DRAINAGE', 14, 52);
+
+    // Chamber 1: Collection Chamber (Fluid Level 150 mL serosanguinous)
+    ctx.fillStyle = '#dc2626'; ctx.fillRect(16, 260, 95, 90);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 12px monospace'; ctx.fillText('150 mL', 24, 285);
+
+    // Chamber 2: Water Seal (Blue 2cmH2O water seal column)
+    ctx.fillStyle = '#0284c7'; ctx.fillRect(122, 310, 45, 40);
+    ctx.fillStyle = '#ffffff'; ctx.font = '10px monospace'; ctx.fillText('2cm', 128, 330);
+
+    // Chamber 3: Suction Control (-20 cmH2O)
+    ctx.fillStyle = '#059669'; ctx.fillRect(180, 290, 60, 60);
+    ctx.fillStyle = '#ffffff'; ctx.font = 'bold 12px monospace'; ctx.fillText('-20 cm', 186, 315);
+  });
+  const drainLabel = new THREE.Mesh(new THREE.PlaneGeometry(0.20, 0.30), new THREE.MeshBasicMaterial({ map: drainTex }));
+  drainLabel.position.set(0, 0, 0.052);
+  chestDrain.add(drainLabel);
+
+  // Clear silicone chest drainage tubing connecting to canister
+  const tubeCurve = new THREE.CatmullRomCurve3([
+    new THREE.Vector3(0, 0.17, 0),
+    new THREE.Vector3(0.08, 0.35, 0.05),
+    new THREE.Vector3(0.15, 0.55, -0.15),
+  ]);
+  const tube = new THREE.Mesh(new THREE.TubeGeometry(tubeCurve, 16, 0.006, 8, false), mat(0xe0f2fe, 0.2, 0.1, { transparent: true, opacity: 0.7 }));
+  chestDrain.add(tube);
+
+  group.add(chestDrain);
+
+  group.userData = { action: 'tool:mayo_stand', label: 'Emergency Procedure Mayo Stand & Chest Drain' };
+  return { group };
+}

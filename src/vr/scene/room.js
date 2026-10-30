@@ -12,6 +12,12 @@ import {
   createScialyticSurgicalLamp,
   createRealisticInfusionPump,
   createRealisticVentilator,
+  createRealisticUltrasoundFast,
+  createRealisticWallDiagnosticSet,
+  createRealisticCtgMonitor,
+  createRealisticInfantWarmer,
+  createRealisticPacsWorkstation,
+  createRealisticProcedureMayoStand,
 } from './hospitalTools.js';
 import { createClinicalStaffMember } from './clinicalStaff.js';
 
@@ -213,6 +219,16 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
       ctx.fillStyle = '#06b6d4';
       ctx.font = 'bold 16px sans-serif';
       ctx.fillText('BED 12 · ADULT INPATIENT', 128, 86);
+    } else if (department === 'obs') {
+      ctx.fillText('MATERNAL & OBSTETRICS', 128, 48);
+      ctx.fillStyle = '#ec4899';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText('BED 05 · MATERNAL-FETAL', 128, 86);
+    } else if (department === 'rad') {
+      ctx.fillText('DIAGNOSTIC RADIOLOGY', 128, 48);
+      ctx.fillStyle = '#10b981';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.fillText('SUITE 01 · PACS & IMAGING', 128, 86);
     } else {
       ctx.fillText('EMERGENCY RESUS', 128, 48);
       ctx.fillStyle = '#ef4444';
@@ -521,8 +537,8 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
     },
   };
 
-  // 10. AUTHENTIC MEDICAL EQUIPMENT & TOOLS
-  // Department-Specific Primary Equipment
+  // 10. AUTHENTIC MEDICAL EQUIPMENT & TOOLS (PHASES 3 & 4)
+  // Department-Specific High-Poly Medical Suites
   if (department === 'resus') {
     // Overhead surgical scialytic lamp for resuscitation & trauma procedures
     const scialytic = createScialyticSurgicalLamp();
@@ -538,6 +554,22 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
       cartM.defibScreen.userData = { action: 'tool:defib', label: 'Biphasic Defibrillator (Crash Cart)' };
       interactables.push(cartM.defibScreen);
     }
+
+    // Bedside Mobile Ultrasound / eFAST Console
+    const usCart = createRealisticUltrasoundFast();
+    usCart.group.position.set(-1.6, 0, 0.4);
+    usCart.group.rotation.y = Math.PI / 4;
+    root.add(usCart.group);
+    if (usCart.screen) {
+      interactables.push(usCart.screen);
+    }
+
+    // Emergency Surgical Mayo Stand with Chest Drain & Decompression Needle
+    const mayoStand = createRealisticProcedureMayoStand();
+    mayoStand.group.position.set(-1.3, 0, -1.8);
+    root.add(mayoStand.group);
+    interactables.push(mayoStand.group);
+
   } else if (department === 'icu') {
     // Advanced Mechanical Ventilator with patient breathing circuit
     const vent = createRealisticVentilator();
@@ -549,12 +581,77 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
     }
     root.add(vent.group);
 
+    // Bedside Mobile Ultrasound / eFAST Console for critical line placement
+    const usCart = createRealisticUltrasoundFast();
+    usCart.group.position.set(-1.6, 0, 0.4);
+    usCart.group.rotation.y = Math.PI / 4;
+    root.add(usCart.group);
+    if (usCart.screen) interactables.push(usCart.screen);
+
     // Crash cart positioned on standby
     const cartM = createRealisticCrashCart();
     cartM.group.position.set(2.2, 0, -0.2);
     cartM.group.rotation.y = -Math.PI / 2;
     root.add(cartM.group);
+
+  } else if (department === 'obs') {
+    // Obstetric & Maternal Ward: CTG Fetal Monitor next to bed
+    const ctg = createRealisticCtgMonitor();
+    ctg.group.position.set(1.25, 0, -1.7);
+    ctg.group.rotation.y = -Math.PI / 4;
+    root.add(ctg.group);
+    if (ctg.screen) {
+      interactables.push(ctg.screen);
+    }
+
+    // Neonatal Radiant Infant Warmer Bassinet in maternal room corner
+    const infantWarmer = createRealisticInfantWarmer();
+    infantWarmer.group.position.set(-1.8, 0, 0.6);
+    infantWarmer.group.rotation.y = Math.PI / 3;
+    root.add(infantWarmer.group);
+    interactables.push(infantWarmer.group);
+
+    // Crash cart positioned on perimeter standby
+    const cartM = createRealisticCrashCart();
+    cartM.group.position.set(2.2, 0, 0.5);
+    cartM.group.rotation.y = -Math.PI / 2;
+    root.add(cartM.group);
+
+  } else if (department === 'rad') {
+    // Diagnostic Radiology & PACS Workstation Suite
+    const pacs = createRealisticPacsWorkstation();
+    pacs.group.position.set(1.5, 0, -0.4);
+    pacs.group.rotation.y = -Math.PI / 2;
+    root.add(pacs.group);
+    if (pacs.leftScreen) {
+      pacs.leftScreen.userData = { action: 'tool:pacs', label: 'PACS Chest Radiograph Viewer' };
+      interactables.push(pacs.leftScreen);
+    }
+    if (pacs.rightScreen) {
+      pacs.rightScreen.userData = { action: 'tool:pacs', label: 'PACS Axial CT Trauma Viewer' };
+      interactables.push(pacs.rightScreen);
+    }
+
+    // Mobile Ultrasound Console in radiology suite
+    const usCart = createRealisticUltrasoundFast();
+    usCart.group.position.set(-1.5, 0, 0.2);
+    usCart.group.rotation.y = Math.PI / 4;
+    root.add(usCart.group);
+    if (usCart.screen) interactables.push(usCart.screen);
+
+    // Standby crash cart
+    const cartM = createRealisticCrashCart();
+    cartM.group.position.set(2.2, 0, 1.2);
+    cartM.group.rotation.y = -Math.PI / 2;
+    root.add(cartM.group);
+
   } else {
+    // Acute Medical Ward: Welch Allyn Wall Diagnostic Set (Otoscope & Ophthalmoscope)
+    const wallDiag = createRealisticWallDiagnosticSet();
+    wallDiag.group.position.set(1.4, 1.8, -3.24);
+    root.add(wallDiag.group);
+    interactables.push(wallDiag.group);
+
     // Acute Medical Ward: Crash cart on perimeter standby
     const cartM = createRealisticCrashCart();
     cartM.group.position.set(2.3, 0, 0.8);

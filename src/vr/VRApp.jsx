@@ -13,7 +13,7 @@ const DEFAULT_CASE = new URLSearchParams(location.search).get('case') || 'respir
 const DEPARTMENTS = {
   resus: {
     id: 'resus',
-    name: 'Emergency Resus Bay',
+    name: 'Emergency Resus',
     subtitle: 'Bay 04 · High Acuity',
     badge: 'RESUS · HIGH ACUITY (NEWS2: 11)',
     badgeColor: '#dc2626',
@@ -21,7 +21,7 @@ const DEPARTMENTS = {
   },
   medical: {
     id: 'medical',
-    name: 'Acute Medical Ward',
+    name: 'Acute Medical',
     subtitle: 'Bed 12 · Adult Inpatient',
     badge: 'WARD · ACUTE ADMISSION',
     badgeColor: '#0284c7',
@@ -34,6 +34,22 @@ const DEPARTMENTS = {
     badge: 'ICU · LEVEL 3 CRITICAL CARE',
     badgeColor: '#7c3aed',
     icon: '🩺',
+  },
+  obs: {
+    id: 'obs',
+    name: 'Maternal & Obs',
+    subtitle: 'Bed 05 · Maternal-Fetal Unit',
+    badge: 'MATERNAL · HIGH RISK OBSTETRICS',
+    badgeColor: '#db2777',
+    icon: '🤰',
+  },
+  rad: {
+    id: 'rad',
+    name: 'Radiology / PACS',
+    subtitle: 'Suite 01 · Diagnostic Imaging',
+    badge: 'PACS · DIAGNOSTIC IMAGING SUITE',
+    badgeColor: '#059669',
+    icon: '🩻',
   },
 };
 
@@ -327,6 +343,12 @@ export default function VRApp() {
         'inspect:burn': 'Burn Assessment: Partial-thickness dermal burn with fluid-filled tense blisters and perioral carbon soot. Audible inspiratory stridor.',
         'inspect:wound': 'Traumatic Wound: Severe blunt chest contusion, gaping forearm laceration with active venous oozing, and stabilized SAM pelvic binder.',
         'inspect:emesis': 'Bedside kidney dish contains yellow-green bilious vomitus (~150 mL).',
+        'tool:ultrasound': 'Bedside eFAST Ultrasound: Subxiphoid pericardial view clear, no hemopericardium. Morrison’s pouch and splenorenal recess clear without free fluid.',
+        'tool:ctg': 'Cardiotocography (CTG): Baseline FHR 140 bpm, moderate variability (10-15 bpm), reassuring accelerations present, no decelerations. Tocography 3 contractions / 10 min.',
+        'tool:pacs': 'PACS Diagnostic Station: Diagnostic Chest X-ray & Axial CT loaded. Right lower lobe dense alveolar consolidation with patent air bronchograms. No pneumothorax.',
+        'tool:wall_diagnostic': 'Wall Diagnostic Center: Welch Allyn coaxial ophthalmoscope and macroview otoscope charged and ready for fundoscopy and otoscopy.',
+        'tool:mayo_stand': 'Mayo Surgical Stand: Sterile field prepared with 14G emergency decompression cannula, sterile scalpels, hemostats, and Atrium chest drainage canister.',
+        'tool:infant_warmer': 'Neonatal Radiant Warmer: Overhead quartz heating unit set to 36.5°C servo-control. Resuscitation neopuff T-piece and suction primed.',
       };
       res = { finding: findingMap[actionKey] || 'Physical examination completed.' };
     }
@@ -684,6 +706,18 @@ export default function VRApp() {
             patch({ caption: 'Crash Cart: Biphasic defibrillator is in standby. Drawers A (Airway), B (Breathing), C (Circulation), and D (Drugs) are stocked and verified.' });
           } else if (actKey === 'tool:ventilator') {
             patch({ caption: 'Mechanical Ventilator: SIMV-PC mode active. FiO2 60%, PEEP 8 cmH2O, Ppeak 24 cmH2O. Dual-limb circuit connected.' });
+          } else if (actKey === 'tool:ultrasound') {
+            patch({ caption: 'Bedside eFAST Ultrasound: Subxiphoid pericardial view clear, no hemopericardium. Morrison’s pouch and splenorenal recess clear without free fluid.' });
+          } else if (actKey === 'tool:ctg') {
+            patch({ caption: 'Cardiotocography (CTG): Baseline FHR 140 bpm, moderate variability (10-15 bpm), reassuring accelerations present, no decelerations. Tocography 3 contractions / 10 min.' });
+          } else if (actKey === 'tool:pacs') {
+            patch({ caption: 'PACS Diagnostic Station: Diagnostic Chest X-ray & Axial CT loaded. Right lower lobe dense alveolar consolidation with patent air bronchograms. No pneumothorax.' });
+          } else if (actKey === 'tool:wall_diagnostic') {
+            patch({ caption: 'Wall Diagnostic Center: Welch Allyn coaxial ophthalmoscope and macroview otoscope charged and ready for fundoscopy and otoscopy.' });
+          } else if (actKey === 'tool:mayo_stand') {
+            patch({ caption: 'Mayo Surgical Stand: Sterile field prepared with 14G emergency decompression cannula, sterile scalpels, hemostats, and Atrium chest drainage canister.' });
+          } else if (actKey === 'tool:infant_warmer') {
+            patch({ caption: 'Neonatal Radiant Warmer: Overhead quartz heating unit set to 36.5°C servo-control. Resuscitation neopuff T-piece and suction primed.' });
           }
         }
       }
@@ -1189,6 +1223,29 @@ export default function VRApp() {
           </button>
           <button onClick={() => setPathology('vomit')} style={{ padding: '3px 8px', background: '#65a30d', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }}>
             🤮 Bilious Emesis
+          </button>
+        </div>
+
+        {/* Advanced Clinical Equipment & Diagnostic Tools (Phases 3 & 4) */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4, paddingBottom: 6, borderBottom: '1px solid #334155' }}>
+          <span style={{ fontSize: '13px', color: '#f59e0b', fontWeight: 700 }}>🔬 Diagnostic Instruments:</span>
+          <button onClick={() => examinePatient('tool:pacs')} style={{ padding: '3px 8px', background: '#059669', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Barco 5MP Dual-Screen PACS Workstation">
+            🩻 PACS X-Ray & CT
+          </button>
+          <button onClick={() => examinePatient('tool:ultrasound')} style={{ padding: '3px 8px', background: '#0284c7', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Bedside Mobile eFAST Ultrasound Scanner">
+            📡 eFAST Ultrasound
+          </button>
+          <button onClick={() => examinePatient('tool:ctg')} style={{ padding: '3px 8px', background: '#db2777', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Cardiotocography Maternal-Fetal Telemetry">
+            🤰 CTG Fetal Monitor
+          </button>
+          <button onClick={() => examinePatient('tool:wall_diagnostic')} style={{ padding: '3px 8px', background: '#475569', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Welch Allyn Otoscope & Ophthalmoscope">
+            👁️ Wall Diagnostic Set
+          </button>
+          <button onClick={() => examinePatient('tool:mayo_stand')} style={{ padding: '3px 8px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Emergency Needle Decompression & Chest Drainage">
+            💉 Mayo Thoracostomy Kit
+          </button>
+          <button onClick={() => examinePatient('tool:infant_warmer')} style={{ padding: '3px 8px', background: '#0891b2', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Infant Radiant Resuscitation Warmer">
+            👶 Neonatal Warmer
           </button>
         </div>
 
