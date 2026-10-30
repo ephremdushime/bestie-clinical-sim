@@ -161,7 +161,18 @@ function createHospitalBeddingTexture() {
 }
 
 // High-Resolution Photographic Facial Texture
-export function createPatientHeadTexture(phenotypeKey = 'black-male', { cyanosis = 0.0, diaphoresis = 0.0, eyesClosed = false, sootLevel = 0.0, woundLevel = 0.0, mouthOpen = false } = {}) {
+export function createPatientHeadTexture(phenotypeKey = 'black-male', {
+  cyanosis = 0.0,
+  diaphoresis = 0.0,
+  eyesClosed = false,
+  sootLevel = 0.0,
+  woundLevel = 0.0,
+  mouthOpen = false,
+  pupilRadius = 11,
+  icterus = 0.0,
+  flushLevel = 0.0,
+  pallorLevel = 0.0,
+} = {}) {
   const p = PATIENT_PHENOTYPES[phenotypeKey] || PATIENT_PHENOTYPES['black-male'];
   const canvas = document.createElement('canvas');
   canvas.width = 1024;
@@ -170,8 +181,10 @@ export function createPatientHeadTexture(phenotypeKey = 'black-male', { cyanosis
 
   // 1. Photographic skin tone gradient with anatomical shading
   const bgGrad = ctx.createRadialGradient(512, 450, 120, 512, 512, 510);
-  bgGrad.addColorStop(0, p.skinHighlight);
-  bgGrad.addColorStop(0.65, p.skinBase);
+  // In acute hemorrhagic shock, peripheral vasoconstriction causes ashen pallor
+  const baseTone = pallorLevel > 0.2 ? '#94a3b8' : p.skinBase;
+  bgGrad.addColorStop(0, pallorLevel > 0.2 ? '#cbd5e1' : p.skinHighlight);
+  bgGrad.addColorStop(0.65, baseTone);
   bgGrad.addColorStop(1, p.skinShadow);
   ctx.fillStyle = bgGrad;
   ctx.fillRect(0, 0, 1024, 1024);
@@ -231,6 +244,17 @@ export function createPatientHeadTexture(phenotypeKey = 'black-male', { cyanosis
     ctx.stroke();
   }
 
+  // 2d. Febrile Erythematous Malar Flush (Pyrexia)
+  if (flushLevel > 0.15) {
+    ctx.fillStyle = `rgba(239, 68, 68, ${Math.min(0.48, flushLevel * 0.42)})`;
+    ctx.beginPath();
+    ctx.ellipse(370, 520, 85, 48, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(654, 520, 85, 48, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
   // 3. Eyebrows
   ctx.fillStyle = p.browColor;
   // Left brow
@@ -248,11 +272,12 @@ export function createPatientHeadTexture(phenotypeKey = 'black-male', { cyanosis
 
   // 4. Eyes (Sclera, Iris, Pupil, Specular reflection, Eyelids)
   const drawEye = (cx, cy) => {
-    ctx.fillStyle = '#f8fafc';
+    // Sclera: Normal crisp off-white, or icteric yellowish in hemolysis/malaria
+    ctx.fillStyle = icterus > 0.2 ? '#fef08a' : '#f8fafc';
     ctx.beginPath();
     ctx.ellipse(cx, cy, 60, 32, 0, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.24)';
+    ctx.strokeStyle = icterus > 0.2 ? 'rgba(161, 98, 7, 0.4)' : 'rgba(0, 0, 0, 0.24)';
     ctx.lineWidth = 3;
     ctx.stroke();
 
@@ -263,10 +288,11 @@ export function createPatientHeadTexture(phenotypeKey = 'black-male', { cyanosis
       ctx.arc(cx, cy, 25, 0, Math.PI * 2);
       ctx.fill();
 
-      // Pupil
+      // Pupil with dynamic light-reflex constriction radius (penlight)
+      const rP = Math.max(3.5, Math.min(13, pupilRadius));
       ctx.fillStyle = '#09090b';
       ctx.beginPath();
-      ctx.arc(cx, cy, 11, 0, Math.PI * 2);
+      ctx.arc(cx, cy, rP, 0, Math.PI * 2);
       ctx.fill();
 
       // Specular gleam
@@ -498,19 +524,34 @@ export function buildRealisticPatient(interactables, initialPhenotype = 'black-m
 
   torsoGroup.add(neckGroup);
 
-  // 4. PRECISE CLINICAL AUSCULTATION LANDMARKS
-  const auscMat = new THREE.MeshBasicMaterial({ color: 0x00e5ff, transparent: true, opacity: 0.38 });
+  // 4. PRECISE CLINICAL AUSCULTATION & TACTILE PALPATION LANDMARKS
+  const auscRingMat = new THREE.MeshBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.75 });
+  const auscCoreMat = new THREE.MeshBasicMaterial({ color: 0x0284c7, transparent: true, opacity: 0.35 });
+
   const makeAuscNode = (action, label, x, y, z) => {
-    const disc = new THREE.Mesh(new THREE.CircleGeometry(0.035, 16), auscMat);
-    disc.position.set(x, y, z);
-    disc.rotation.x = -0.55;
-    disc.userData = { action, label };
-    interactables.push(disc);
-    g.add(disc);
-    return disc;
+    const nodeGroup = new THREE.Group();
+    nodeGroup.position.set(x, y, z);
+    nodeGroup.rotation.x = -0.55;
+
+    // Outer glowing cyan clinical target ring
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.024, 0.034, 24), auscRingMat);
+    nodeGroup.add(ring);
+
+    // Inner semitransparent target disc
+    const core = new THREE.Mesh(new THREE.CircleGeometry(0.022, 16), auscCoreMat);
+    core.position.z = 0.001;
+    nodeGroup.add(core);
+
+    nodeGroup.userData = { action, label };
+    ring.userData = { action, label };
+    core.userData = { action, label };
+
+    interactables.push(ring, core);
+    g.add(nodeGroup);
+    return nodeGroup;
   };
 
-  // Cardiac Auscultation Landmarks
+  // Cardiac Auscultation Landmarks (4 Primary Valve Areas + Erb's Point)
   makeAuscNode('auscultate:aortic', 'Aortic Area (2nd Right Intercostal Space, Sternal Edge)', 0.06, 0.60, 0.22);
   makeAuscNode('auscultate:pulmonic', 'Pulmonic Area (2nd Left Intercostal Space, Sternal Edge)', -0.06, 0.60, 0.22);
   makeAuscNode('auscultate:erbs', "Erb's Point (3rd Left Intercostal Space, Sternal Edge)", -0.05, 0.52, 0.28);
@@ -520,29 +561,48 @@ export function buildRealisticPatient(interactables, initialPhenotype = 'black-m
   // Anterior Pulmonary Auscultation Landmarks
   makeAuscNode('auscultate:right_upper', 'Right Upper Lobe (1st/2nd ICS Anterior Chest)', 0.12, 0.56, 0.25);
   makeAuscNode('auscultate:left_upper', 'Left Upper Lobe (1st/2nd ICS Anterior Chest)', -0.12, 0.56, 0.25);
+  makeAuscNode('auscultate:right_middle', 'Right Middle Lobe (4th ICS Anterior Right MCL)', 0.13, 0.46, 0.32);
   makeAuscNode('auscultate:right_lower', 'Right Lower Lobe Base (Coarse Inspiratory Crackles in Pneumonia)', 0.14, 0.36, 0.40);
-  makeAuscNode('auscultate:left_lower', 'Left Lower Lobe Base (Vesicular Breath Sounds)', -0.14, 0.36, 0.40);
+  makeAuscNode('auscultate:left_lower', 'Left Lower Lobe Base (Normal Vesicular Breath Sounds)', -0.14, 0.36, 0.40);
 
   // Posterior Pulmonary Auscultation Landmarks (Accessible when patient sits forward)
   const postNodes = [
-    makeAuscNode('auscultate:post_right_base', 'Posterior Right Lung Base (Marked Inspiratory Crackles)', 0.14, 0.50, -0.10),
+    makeAuscNode('auscultate:post_right_base', 'Posterior Right Lung Base (Marked Inspiratory Crackles & Crepitations)', 0.14, 0.50, -0.10),
     makeAuscNode('auscultate:post_left_base', 'Posterior Left Lung Base (Vesicular Breath Sounds)', -0.14, 0.50, -0.10),
-    makeAuscNode('auscultate:post_interscapular', 'Interscapular Area (Bronchial Breathing)', 0.0, 0.62, -0.12),
+    makeAuscNode('auscultate:post_interscapular', 'Interscapular Region (Bronchial Breathing)', 0.0, 0.62, -0.12),
   ];
 
-  // Peripheral Palpation Points
-  const pulseMat = new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.40 });
+  // Peripheral Tactile Palpation Points
+  const pulseRingMat = new THREE.MeshBasicMaterial({ color: 0xef4444, transparent: true, opacity: 0.85 });
+  const pulseCoreMat = new THREE.MeshBasicMaterial({ color: 0xb91c1c, transparent: true, opacity: 0.45 });
+  const radialPulseAnimMesh = new THREE.Mesh(new THREE.RingGeometry(0.018, 0.026, 20), pulseRingMat);
+
   const makePulseNode = (action, label, x, y, z) => {
-    const pMesh = new THREE.Mesh(new THREE.BoxGeometry(0.048, 0.030, 0.048), pulseMat);
-    pMesh.position.set(x, y, z);
-    pMesh.userData = { action, label };
-    interactables.push(pMesh);
-    g.add(pMesh);
-    return pMesh;
+    const pGroup = new THREE.Group();
+    pGroup.position.set(x, y, z);
+
+    const ring = (action === 'palpate:radial') ? radialPulseAnimMesh : new THREE.Mesh(new THREE.RingGeometry(0.018, 0.026, 20), pulseRingMat);
+    pGroup.add(ring);
+
+    const core = new THREE.Mesh(new THREE.CircleGeometry(0.016, 16), pulseCoreMat);
+    core.position.z = 0.001;
+    pGroup.add(core);
+
+    pGroup.userData = { action, label };
+    ring.userData = { action, label };
+    core.userData = { action, label };
+    interactables.push(ring, core);
+    g.add(pGroup);
+    return pGroup;
   };
+
   makePulseNode('palpate:radial', 'Palpate Right Radial Artery Pulse (Wrist)', 0.32, 0.21, 0.82);
-  makePulseNode('palpate:carotid', 'Palpate Right Carotid Artery Pulse (Neck)', 0.08, 0.72, 0.08);
-  makePulseNode('palpate:abdomen', 'Abdominal Palpation (Epigastrium & RUQ)', 0, 0.28, 0.55);
+  makePulseNode('palpate:carotid', 'Palpate Right Carotid Artery Pulse (Anterior Triangle of Neck)', 0.08, 0.72, 0.08);
+  makePulseNode('palpate:temperature', 'Assess Tactile Core Temperature & Diaphoresis (Forehead)', 0, 0.94, 0.05);
+  makePulseNode('palpate:pupils', 'Pupillary Light Reflex & Symmetry (Penlight Beam)', 0, 0.88, 0.08);
+  makePulseNode('palpate:trachea', 'Palpate Tracheal Position in Suprasternal Notch (Alignment)', 0, 0.68, 0.16);
+  makePulseNode('palpate:edema', 'Assess Pre-Tibial & Ankle Pitting Edema (Shin / Malleolus)', -0.16, 0.14, 1.25);
+  makePulseNode('palpate:abdomen', 'Abdominal 4-Quadrant Palpation (Epigastrium & Right Upper Quadrant)', 0, 0.28, 0.55);
 
   g.add(torsoGroup);
 
@@ -753,59 +813,163 @@ export function buildRealisticPatient(interactables, initialPhenotype = 'black-m
   beddingGroup.add(sheetCuff);
   g.add(beddingGroup);
 
-  // 8. PATHOLOGY MESHES (Burns, Lacerations, Emesis)
+  // 8. PHOTOREALISTIC PATHOLOGY SUBSYSTEM (Burns, Trauma, Emesis, Sepsis)
+
+  // 8A. THERMAL FLAME BURN SYSTEM (Partial & Full-Thickness with 3D Blisters)
+  const burnGroup = new THREE.Group();
+  burnGroup.position.set(-0.31, 0.21, 0.65);
+
   const burnTex = document.createElement('canvas');
-  burnTex.width = 256; burnTex.height = 256;
+  burnTex.width = 512; burnTex.height = 512;
   const bCtx = burnTex.getContext('2d');
-  bCtx.fillStyle = '#991b1b'; bCtx.fillRect(0, 0, 256, 256);
-  bCtx.fillStyle = '#18181b';
-  for (let i = 0; i < 40; i++) {
+  // Raw denuded dermis
+  bCtx.fillStyle = '#b91c1c'; bCtx.fillRect(0, 0, 512, 512);
+  // Charred necrotic coagulated tissue
+  bCtx.fillStyle = '#1c1917';
+  for (let i = 0; i < 70; i++) {
     bCtx.beginPath();
-    bCtx.arc(Math.random() * 256, Math.random() * 256, 8 + Math.random() * 18, 0, Math.PI * 2);
+    bCtx.arc(Math.random() * 512, Math.random() * 512, 12 + Math.random() * 26, 0, Math.PI * 2);
     bCtx.fill();
   }
-  bCtx.fillStyle = 'rgba(254, 240, 138, 0.85)';
-  for (let i = 0; i < 25; i++) {
+  // Serous exudate sheen
+  bCtx.fillStyle = 'rgba(254, 240, 138, 0.82)';
+  for (let i = 0; i < 45; i++) {
     bCtx.beginPath();
-    bCtx.arc(Math.random() * 256, Math.random() * 256, 5 + Math.random() * 12, 0, Math.PI * 2);
+    bCtx.arc(Math.random() * 512, Math.random() * 512, 8 + Math.random() * 16, 0, Math.PI * 2);
     bCtx.fill();
   }
   const burnCanvasTex = new THREE.CanvasTexture(burnTex);
-  const burnMesh = new THREE.Mesh(
-    new THREE.BoxGeometry(0.12, 0.12, 0.32),
-    new THREE.MeshStandardMaterial({ map: burnCanvasTex, roughness: 0.35, metalness: 0.1 })
+  const burnSleeve = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.046, 0.042, 0.28, 24),
+    new THREE.MeshStandardMaterial({ map: burnCanvasTex, roughness: 0.32, metalness: 0.08 })
   );
-  burnMesh.position.set(-0.31, 0.22, 0.65);
-  burnMesh.visible = false;
-  burnMesh.userData = { action: 'inspect:burn', label: 'Inspect Burn Injury (Partial & Full Thickness)' };
-  interactables.push(burnMesh);
-  g.add(burnMesh);
+  burnSleeve.rotation.x = Math.PI / 2;
+  burnGroup.add(burnSleeve);
 
-  const lacerationGroup = new THREE.Group();
-  lacerationGroup.position.set(0.08, 0.42, 0.32);
-  lacerationGroup.rotation.x = -0.55;
-  const woundCleft = new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.08, 0.01), new THREE.MeshStandardMaterial({ color: 0x450a0a, roughness: 0.2 }));
-  lacerationGroup.add(woundCleft);
-  const bloodDrip = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.14, 0.008), new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.1, metalness: 0.2 }));
-  bloodDrip.position.set(0, -0.06, 0.005);
-  lacerationGroup.add(bloodDrip);
-  lacerationGroup.visible = false;
-  lacerationGroup.userData = { action: 'inspect:wound', label: 'Inspect Traumatic Hemorrhage / Wound' };
-  interactables.push(lacerationGroup);
-  g.add(lacerationGroup);
+  // 3D Translucent Fluid-Filled Tense Blister Vesicles
+  const blisterMat = new THREE.MeshStandardMaterial({
+    color: 0xfef08a,
+    transparent: true,
+    opacity: 0.82,
+    roughness: 0.12,
+    metalness: 0.05,
+  });
+  const blisterLocs = [
+    [0.038, 0.02, 0.04, 0.016],
+    [-0.035, 0.015, -0.06, 0.019],
+    [0.02, 0.032, -0.02, 0.014],
+    [-0.01, 0.035, 0.08, 0.022],
+    [0.032, -0.01, -0.08, 0.015],
+  ];
+  blisterLocs.forEach(([bx, by, bz, br]) => {
+    const blister = new THREE.Mesh(new THREE.SphereGeometry(br, 12, 12), blisterMat);
+    blister.scale.set(1.2, 0.6, 1.2);
+    blister.position.set(bx, by, bz);
+    burnGroup.add(blister);
+  });
 
+  // Anterior Upper Chest Flame Burn Patch
+  const chestBurn = new THREE.Mesh(
+    new THREE.CircleGeometry(0.085, 20),
+    new THREE.MeshStandardMaterial({ map: burnCanvasTex, roughness: 0.35 })
+  );
+  chestBurn.position.set(0.10, 0.44, 0.32);
+  chestBurn.rotation.x = -0.55;
+  burnGroup.add(chestBurn);
+
+  burnGroup.visible = false;
+  burnGroup.userData = { action: 'inspect:burn', label: 'Inspect Thermal Burn (Partial & Full Thickness, Blisters)' };
+  interactables.push(burnGroup, burnSleeve);
+  g.add(burnGroup);
+
+  // 8B. TRAUMA, HEMORRHAGE & SAM PELVIC BINDER SYSTEM
+  const traumaGroup = new THREE.Group();
+
+  // Severe Left Thoracic Contusion (Purplish-Maroon Ecchymosis over Lower Ribs)
+  const contusionTex = document.createElement('canvas');
+  contusionTex.width = 256; contusionTex.height = 256;
+  const cCtx = contusionTex.getContext('2d');
+  const cGrad = cCtx.createRadialGradient(128, 128, 20, 128, 128, 120);
+  cGrad.addColorStop(0, '#3b0764');
+  cGrad.addColorStop(0.55, '#831843');
+  cGrad.addColorStop(0.85, '#a16207');
+  cGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  cCtx.fillStyle = cGrad;
+  cCtx.fillRect(0, 0, 256, 256);
+  const contusionCanvasTex = new THREE.CanvasTexture(contusionTex);
+
+  const chestContusion = new THREE.Mesh(
+    new THREE.PlaneGeometry(0.18, 0.16),
+    new THREE.MeshStandardMaterial({ map: contusionCanvasTex, transparent: true, opacity: 0.90, roughness: 0.5 })
+  );
+  chestContusion.position.set(-0.10, 0.44, 0.33);
+  chestContusion.rotation.x = -0.55;
+  chestContusion.rotation.z = 0.25;
+  traumaGroup.add(chestContusion);
+
+  // Deep Gaping Laceration with Active Crimson Venous Oozing
+  const woundGroup = new THREE.Group();
+  woundGroup.position.set(0.31, 0.21, 0.65);
+  const lacerationBase = new THREE.Mesh(
+    new THREE.BoxGeometry(0.016, 0.10, 0.012),
+    new THREE.MeshStandardMaterial({ color: 0x3f0505, roughness: 0.15 })
+  );
+  woundGroup.add(lacerationBase);
+
+  const bloodPoolMat = new THREE.MeshStandardMaterial({ color: 0x991b1b, roughness: 0.08, metalness: 0.15 });
+  const bloodTrickle = new THREE.Mesh(new THREE.BoxGeometry(0.024, 0.16, 0.008), bloodPoolMat);
+  bloodTrickle.position.set(0, -0.08, 0.005);
+  woundGroup.add(bloodTrickle);
+
+  const bloodDrop = new THREE.Mesh(new THREE.SphereGeometry(0.012, 8, 8), bloodPoolMat);
+  bloodDrop.position.set(0, -0.17, 0.005);
+  woundGroup.add(bloodDrop);
+  traumaGroup.add(woundGroup);
+
+  // SAM Pelvic Stabilization Binder (Commercial High-Vis Orange Wrap with Tension Buckle)
+  const binderGroup = new THREE.Group();
+  binderGroup.position.set(0, 0.16, 0.44);
+  const binderStrap = new THREE.Mesh(
+    new THREE.BoxGeometry(0.70, 0.11, 0.42),
+    new THREE.MeshStandardMaterial({ color: 0xea580c, roughness: 0.65 })
+  );
+  binderGroup.add(binderStrap);
+
+  const buckle = new THREE.Mesh(
+    new THREE.BoxGeometry(0.09, 0.07, 0.04),
+    new THREE.MeshStandardMaterial({ color: 0x1e3a8a, roughness: 0.35 })
+  );
+  buckle.position.set(0, 0.06, 0.20);
+  binderGroup.add(buckle);
+  traumaGroup.add(binderGroup);
+
+  traumaGroup.visible = false;
+  traumaGroup.userData = { action: 'inspect:wound', label: 'Inspect Traumatic Contusions, Gaping Laceration & Pelvic Binder' };
+  interactables.push(traumaGroup, chestContusion, woundGroup);
+  g.add(traumaGroup);
+
+  // 8C. BEDSIDE EMESIS DISH WITH BILIOUS GASTRIC CONTENTS
   const emesisGroup = new THREE.Group();
   emesisGroup.position.set(0.48, 0.68, -0.2);
-  const dish = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.07, 0.05, 16), new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.2, metalness: 0.9 }));
-  dish.scale.set(1.4, 1.0, 0.8);
+  const dish = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.09, 0.07, 0.05, 16),
+    new THREE.MeshStandardMaterial({ color: 0xe2e8f0, roughness: 0.18, metalness: 0.92 })
+  );
+  dish.scale.set(1.4, 1.0, 0.85);
   emesisGroup.add(dish);
-  const vomitFluid = new THREE.Mesh(new THREE.CircleGeometry(0.075, 16), new THREE.MeshStandardMaterial({ color: 0xa3e635, roughness: 0.2 }));
+
+  // Yellow-green bilious liquid with specular reflection
+  const vomitFluid = new THREE.Mesh(
+    new THREE.CircleGeometry(0.075, 16),
+    new THREE.MeshStandardMaterial({ color: 0x84cc16, roughness: 0.15, metalness: 0.1 })
+  );
   vomitFluid.rotation.x = -Math.PI / 2;
   vomitFluid.position.y = 0.02;
   dish.add(vomitFluid);
+
   emesisGroup.visible = false;
-  emesisGroup.userData = { action: 'inspect:emesis', label: 'Inspect Bedside Emesis / Vomitus' };
-  interactables.push(emesisGroup);
+  emesisGroup.userData = { action: 'inspect:emesis', label: 'Inspect Bedside Emesis / Vomitus (Bilious Gastric Fluid)' };
+  interactables.push(emesisGroup, dish);
   g.add(emesisGroup);
 
   // --------------------------------------------------------------------------
@@ -828,6 +992,16 @@ export function buildRealisticPatient(interactables, initialPhenotype = 'black-m
     deepBreathFactor: 1.0,
     deepBreathActive: false,
     crtBlanching: false,
+
+    // Advanced Clinical Realism State
+    rigorsActive: false,
+    respiratoryDistress: false,
+    pupilRadius: 11,
+    icterus: 0.0,
+    flushLevel: 0.0,
+    pallorLevel: 0.0,
+    pulseBpm: 124,
+    radialPulseActive: false,
   };
 
   function updateTexture() {
@@ -839,6 +1013,10 @@ export function buildRealisticPatient(interactables, initialPhenotype = 'black-m
       mouthOpen,
       sootLevel,
       woundLevel,
+      pupilRadius: state.pupilRadius,
+      icterus: state.icterus,
+      flushLevel: state.flushLevel,
+      pallorLevel: state.pallorLevel,
     });
     skinMat.map = headTexData.tex;
     skinMat.needsUpdate = true;
@@ -885,11 +1063,50 @@ export function buildRealisticPatient(interactables, initialPhenotype = 'black-m
       updateTexture();
     },
     setTraumaVisual(type) {
-      burnMesh.visible = (type === 'burn');
-      lacerationGroup.visible = (type === 'trauma');
+      burnGroup.visible = (type === 'burn');
+      traumaGroup.visible = (type === 'trauma');
       emesisGroup.visible = (type === 'vomit');
-      sootLevel = (type === 'burn') ? 0.9 : 0.0;
-      woundLevel = (type === 'trauma') ? 0.9 : 0.0;
+      sootLevel = (type === 'burn') ? 0.95 : 0.0;
+      woundLevel = (type === 'trauma') ? 0.90 : 0.0;
+
+      if (type === 'trauma') {
+        state.pallorLevel = 0.75;
+        state.flushLevel = 0.0;
+        state.icterus = 0.0;
+        state.rigorsActive = false;
+        state.respiratoryDistress = false;
+        state.pulseBpm = 122;
+      } else if (type === 'burn') {
+        state.pallorLevel = 0.20;
+        state.flushLevel = 0.35;
+        state.icterus = 0.0;
+        state.rigorsActive = false;
+        state.respiratoryDistress = true;
+        state.pulseBpm = 118;
+      } else if (type === 'malaria') {
+        state.pallorLevel = 0.0;
+        state.flushLevel = 0.85;
+        state.icterus = 0.45;
+        state.rigorsActive = true;
+        state.respiratoryDistress = false;
+        state.pulseBpm = 108;
+      } else if (type === 'vomit') {
+        state.pallorLevel = 0.45;
+        state.flushLevel = 0.0;
+        state.icterus = 0.0;
+        state.rigorsActive = false;
+        state.respiratoryDistress = false;
+        state.pulseBpm = 100;
+      } else {
+        state.pallorLevel = 0.0;
+        state.flushLevel = 0.30;
+        state.icterus = 0.0;
+        state.rigorsActive = false;
+        state.respiratoryDistress = true;
+        currentCyanosis = state.oxygenActive ? 0.0 : 0.75;
+        currentDiaphoresis = 0.85;
+        state.pulseBpm = 124;
+      }
       updateTexture();
     },
 
@@ -946,6 +1163,33 @@ export function buildRealisticPatient(interactables, initialPhenotype = 'black-m
       }, 1800);
     },
 
+    // Interactive Clinical Examination Actions
+    shinePenlight() {
+      // Direct & Consensual pupillary light reflex: sharp constriction from 11px to 3.5px
+      state.pupilRadius = 4.0;
+      updateTexture();
+      setTimeout(() => {
+        state.pupilRadius = 11.0;
+        updateTexture();
+      }, 2400);
+    },
+
+    palpateRadialPulse() {
+      state.radialPulseActive = true;
+      setTimeout(() => { state.radialPulseActive = false; }, 4000);
+    },
+
+    checkTemperature() {
+      return {
+        temp: currentDiaphoresis > 0.5 ? '39.1 °C (Pyrexial / Hot to touch)' : '36.8 °C (Normothermic)',
+        sweat: currentDiaphoresis > 0.5 ? 'Marked Diaphoresis (Cold Sweats)' : 'Dry skin',
+      };
+    },
+
+    checkEdema() {
+      return { pitting: 'Pre-tibial assessment: Grade 2+ pitting indentation (~3mm depth) on lower shin.' };
+    },
+
     // Frame update loop
     update(t) {
       state.currentTorsoTilt += (state.targetTorsoTilt - state.currentTorsoTilt) * 0.06;
@@ -957,11 +1201,29 @@ export function buildRealisticPatient(interactables, initialPhenotype = 'black-m
       state.currentJawDrop += (state.targetJawDrop - state.currentJawDrop) * 0.12;
       jawGroup.position.y = -0.07 - state.currentJawDrop;
 
-      // Thoracic respiratory motion (chest heave)
+      // Rhythmic Radial Artery Pulse Wave
+      if (radialPulseAnimMesh) {
+        const pulsePhase = Math.sin(t * (state.pulseBpm / 60) * Math.PI * 2);
+        const pulseScale = 1.0 + Math.max(0, pulsePhase) * (state.radialPulseActive ? 0.65 : 0.22);
+        radialPulseAnimMesh.scale.set(pulseScale, pulseScale, 1);
+      }
+
+      // Febrile Rigors / Shivering Tremor (8-10 Hz high-frequency oscillation during malaria/chills)
+      if (state.rigorsActive) {
+        const rigorJitter = Math.sin(t * 52) * 0.0035;
+        torsoGroup.position.x = rigorJitter;
+        headGroup.position.x = rigorJitter * 0.6;
+      } else {
+        torsoGroup.position.x = 0;
+        headGroup.position.x = 0;
+      }
+
+      // Thoracic respiratory motion (chest heave with accessory muscle use)
       const breathPhase = Math.sin(t * Math.PI * 2 * state.breathRate);
-      const expansion = (1 + breathPhase * 0.05) * state.deepBreathFactor;
-      torsoGroup.scale.set(expansion, 1 + breathPhase * 0.03, expansion);
-      torsoGroup.position.y = 0.45 + breathPhase * 0.012 * state.deepBreathFactor;
+      const distressBoost = state.respiratoryDistress ? 1.45 : 1.0;
+      const expansion = (1 + breathPhase * 0.05 * distressBoost) * state.deepBreathFactor;
+      torsoGroup.scale.set(expansion, 1 + breathPhase * 0.035 * distressBoost, expansion);
+      torsoGroup.position.y = 0.45 + breathPhase * 0.015 * state.deepBreathFactor * distressBoost;
 
       // JVP pulse wave
       const jvpPulse = (Math.sin(t * 12) + Math.sin(t * 24)) * 0.002;

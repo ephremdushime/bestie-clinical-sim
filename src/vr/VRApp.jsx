@@ -297,30 +297,35 @@ export default function VRApp() {
     } catch {
       // Anatomical surface landmark findings
       const findingMap = {
-        'auscultate:aortic': 'Aortic Area (2nd R ICS): Clear S1, loud S2. No systolic ejection murmur radiating to carotids.',
-        'auscultate:pulmonic': 'Pulmonic Area (2nd L ICS): Normal pulmonary component of S2 with physiological inspiratory splitting.',
-        'auscultate:erbs': "Erb's Point (3rd L ICS): Dual heart sounds present; no early diastolic murmur detected.",
-        'auscultate:tricuspid': 'Tricuspid Area (4th/5th L ICS): Normal S1 and S2; no tricuspid regurgitation or gallop.',
-        'auscultate:mitral': 'Mitral Apex (5th L ICS MCL): S1 loud, tachycardic at 124 bpm. No pansystolic murmur radiating to axilla.',
-        'auscultate:right_upper': 'Right Upper Lobe: Vesicular breath sounds with transmitted upper airway sounds.',
-        'auscultate:left_upper': 'Left Upper Lobe: Clear vesicular breath sounds; no adventitious sounds.',
+        'auscultate:aortic': 'Aortic Area (2nd R ICS, Sternal Edge): Crisp S1, accentuated S2. No systolic ejection murmur radiating to carotids.',
+        'auscultate:pulmonic': 'Pulmonic Area (2nd L ICS, Sternal Edge): Normal pulmonary component of S2 with physiological inspiratory splitting.',
+        'auscultate:erbs': "Erb's Point (3rd L ICS, Sternal Edge): Dual heart sounds present; no early diastolic regurgitant murmur.",
+        'auscultate:tricuspid': 'Tricuspid Area (4th/5th L Lower Sternal Border): Normal S1 and S2; no tricuspid regurgitation or right-sided gallop.',
+        'auscultate:mitral': 'Mitral Apex (5th L ICS, Mid-Clavicular Line): S1 loud, tachycardic at 124 bpm. No pansystolic murmur radiating to axilla.',
+        'auscultate:right_upper': 'Right Upper Lobe (1st/2nd ICS Anterior): Vesicular breath sounds with transmitted upper airway sounds.',
+        'auscultate:left_upper': 'Left Upper Lobe (1st/2nd ICS Anterior): Clear vesicular breath sounds; no adventitious sounds.',
+        'auscultate:right_middle': 'Right Middle Lobe (4th ICS Anterior MCL): Vesicular breath sounds; no wheezing or consolidation.',
         'auscultate:right_lower': 'Right Lower Lobe Base: Coarse inspiratory crackles (crepitations) and bronchial breath sounds consistent with consolidation.',
         'auscultate:left_lower': 'Left Lower Lobe Base: Vesicular breath sounds throughout; no crackles or wheezes.',
         'auscultate:post_right_base': 'Posterior Right Base: Marked coarse late-inspiratory crepitations and increased vocal resonance (bronchophony).',
         'auscultate:post_left_base': 'Posterior Left Base: Normal vesicular breath sounds.',
-        'auscultate:post_interscapular': 'Interscapular Region: Bronchovesicular breath sounds without wheeze.',
+        'auscultate:post_interscapular': 'Interscapular Region: Bronchovesicular breath sounds without stridor or wheeze.',
         'palpate:radial': 'Right Radial Pulse: Tachycardic at 124 bpm, bounding peripheral pulse volume, regular rhythm.',
         'palpate:carotid': 'Carotid Arteries: Strong, rapid pulse waveform without bruits.',
-        'palpate:abdomen': 'Abdominal Palpation: Soft abdomen with mild voluntary epigastric guarding due to coughing. No peritonitis.',
+        'palpate:temperature': 'Tactile Core Temperature (Forehead): Marked pyrexia (39.1 °C); skin is burning hot to touch with profuse cold diaphoresis.',
+        'palpate:pupils': 'Pupillary Light Reflex: Bilateral 4mm pupils constrict briskly to 2mm under direct penlight stimulus; consensual reflex intact.',
+        'palpate:trachea': 'Tracheal Palpation: Trachea is central within the suprasternal notch; no deviation, stridor, or subcutaneous emphysema.',
+        'palpate:edema': 'Pre-Tibial Palpation: Firm pressure over lower tibia demonstrates Grade 2+ pitting indentation (~3mm depth, 4s rebound).',
+        'palpate:abdomen': 'Abdominal Palpation: Soft abdomen with mild voluntary epigastric guarding due to coughing. No rebound or peritonitis.',
         'inspect:general': 'General Appearance: Patient is ill-looking, diaphoretic with forehead cold sweats, flushed (Temp 39.1°C), tachypnoeic at 32/min using intercostal accessory muscles.',
         'inspect:jvp': 'Neck & JVP: JVP elevated ~3cm above sternal angle at 45° elevation. Carotid pulse rapid and bounding.',
         'inspect:respiratory_effort': 'Respiratory Effort: RR 32/min, shallow breathing with accessory muscle use (sternocleidomastoid tensing), asymmetrical right lower expansion.',
         'inspect:hands': 'Hands & Periphery: Warm and moist, no peripheral cyanosis, no clubbing or splinter hemorrhages. Palmar erythema absent.',
         'inspect:wristband': 'Patient Identification Band: Confirmed SMITH, JOHN · DOB 14-04-1978 · NHS 492 819 0281 · Allergy Alert: PENICILLIN.',
         'inspect:iv': 'Intravenous Access: 20G pink cannula in right hand dorsum is patent, no phlebitis, clean transparent Tegaderm dressing.',
-        'test:crt': 'Capillary Refill Time: Pressed right nail bed blanches white and briskly refills to pink in 1.6s (Normal < 2s).',
-        'inspect:burn': 'Burn Assessment: Partial-thickness dermal burn with fluid-filled tense blisters and perioral carbon soot.',
-        'inspect:wound': 'Traumatic Wound: Blunt chest contusion and open laceration with active venous oozing.',
+        'test:crt': 'Capillary Refill Time (CRT): Pressed right nail bed blanches white and briskly refills to pink in 1.6s (Normal < 2s).',
+        'inspect:burn': 'Burn Assessment: Partial-thickness dermal burn with fluid-filled tense blisters and perioral carbon soot. Audible inspiratory stridor.',
+        'inspect:wound': 'Traumatic Wound: Severe blunt chest contusion, gaping forearm laceration with active venous oozing, and stabilized SAM pelvic binder.',
         'inspect:emesis': 'Bedside kidney dish contains yellow-green bilious vomitus (~150 mL).',
       };
       res = { finding: findingMap[actionKey] || 'Physical examination completed.' };
@@ -335,12 +340,26 @@ export default function VRApp() {
     } else if (actionKey.startsWith('auscultate:mitral') || actionKey.startsWith('auscultate:aortic') || actionKey.startsWith('auscultate:pulmonic') || actionKey.startsWith('auscultate:erbs') || actionKey.startsWith('auscultate:tricuspid')) {
       eng.current.stethAudio?.playHeartSounds(4.0, hr);
       triggerHapticPulse(0.7, 50);
-    } else if (actionKey === 'palpate:radial' || actionKey === 'palpate:carotid') {
-      eng.current.stethAudio?.playHeartSounds(3.5, hr);
+    } else if (actionKey === 'palpate:radial') {
+      eng.current.room?.patient.palpateRadialPulse();
+      eng.current.stethAudio?.playRadialPulse(3.5, hr);
       triggerHapticPulse(0.85, 45);
       setTimeout(() => triggerHapticPulse(0.5, 30), (60 / hr) * 350);
+    } else if (actionKey === 'palpate:carotid') {
+      eng.current.stethAudio?.playHeartSounds(3.5, hr);
+      triggerHapticPulse(0.85, 45);
+    } else if (actionKey === 'palpate:pupils') {
+      eng.current.room?.patient.shinePenlight();
+      eng.current.stethAudio?.playPenlightClick();
+    } else if (actionKey === 'palpate:temperature') {
+      const tInfo = eng.current.room?.patient.checkTemperature?.();
+      if (tInfo) patch({ caption: `Tactile Assessment: ${tInfo.temp} · ${tInfo.sweat}` });
+    } else if (actionKey === 'palpate:edema') {
+      eng.current.room?.patient.checkEdema?.();
     } else if (actionKey === 'palpate:abdomen') {
       eng.current.stethAudio?.playPainGroan();
+    } else if (actionKey === 'inspect:burn') {
+      eng.current.stethAudio?.playStridor(3.5);
     } else if (actionKey === 'test:crt') {
       eng.current.room?.patient.testCapillaryRefill();
     } else if (actionKey.startsWith('auscultate:')) {
@@ -364,6 +383,18 @@ export default function VRApp() {
     }
     if (res.state) syncState(res.state);
   }, () => intervenePatient(actionKey)), [act, patch, syncState]);
+
+  const setPathology = useCallback((type) => {
+    eng.current.room?.patient.setTraumaVisual(type);
+    const labels = {
+      respiratory: 'Simulated Pathology: Severe Pneumonia & Sepsis (RR 32, accessory muscle retractions, diaphoresis, cyanosis, RLL crackles).',
+      trauma: 'Simulated Pathology: Major Road Trauma & Hemorrhagic Shock (Thoracic contusion, gaping bleeding laceration, SAM pelvic binder, shock pallor).',
+      burn: 'Simulated Pathology: Thermal Flame Burns & Inhalation Injury (Partial/full-thickness burns, fluid blisters, perioral soot, stridor).',
+      malaria: 'Simulated Pathology: Severe Malaria with Febrile Rigors (Temp 39.1°C, intense facial flushing, shivering tremors, scleral icterus).',
+      vomit: 'Simulated Pathology: Acute Bilious Emesis (Bedside kidney dish containing yellow-green gastric fluid).',
+    };
+    patch({ caption: labels[type] || 'Pathology updated.' });
+  }, [patch]);
 
   const startEncounter = useCallback(() => act(async () => {
     const d = await eng.current.adapter.start(DEFAULT_CASE, 'VR Medical Student');
@@ -399,6 +430,8 @@ export default function VRApp() {
       eng.current.room?.patient.setTraumaVisual('burn');
     } else if (caseLower.includes('trauma')) {
       eng.current.room?.patient.setTraumaVisual('trauma');
+    } else if (caseLower.includes('malaria')) {
+      eng.current.room?.patient.setTraumaVisual('malaria');
     } else {
       eng.current.room?.patient.setTraumaVisual('respiratory');
     }
@@ -1136,6 +1169,61 @@ export default function VRApp() {
             style={{ padding: '4px 10px', background: ui.currentStance === 'back-exam' ? '#0891b2' : '#334155', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '13px' }}
           >
             Back Auscultation Stance
+          </button>
+        </div>
+
+        {/* Pathology Realism Switcher */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4, paddingBottom: 6, borderBottom: '1px solid #334155' }}>
+          <span style={{ fontSize: '13px', color: '#38bdf8', fontWeight: 700 }}>🚨 Clinical Presentation:</span>
+          <button onClick={() => setPathology('respiratory')} style={{ padding: '3px 8px', background: '#0284c7', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }}>
+            🫁 Severe Pneumonia / Sepsis
+          </button>
+          <button onClick={() => setPathology('trauma')} style={{ padding: '3px 8px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }}>
+            💥 Road Trauma / Hemorrhage
+          </button>
+          <button onClick={() => setPathology('burn')} style={{ padding: '3px 8px', background: '#ea580c', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }}>
+            🔥 Thermal Burns / Inhalation
+          </button>
+          <button onClick={() => setPathology('malaria')} style={{ padding: '3px 8px', background: '#d97706', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }}>
+            🦟 Malaria Febrile Rigors
+          </button>
+          <button onClick={() => setPathology('vomit')} style={{ padding: '3px 8px', background: '#65a30d', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }}>
+            🤮 Bilious Emesis
+          </button>
+        </div>
+
+        {/* Quick Bedside Physical Examination Hotspots */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4, paddingBottom: 6, borderBottom: '1px solid #334155' }}>
+          <span style={{ fontSize: '13px', color: '#4ade80', fontWeight: 700 }}>🩺 Physical Exam Hotspots:</span>
+          <button onClick={() => examinePatient('palpate:radial')} style={{ padding: '3px 8px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Radial Artery (Wrist) Pulse">
+            💓 Radial Pulse (Wrist)
+          </button>
+          <button onClick={() => examinePatient('palpate:temperature')} style={{ padding: '3px 8px', background: '#b91c1c', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Tactile Core Temperature & Diaphoresis">
+            🌡️ Forehead Temp (39.1°C)
+          </button>
+          <button onClick={() => examinePatient('palpate:pupils')} style={{ padding: '3px 8px', background: '#eab308', color: '#0f172a', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px', fontWeight: 600 }} title="Penlight Pupillary Light Reflex">
+            🔦 Penlight Pupils
+          </button>
+          <button onClick={() => examinePatient('test:crt')} style={{ padding: '3px 8px', background: '#0284c7', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Capillary Refill Test">
+            🖐️ Capillary Refill
+          </button>
+          <button onClick={() => examinePatient('palpate:edema')} style={{ padding: '3px 8px', background: '#64748b', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Pre-tibial pitting edema">
+            🦵 Ankle Edema (2+)
+          </button>
+          <button onClick={() => examinePatient('palpate:trachea')} style={{ padding: '3px 8px', background: '#475569', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Suprasternal Notch Tracheal Palpation">
+            📍 Trachea (Midline)
+          </button>
+          <button onClick={() => examinePatient('auscultate:aortic')} style={{ padding: '3px 8px', background: '#059669', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="2nd Right Intercostal Space">
+            ❤️ Aortic (2nd R ICS)
+          </button>
+          <button onClick={() => examinePatient('auscultate:mitral')} style={{ padding: '3px 8px', background: '#059669', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="5th Left Intercostal Space MCL">
+            ❤️ Mitral Apex (5th L ICS)
+          </button>
+          <button onClick={() => examinePatient('auscultate:right_lower')} style={{ padding: '3px 8px', background: '#0d9488', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Coarse Inspiratory Crackles in Pneumonia">
+            🫁 RLL Base (Crackles)
+          </button>
+          <button onClick={() => examinePatient('auscultate:left_lower')} style={{ padding: '3px 8px', background: '#0d9488', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px' }} title="Vesicular Breath Sounds">
+            🫁 LLL Base (Normal)
           </button>
         </div>
 

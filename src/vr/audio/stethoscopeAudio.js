@@ -414,4 +414,94 @@ export class StethoscopeAudio {
     osc.start(now);
     osc.stop(now + 0.6);
   }
+
+  // High-pitched inspiratory stridor (Upper airway burn edema / laryngeal obstruction)
+  playStridor(durationSec = 4.0) {
+    this._init();
+    this.stop();
+    this.currentMode = 'stridor';
+    const ctx = this.ctx;
+    this.gain.gain.setValueAtTime(0.75, ctx.currentTime);
+
+    const playStridorBreath = () => {
+      const now = ctx.currentTime;
+      // Monophonic harsh high-pitched crowing tone (720-980 Hz)
+      const osc = ctx.createOscillator();
+      const oscGain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(740, now);
+      osc.frequency.linearRampToValueAtTime(920, now + 0.7);
+      osc.frequency.linearRampToValueAtTime(810, now + 1.4);
+
+      const filter = ctx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.setValueAtTime(850, now);
+      filter.Q.setValueAtTime(3.5, now);
+
+      oscGain.gain.setValueAtTime(0.01, now);
+      oscGain.gain.linearRampToValueAtTime(0.35, now + 0.5);
+      oscGain.gain.linearRampToValueAtTime(0.01, now + 1.5);
+
+      osc.connect(filter);
+      filter.connect(oscGain);
+      oscGain.connect(this.gain);
+      osc.start(now);
+      osc.stop(now + 1.6);
+    };
+
+    playStridorBreath();
+    this.intervalId = setInterval(playStridorBreath, 2600);
+    setTimeout(() => this.stop(), durationSec * 1000);
+  }
+
+  // Tactile acoustic tap for radial pulse palpation
+  playRadialPulse(durationSec = 3.5, bpm = 124) {
+    this._init();
+    this.stop();
+    this.currentMode = 'pulse';
+    const ctx = this.ctx;
+    this.gain.gain.setValueAtTime(0.80, ctx.currentTime);
+    const intervalMs = (60 / bpm) * 1000;
+
+    const playTap = () => {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const g = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(140, now);
+      osc.frequency.exponentialRampToValueAtTime(80, now + 0.05);
+
+      g.gain.setValueAtTime(0.35, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.06);
+
+      osc.connect(g);
+      g.connect(this.gain);
+      osc.start(now);
+      osc.stop(now + 0.07);
+    };
+
+    playTap();
+    this.intervalId = setInterval(playTap, intervalMs);
+    setTimeout(() => this.stop(), durationSec * 1000);
+  }
+
+  // Penlight click for pupillary examination
+  playPenlightClick() {
+    this._init();
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(1400, now);
+    osc.frequency.exponentialRampToValueAtTime(400, now + 0.025);
+
+    g.gain.setValueAtTime(0.20, now);
+    g.gain.exponentialRampToValueAtTime(0.001, now + 0.03);
+
+    osc.connect(g);
+    g.connect(this.gain);
+    osc.start(now);
+    osc.stop(now + 0.035);
+  }
 }
