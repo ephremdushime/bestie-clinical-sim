@@ -29,7 +29,8 @@ def test_backup_cli_creates_integrity_checked_restricted_copy(tmp_path, monkeypa
     files = list(output_dir.glob("clinical_sim_*.sqlite3"))
     assert len(files) == 1
     backup_path = files[0]
-    assert os.stat(backup_path).st_mode & 0o777 == 0o600
+    if os.name != 'nt':
+        assert os.stat(backup_path).st_mode & 0o777 == 0o600
     with sqlite3.connect(backup_path) as restored:
         assert restored.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
         assert restored.execute("SELECT value FROM sample_records").fetchone()[0] == "committed value"

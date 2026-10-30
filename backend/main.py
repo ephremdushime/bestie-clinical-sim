@@ -72,6 +72,36 @@ CASES={
 def conn():
  c=sqlite3.connect(DB_PATH,timeout=20); c.row_factory=sqlite3.Row; return c
 
+RUBRIC_VERSION='heuristic-1.0.0'
+def canonical_json(value:dict) -> str:
+ return json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False)
+def content_digest(value:dict) -> str:
+ return hashlib.sha256(canonical_json(value).encode('utf-8')).hexdigest()
+def rubric_definition():
+ return {'version':RUBRIC_VERSION,'status':'formative_unvalidated','domains':['Communication and history','Severity and examination','Investigation selection and indication','Result interpretation','Differential diagnosis','Final diagnosis','Management and safety','Referral and follow-up'],'critical_error_policy':'Flag scenario-specific omissions for educator review; automated text detection is not a validated competence measure.'}
+def ensure_version_snapshots():
+ c=conn()
+ try:
+  for case in CASES.values():
+   version=str(case.get('version') or '1.0.0'); approved_at=str(case.get('approved_at') or '2026-01-01T00:00:00+00:00')
+   case_payload=canonical_json(case); case_hash=content_digest(case)
+   rubric_payload=canonical_json(rubric_definition()); rubric_hash=content_digest(rubric_definition())
+   c.execute('INSERT OR IGNORE INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash) VALUES(?,?,?,?,?,?,?,?)',(case['id'],version,case_payload,case.get('approved_by'),case.get('approved_by_user_id'),approved_at,'Initial immutable snapshot imported from existing case catalogue.',case_hash))
+   c.execute('UPDATE case_versions SET content_hash=? WHERE case_id=? AND version=? AND (content_hash IS NULL OR content_hash="")',(case_hash,case['id'],version))
+   c.execute('INSERT OR IGNORE INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],version,RUBRIC_VERSION,rubric_payload,approved_at,rubric_hash))
+   c.execute('UPDATE rubric_versions SET content_hash=? WHERE case_id=? AND case_version=? AND rubric_version=? AND (content_hash IS NULL OR content_hash="")',(rubric_hash,case['id'],version,RUBRIC_VERSION))
+  # Backfill hashes for older immutable versions without rewriting their payloads.
+  for row in c.execute('SELECT case_id,version,payload FROM case_versions WHERE content_hash IS NULL OR content_hash=""').fetchall():
+   try: digest=content_digest(json.loads(row['payload']))
+   except (TypeError,ValueError,json.JSONDecodeError): continue
+   c.execute('UPDATE case_versions SET content_hash=? WHERE case_id=? AND version=?',(digest,row['case_id'],row['version']))
+  for row in c.execute('SELECT case_id,case_version,rubric_version,payload FROM rubric_versions WHERE content_hash IS NULL OR content_hash=""').fetchall():
+   try: digest=content_digest(json.loads(row['payload']))
+   except (TypeError,ValueError,json.JSONDecodeError): continue
+   c.execute('UPDATE rubric_versions SET content_hash=? WHERE case_id=? AND case_version=? AND rubric_version=?',(digest,row['case_id'],row['case_version'],row['rubric_version']))
+  c.commit()
+ finally: c.close()
+
 def init_db():
  c=conn(); c.executescript('''CREATE TABLE IF NOT EXISTS sessions(id INTEGER PRIMARY KEY AUTOINCREMENT, learner TEXT, case_id TEXT, mode TEXT, exam_id TEXT, created_at TEXT, status TEXT DEFAULT 'active', events TEXT DEFAULT '[]', report TEXT, session_token_hash TEXT, owner_user_id TEXT, case_version TEXT, rubric_version TEXT, institution_id TEXT);
  CREATE TABLE IF NOT EXISTS exams(id INTEGER PRIMARY KEY AUTOINCREMENT, code TEXT UNIQUE, title TEXT, case_id TEXT, duration INTEGER, pass_mark INTEGER, created_at TEXT, status TEXT DEFAULT 'open', creator TEXT, institution_id TEXT, creator_user_id TEXT);
@@ -113,6 +143,7 @@ def init_db():
  from identity import init_identity_schema
  init_identity_schema(c)
  c.commit(); c.close()
+ ensure_version_snapshots()
 init_db()
 
 def _identity_schema(db):
@@ -135,36 +166,7 @@ class OwnershipReconciliationRequest(BaseModel):
 
 # Published cases are resolved per request by institution; unassigned legacy rows are quarantined.
 
-RUBRIC_VERSION='heuristic-1.0.0'
-def canonical_json(value:dict) -> str:
- return json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False)
-def content_digest(value:dict) -> str:
- return hashlib.sha256(canonical_json(value).encode('utf-8')).hexdigest()
-def rubric_definition():
- return {'version':RUBRIC_VERSION,'status':'formative_unvalidated','domains':['Communication and history','Severity and examination','Investigation selection and indication','Result interpretation','Differential diagnosis','Final diagnosis','Management and safety','Referral and follow-up'],'critical_error_policy':'Flag scenario-specific omissions for educator review; automated text detection is not a validated competence measure.'}
-def ensure_version_snapshots():
- c=conn()
- try:
-  for case in CASES.values():
-   version=str(case.get('version') or '1.0.0'); approved_at=str(case.get('approved_at') or '2026-01-01T00:00:00+00:00')
-   case_payload=canonical_json(case); case_hash=content_digest(case)
-   rubric_payload=canonical_json(rubric_definition()); rubric_hash=content_digest(rubric_definition())
-   c.execute('INSERT OR IGNORE INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash) VALUES(?,?,?,?,?,?,?,?)',(case['id'],version,case_payload,case.get('approved_by'),case.get('approved_by_user_id'),approved_at,'Initial immutable snapshot imported from existing case catalogue.',case_hash))
-   c.execute('UPDATE case_versions SET content_hash=? WHERE case_id=? AND version=? AND (content_hash IS NULL OR content_hash="")',(case_hash,case['id'],version))
-   c.execute('INSERT OR IGNORE INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',(case['id'],version,RUBRIC_VERSION,rubric_payload,approved_at,rubric_hash))
-   c.execute('UPDATE rubric_versions SET content_hash=? WHERE case_id=? AND case_version=? AND rubric_version=? AND (content_hash IS NULL OR content_hash="")',(rubric_hash,case['id'],version,RUBRIC_VERSION))
-  # Backfill hashes for older immutable versions without rewriting their payloads.
-  for row in c.execute('SELECT case_id,version,payload FROM case_versions WHERE content_hash IS NULL OR content_hash=""').fetchall():
-   try: digest=content_digest(json.loads(row['payload']))
-   except (TypeError,ValueError,json.JSONDecodeError): continue
-   c.execute('UPDATE case_versions SET content_hash=? WHERE case_id=? AND version=?',(digest,row['case_id'],row['version']))
-  for row in c.execute('SELECT case_id,case_version,rubric_version,payload FROM rubric_versions WHERE content_hash IS NULL OR content_hash=""').fetchall():
-   try: digest=content_digest(json.loads(row['payload']))
-   except (TypeError,ValueError,json.JSONDecodeError): continue
-   c.execute('UPDATE rubric_versions SET content_hash=? WHERE case_id=? AND case_version=? AND rubric_version=?',(digest,row['case_id'],row['case_version'],row['rubric_version']))
-  c.commit()
- finally: c.close()
-ensure_version_snapshots()
+
 def _validated_snapshot(row,kind:str):
  if not row: raise HTTPException(409,f'The pinned {kind} version is unavailable; refusing to substitute current content.')
  try: value=json.loads(row['payload'])
@@ -546,7 +548,7 @@ def finish(sid:int,body:Finish,request:Request):
   report['simulation_evidence']=simulation.evidence(scns[s['case_id']],events)
   for flag in report['simulation_evidence'].get('scenario_flags',[]):
    if flag['text'] not in report['critical_flags']: report['critical_flags'].append(flag['text'])
-  report['mode']=s['mode']; report['case_id']=s['case_id']; report['case_version']=s['case_version']; report['rubric_version']=s['rubric_version']; report['rubric_snapshot']=pinned_rubric; report['rubric_snapshot_hash']=content_digest(pinned_rubric); report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
+ report['mode']=s['mode']; report['case_id']=s['case_id']; report['case_version']=s['case_version']; report['rubric_version']=s['rubric_version']; report['rubric_snapshot']=pinned_rubric; report['rubric_snapshot_hash']=content_digest(pinned_rubric); report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
  if s['mode']=='exam' and s['exam_id']:
   ex=c.execute('SELECT pass_mark FROM exams WHERE id=?',(s['exam_id'],)).fetchone(); report['demo_threshold']=int(ex['pass_mark']) if ex else None; report['threshold_status']=('critical_review_required' if report['critical_flags'] else ('meets_demo_threshold' if report['score']>=int(ex['pass_mark']) else 'below_demo_threshold')) if ex else 'not_set'
  cur=c.execute('UPDATE sessions SET status="completed",report=? WHERE id=? AND status="active"',(json.dumps(report),sid))
