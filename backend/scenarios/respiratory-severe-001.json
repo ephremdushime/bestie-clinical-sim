@@ -1,0 +1,44 @@
+{
+  "scenario_id": "respiratory-severe-001-sim",
+  "case_id": "respiratory-severe-001",
+  "review_status": "DRAFT - NOT REVIEWED BY A CLINICAL EDUCATOR. Physiology parameters below are placeholders for faculty to confirm or replace. Do not use for assessment until approved.",
+  "action_minutes": {"chat": 0.5, "investigation": 2, "examine": 1, "intervene": 1},
+  "baseline": {"spo2": 88, "rr": 32, "hr": 124, "sbp": 92, "dbp": 58, "temp": 39.1},
+  "deterioration": [
+    {"stage": 1, "at_minute": 8, "label": "deteriorating", "vitals": {"spo2": 84, "rr": 36, "hr": 132}},
+    {"stage": 2, "at_minute": 14, "label": "critical", "vitals": {"spo2": 78, "rr": 38, "hr": 138, "sbp": 84, "dbp": 52}}
+  ],
+  "interventions": {
+    "oxygen": {
+      "label": "Start supplemental oxygen",
+      "response_by_stage": {
+        "0": {"label": "improving", "vitals": {"spo2": 94, "rr": 26, "hr": 114}},
+        "1": {"label": "improving", "vitals": {"spo2": 92, "rr": 28, "hr": 120}},
+        "2": {"label": "partial response", "vitals": {"spo2": 88, "rr": 32, "hr": 130}}
+      }
+    },
+    "escalate": {"label": "Call senior help / escalate", "response_by_stage": null},
+    "monitoring": {"label": "Apply continuous monitoring", "response_by_stage": null}
+  },
+  "measures": {
+    "spo2": "Oxygen saturation",
+    "rr": "Respiratory rate",
+    "hr": "Pulse",
+    "bp": "Blood pressure",
+    "temp": "Temperature"
+  },
+  "findings": {
+    "inspect:general": "Adult man sitting upright, visibly breathless, speaking in short phrases. Looks very unwell and exhausted; alert.",
+    "inspect:respiratory_effort": "Visibly breathless, able to say only a few words before needing to breathe.",
+    "auscultate:right_lower": "Crackles over the right lower chest.",
+    "auscultate:right_upper": "No additional abnormal finding is configured for this region in this draft case.",
+    "auscultate:left_upper": "No additional abnormal finding is configured for this region in this draft case.",
+    "auscultate:left_lower": "No additional abnormal finding is configured for this region in this draft case."
+  },
+  "rules": [
+    {"id": "late-oxygen", "type": "action_after_minutes", "action": "oxygen", "minutes": 6, "text": "Oxygen was not started within 6 simulated minutes for a hypoxaemic patient."},
+    {"id": "no-oxygen", "type": "action_missing", "action": "oxygen", "text": "Oxygen was never started for a hypoxaemic patient."},
+    {"id": "no-escalation", "type": "action_missing", "action": "escalate", "text": "Senior help was never called for an unstable patient."}
+  ]
+}
+

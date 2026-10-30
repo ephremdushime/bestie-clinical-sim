@@ -3,6 +3,8 @@ from __future__ import annotations
 import json, os, sqlite3, secrets, hmac, hashlib, time
 from pathlib import Path
 from datetime import datetime, timezone
+import simulation
+from generator import compiler
 from typing import Any
 import httpx
 from fastapi import FastAPI, Header, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -290,13 +292,46 @@ def check_session_access(request:Request, session_row):
 class StartSession(BaseModel): learner: str=Field(default='Student',min_length=1,max_length=80); case_id:str; mode:str='practice'; exam_code:str|None=None
 class Message(BaseModel): message:str=Field(min_length=1,max_length=3000)
 class Investigation(BaseModel): test_id:str; indication:str=Field(min_length=3,max_length=800)
+class ExamineRequest(BaseModel): action:str=Field(min_length=2,max_length=100)
+class InterveneRequest(BaseModel): action:str=Field(min_length=2,max_length=100)
 class Finish(BaseModel): differential:list[str]=Field(default_factory=list); final_diagnosis:str=''; management:list[str]=Field(default_factory=list); reflection:str=''
 class ExamCreate(BaseModel): title:str=Field(min_length=3,max_length=120); case_id:str; duration:int=Field(default=20,ge=5,le=180); pass_mark:int=Field(default=70,ge=1,le=100); creator:str=Field(default='Educator',max_length=80); institution_id:str|None=Field(default=None,min_length=1,max_length=160)
 class SubmitExam(BaseModel): learner:str; session_id:int; report:dict
 class CaseDraftRequest(BaseModel): topic:str=Field(min_length=3,max_length=180); specialty:str=Field(default='General medicine',max_length=100); learner_level:str=Field(default='Clinical-year student',max_length=100); learning_objectives:list[str]=Field(default_factory=list); source_notes:str=Field(default='',max_length=12000); source_references:list[str]=Field(default_factory=list); auto_retrieve:bool=True
+class GenerateScenarioRequest(BaseModel):
+ archetype_id: str = Field(min_length=2, max_length=100)
+ phenotype: str = Field(default='black-male', max_length=50)
+ age: int | None = Field(default=None, ge=1, le=120)
+ comorbidities: list[str] = Field(default_factory=list)
+ setting: str = Field(default='emergency_department', max_length=100)
+ auto_approve: bool = Field(default=False)
 
 @app.get('/api/health')
 def health(): return {'status':'ok','version':'1.3.0','cases':len(CASES),'llm_configured':llm_configured(),'database':'sqlite','environment':APP_ENV,'xr':'WebXR compatibility is checked in browser; device support varies'}
+STT_BASE=os.getenv('STT_BASE_URL','').rstrip('/'); STT_KEY=os.getenv('STT_API_KEY',''); STT_MODEL=os.getenv('STT_MODEL','')
+def stt_configured() -> bool:
+ return all(v.strip() and 'replace_with' not in v.lower() for v in (STT_BASE,STT_KEY,STT_MODEL))
+MAX_AUDIO_BYTES=5*1024*1024
+@app.post('/api/voice/transcribe')
+async def transcribe_voice(request: Request):
+ """Server-side speech-to-text for the VR client (OpenAI-compatible /audio/transcriptions). Keys never reach the headset. Returns text only; clinical logic stays in /chat."""
+ check_access(request)
+ if not stt_configured(): raise HTTPException(503,'Speech transcription is not configured on the server. Use the text fallback.')
+ ctype=(request.headers.get('content-type') or 'audio/webm').split(';')[0].strip().lower()
+ if not ctype.startswith('audio/') and ctype!='video/webm': raise HTTPException(415,'Audio content type required.')
+ declared=request.headers.get('content-length')
+ if declared and declared.isdigit() and int(declared)>MAX_AUDIO_BYTES: raise HTTPException(413,'Audio clip too large.')
+ data=await request.body()
+ if not data: raise HTTPException(400,'Empty audio clip.')
+ if len(data)>MAX_AUDIO_BYTES: raise HTTPException(413,'Audio clip too large.')
+ ext={'audio/webm':'webm','video/webm':'webm','audio/ogg':'ogg','audio/mp4':'mp4','audio/wav':'wav','audio/x-wav':'wav','audio/mpeg':'mp3'}.get(ctype,'webm')
+ url=STT_BASE if STT_BASE.endswith('/audio/transcriptions') else STT_BASE+'/audio/transcriptions'
+ try:
+  async with httpx.AsyncClient(timeout=15) as client:
+   r=await client.post(url,headers={'Authorization':f'Bearer {STT_KEY}'},data={'model':STT_MODEL,'language':'en'},files={'file':(f'speech.{ext}',data,ctype)}); r.raise_for_status()
+   text=str(r.json().get('text','')).strip()[:1000]
+ except Exception: raise HTTPException(502,'Transcription service unavailable. Please retry or type your question.')
+ return {'text':text}
 @app.get('/api/cases')
 def cases(request: Request):
  available=list(CASES.values())
@@ -316,7 +351,7 @@ def cases(request: Request):
    except (TypeError,ValueError,json.JSONDecodeError): continue
  finally:
   c.close()
- return {'cases':[{'id':item['id'],'title':item['title'],'specialty':item['specialty'],'level':item.get('level','Clinical-year student'),'version':item.get('version','1.0.0'),'appearance':item.get('appearance','Fictional patient'),'age':item.get('age',''),'sex':item.get('sex',''),'generated':item['id'].startswith('generated-')} for item in available]}
+ return {'cases':[{'id':item['id'],'title':item['title'],'specialty':item['specialty'],'level':item.get('level','Clinical-year student'),'version':item.get('version','1.0.0'),'appearance':item.get('appearance','Fictional patient'),'age':item.get('age',''),'sex':item.get('sex',''),'phenotype':item.get('phenotype',''),'generated':item['id'].startswith('generated-') or item['id'].startswith('gen-')} for item in available]}
 @app.post('/api/sessions')
 def create_session(body:StartSession,request:Request):
  check_access(request)
@@ -379,7 +414,7 @@ def create_session(body:StartSession,request:Request):
  finally:
   c.close()
  # Never expose the hidden case identifier/title to a controlled-exam participant.
- return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':pinned_case['age'],'sex':pinned_case['sex'],'appearance':pinned_case['appearance'],'vitals':pinned_case['vitals'] if body.mode=='practice' else None}}
+ return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':pinned_case['age'],'sex':pinned_case['sex'],'appearance':pinned_case['appearance'],'phenotype':pinned_case.get('phenotype',''),'vitals':pinned_case['vitals'] if body.mode=='practice' else None}}
 
 def fallback(case,msg):
  m=msg.lower(); facts=case['facts']
@@ -428,6 +463,50 @@ def investigate(sid:int,body:Investigation,request:Request):
  record={'type':'investigation','test_id':body.test_id,'test_name':test['name'],'indication':body.indication,'result':test['result'],'interpretation':test['interpretation'],'appropriate':test['appropriate']}
  save_event(c,sid,record); c.commit(); c.close(); image_available=bool(configured and body.test_id in ['chest-xray','ct-chest','ct-head','ct-trauma','e-fast','obstetric-ultrasound'] and not any(term in test['result'].lower() for term in ['not performed','not the first priority','not the immediate next step','not indicated','pending']))
  return {'test_id':body.test_id,'name':test['name'],'result':test['result'],'interpretation':test['interpretation'],'appropriate':test['appropriate'],'configured':configured,'image_available':image_available,'indication_feedback':('The indication is plausible for this case; interpret the result in clinical context.' if test['appropriate'] else 'Review whether this test is indicated now. Avoid unnecessary testing and do not delay stabilization or referral.')}
+@app.get('/api/sessions/{sid}/state')
+def session_sim_state(sid:int,request:Request):
+ check_access(request); c=conn(); s=c.execute('SELECT * FROM sessions WHERE id=?',(sid,)).fetchone()
+ if not s: c.close(); raise HTTPException(404,'Session not found.')
+ check_session_access(request,s); events=json.loads(s['events'] or '[]'); c.close()
+ scns=simulation.load_scenarios(); scn=scns.get(s['case_id'])
+ if not scn: return {'simulated':False,'status':'unsupported','clock':0.0}
+ st=simulation.replay(scn,events); cur=simulation.current_state(scn,st)
+ return {'simulated':True,**cur,'done_interventions':list(st['done'].keys())}
+
+@app.post('/api/sessions/{sid}/examine')
+def examine_patient(sid:int,body:ExamineRequest,request:Request):
+ check_access(request); c=conn(); s=c.execute('SELECT * FROM sessions WHERE id=?',(sid,)).fetchone()
+ if not s: c.close(); raise HTTPException(404,'Session not found.')
+ check_session_access(request,s)
+ if s['status']!='active': c.close(); raise HTTPException(409,'Session is no longer active.')
+ if session_expired(c,s): c.close(); raise HTTPException(409,'Examination time has expired. Submit your current work.')
+ events=json.loads(s['events'] or '[]'); scns=simulation.load_scenarios(); scn=scns.get(s['case_id'])
+ if not scn: c.close(); raise HTTPException(400,'Physiological simulation is not configured for this case.')
+ st=simulation.replay(scn,events)
+ try: res=simulation.examine(scn,st,body.action)
+ except simulation.Unsupported as e: c.close(); raise HTTPException(422,str(e))
+ save_event(c,sid,{'type':'sim_examine','key':body.action,'finding':res['finding']}); c.commit()
+ updated_events=events+[{'type':'sim_examine','key':body.action}]
+ cur=simulation.current_state(scn,simulation.replay(scn,updated_events)); c.close()
+ return {'action':body.action,'finding':res['finding'],'measured':res.get('measured',False),'state':cur}
+
+@app.post('/api/sessions/{sid}/intervene')
+def intervene_patient(sid:int,body:InterveneRequest,request:Request):
+ check_access(request); c=conn(); s=c.execute('SELECT * FROM sessions WHERE id=?',(sid,)).fetchone()
+ if not s: c.close(); raise HTTPException(404,'Session not found.')
+ check_session_access(request,s)
+ if s['status']!='active': c.close(); raise HTTPException(409,'Session is no longer active.')
+ if session_expired(c,s): c.close(); raise HTTPException(409,'Examination time has expired. Submit your current work.')
+ events=json.loads(s['events'] or '[]'); scns=simulation.load_scenarios(); scn=scns.get(s['case_id'])
+ if not scn: c.close(); raise HTTPException(400,'Physiological simulation is not configured for this case.')
+ st=simulation.replay(scn,events)
+ try: res=simulation.intervene(scn,st,body.action)
+ except simulation.Unsupported as e: c.close(); raise HTTPException(422,str(e))
+ save_event(c,sid,{'type':'sim_intervene','key':body.action,'label':res['label']}); c.commit()
+ updated_events=events+[{'type':'sim_intervene','key':body.action}]
+ cur=simulation.current_state(scn,simulation.replay(scn,updated_events)); c.close()
+ return {'action':body.action,'label':res['label'],'already':res['already'],'state':cur}
+
 def make_report(case,events,body):
  text=' '.join(str(e.get('student_message','')) for e in events if e.get('type')=='chat').lower(); ordered=[e for e in events if e.get('type')=='investigation']
  domains={
@@ -461,7 +540,13 @@ def finish(sid:int,body:Finish,request:Request):
  if not s: c.close(); raise HTTPException(404,'Session not found.')
  check_session_access(request,s)
  if s['status']!='active': c.close(); raise HTTPException(409,'Session already submitted.')
- events=json.loads(s['events'] or '[]'); pinned_case=case_for_session(c,s); pinned_rubric=rubric_for_session(c,s); report=make_report(pinned_case,events,body); report['mode']=s['mode']; report['case_id']=s['case_id']; report['case_version']=s['case_version']; report['rubric_version']=s['rubric_version']; report['rubric_snapshot']=pinned_rubric; report['rubric_snapshot_hash']=content_digest(pinned_rubric); report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
+ events=json.loads(s['events'] or '[]'); pinned_case=case_for_session(c,s); pinned_rubric=rubric_for_session(c,s); report=make_report(pinned_case,events,body);
+ scns=simulation.load_scenarios()
+ if s['case_id'] in scns:
+  report['simulation_evidence']=simulation.evidence(scns[s['case_id']],events)
+  for flag in report['simulation_evidence'].get('scenario_flags',[]):
+   if flag['text'] not in report['critical_flags']: report['critical_flags'].append(flag['text'])
+  report['mode']=s['mode']; report['case_id']=s['case_id']; report['case_version']=s['case_version']; report['rubric_version']=s['rubric_version']; report['rubric_snapshot']=pinned_rubric; report['rubric_snapshot_hash']=content_digest(pinned_rubric); report['learner']=s['learner']; report['submitted_at']=now(); report['time_expired']=session_expired(c,s)
  if s['mode']=='exam' and s['exam_id']:
   ex=c.execute('SELECT pass_mark FROM exams WHERE id=?',(s['exam_id'],)).fetchone(); report['demo_threshold']=int(ex['pass_mark']) if ex else None; report['threshold_status']=('critical_review_required' if report['critical_flags'] else ('meets_demo_threshold' if report['score']>=int(ex['pass_mark']) else 'below_demo_threshold')) if ex else 'not_set'
  cur=c.execute('UPDATE sessions SET status="completed",report=? WHERE id=? AND status="active"',(json.dumps(report),sid))
@@ -647,6 +732,84 @@ async def draft_case(body:CaseDraftRequest,request:Request):
  case=normalize_generated_case(generated,body); case['source_references']=refs; case['evidence_search']=evidence; case['generation_mode']=mode
  draft={'draft_id':secrets.token_urlsafe(12),'status':'draft_requires_clinical_review','topic':body.topic,'specialty':body.specialty,'learner_level':body.learner_level,'learning_objectives':objectives,'case':case,'source_references':refs,'evidence_search':evidence,'generation_mode':mode,'validation':{'status':'not_clinically_validated','automated_checks':{'has_title':bool(case.get('title')),'has_hidden_diagnosis':bool(case.get('diagnosis')),'has_investigation_structure':bool(case.get('investigations')),'has_source_search':bool(evidence.get('results')),'rubric_present':bool(case.get('marking_rubric'))},'required_before_publish':['Clinical educator verifies source claims and current local guidance','Check history, examination, results and hidden diagnosis are internally consistent','Check age, pregnancy, medication and dose safety where applicable','Confirm image provenance/licensing and investigation indications','Approve rubric and critical-error rules']}}
  actor=educator_actor(request); c=conn(); c.execute('INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?)',(draft['draft_id'],body.topic,body.specialty,draft['status'],json.dumps(draft),now(),now(),actor.get('institution_id'),actor.get('user_id'))); c.commit(); c.close(); return draft
+
+@app.get('/api/educator/archetypes')
+def list_archetypes(request: Request):
+ check_access(request)
+ all_archs = compiler.load_archetypes()
+ summary = []
+ for aid, a in all_archs.items():
+  summary.append({
+   'archetype_id': a.get('archetype_id', aid),
+   'title': a.get('title', ''),
+   'specialty': a.get('specialty', ''),
+   'guidelines': a.get('guidelines', []),
+   'pathophysiology': a.get('pathophysiology', ''),
+   'demographics_supported': a.get('demographics_supported', []),
+   'typical_age_range': a.get('typical_age_range', [18, 80]),
+   'comorbidities_supported': ['diabetes', 'ckd', 'pregnancy']
+  })
+ return {'archetypes': summary}
+
+@app.post('/api/educator/generate-scenario')
+def generate_scenario_endpoint(body: GenerateScenarioRequest, request: Request):
+ check_access(request, True)
+ actor = educator_actor(request)
+ try:
+  compiled = compiler.compile_scenario(
+   archetype_id=body.archetype_id,
+   phenotype=body.phenotype,
+   age=body.age,
+   comorbidities=body.comorbidities,
+   setting=body.setting
+  )
+ except ValueError as e:
+  raise HTTPException(422, f"Clinical compilation rejected: {e}")
+
+ if body.auto_approve:
+  case_inst = actor.get('institution_id')
+  compiled['approved_by'] = actor['display_name']
+  compiled['approved_by_user_id'] = actor.get('user_id')
+  compiled['approved_at'] = now()
+  compiled['review_notes'] = f"Procedurally compiled from verified archetype '{body.archetype_id}' with deterministic physiological and mathematical linter verification."
+  c = conn()
+  try:
+   c.execute('INSERT OR REPLACE INTO case_versions(case_id,version,payload,approved_by,approved_by_user_id,approved_at,change_note,content_hash,institution_id) VALUES(?,?,?,?,?,?,?,?,?)',
+             (compiled['id'], compiled['version'], canonical_json(compiled), actor['display_name'], actor.get('user_id'), compiled['approved_at'], compiled['review_notes'], content_digest(compiled), case_inst))
+   c.execute('INSERT OR REPLACE INTO rubric_versions(case_id,case_version,rubric_version,payload,created_at,content_hash) VALUES(?,?,?,?,?,?)',
+             (compiled['id'], compiled['version'], RUBRIC_VERSION, canonical_json(rubric_definition()), compiled['approved_at'], content_digest(rubric_definition())))
+   c.execute('INSERT OR REPLACE INTO approved_cases(case_id,version,payload,approved_by,approved_at,institution_id) VALUES(?,?,?,?,?,?)',
+             (compiled['id'], compiled['version'], json.dumps(compiled), actor['display_name'], compiled['approved_at'], case_inst))
+   from identity import write_audit_event
+   write_audit_event(c, actor_user_id=actor.get('user_id'), institution_id=case_inst, action='case.procedural_published', resource_type='case', resource_id=compiled['id'], outcome='success', metadata_json=canonical_json({'archetype_id': body.archetype_id, 'phenotype': body.phenotype, 'comorbidities': body.comorbidities}))
+   c.commit()
+  finally:
+   c.close()
+  return {'status': 'published', 'case_id': compiled['id'], 'case': compiled, 'message': 'Case procedurally compiled, linted, and published for simulation and VR.'}
+ else:
+  draft_id = secrets.token_urlsafe(12)
+  draft = {
+   'draft_id': draft_id,
+   'status': 'draft_requires_clinical_review',
+   'topic': compiled['title'],
+   'specialty': compiled['specialty'],
+   'learner_level': compiled['level'],
+   'case': compiled,
+   'source_references': compiled.get('guidelines_referenced', []),
+   'generation_mode': 'procedural_compiler',
+   'validation': {
+    'status': 'mathematically_and_physiologically_linted',
+    'guidelines': compiled.get('guidelines_referenced', [])
+   }
+  }
+  c = conn()
+  try:
+   c.execute('INSERT INTO case_drafts(draft_id,topic,specialty,status,payload,created_at,updated_at,institution_id,creator_user_id) VALUES(?,?,?,?,?,?,?,?,?)',
+             (draft_id, compiled['title'], compiled['specialty'], draft['status'], json.dumps(draft), now(), now(), actor.get('institution_id'), actor.get('user_id')))
+   c.commit()
+  finally:
+   c.close()
+  return {'status': 'draft', 'draft_id': draft_id, 'case': compiled}
 
 @app.post('/api/educator/exams')
 def create_exam(body:ExamCreate,request:Request):

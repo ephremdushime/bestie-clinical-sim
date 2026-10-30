@@ -1,0 +1,69 @@
+{
+  "archetype_id": "acute_coronary_syndrome",
+  "title": "Acute Chest Pain / Suspected Coronary Syndrome",
+  "specialty": "Cardiology / Emergency Medicine",
+  "guidelines": ["ESC Guidelines on Non-ST Elevation ACS 2020", "AHA/ACC Guideline for Evaluation of Chest Pain 2021"],
+  "pathophysiology": "Acute myocardial ischemia due to coronary plaque rupture or demand mismatch.",
+  "demographics_supported": ["black-male", "white-male", "black-female", "white-female"],
+  "typical_age_range": [35, 80],
+  "baseline_vitals_rules": {
+    "temp": 36.8,
+    "hr": 96,
+    "rr": 20,
+    "sbp": 142,
+    "dbp": 88,
+    "spo2": 97
+  },
+  "facts": {
+    "onset": "The chest pain started about 45 minutes ago while walking up the stairs. It has not gone away.",
+    "symptoms": "It feels like a heavy tight band squeezing the center of my chest, radiating to my left jaw and shoulder.",
+    "history": "I have hypertension and high cholesterol. I take atorvastatin and amlodipine. No drug allergies.",
+    "risk": "I feel nauseated, short of breath, and sweaty.",
+    "exam": "Patient is anxious, pale and diaphoretic. Heart sounds dual, no murmurs. Chest is clear bilaterally."
+  },
+  "investigations_template": {
+    "ecg": {
+      "name": "12-lead Electrocardiogram (ECG)",
+      "result": "Sinus rhythm at 96 bpm; 2mm horizontal ST-segment depression in V4-V6 and inverted T-waves in aVL.",
+      "interpretation": "Subendocardial ischemia in anterolateral leads consistent with acute Non-ST Elevation ACS.",
+      "appropriate": true,
+      "why": "Immediate priority (within 10 minutes of arrival) to differentiate STEMI from NSTE-ACS."
+    },
+    "troponin": {
+      "name": "High-sensitivity Cardiac Troponin (hs-cTnI)",
+      "result": "Initial sample: 185 ng/L (upper reference limit < 14 ng/L).",
+      "interpretation": "Markedly elevated cardiac troponin indicating acute myocardial injury; serial testing indicated.",
+      "appropriate": true,
+      "why": "Confirm myocardial necrosis and stratify ischemic risk."
+    },
+    "chest-xray": {
+      "name": "Portable Chest X-ray",
+      "result": "Normal cardiac silhouette; no signs of pulmonary edema or widened mediastinum.",
+      "interpretation": "Excludes pneumothorax and obvious aortic dissection signs; does not rule out ACS.",
+      "appropriate": true,
+      "why": "Evaluate alternative causes of acute chest pain if it does not delay reperfusion."
+    },
+    "ct-head": {
+      "name": "CT head",
+      "result": "Not performed; no neurological deficit present.",
+      "interpretation": "Not indicated for acute chest pain.",
+      "appropriate": false,
+      "why": "Unnecessary radiation and diversion from acute cardiac stabilization."
+    }
+  },
+  "expected_differentials": ["acute coronary syndrome", "pulmonary embolism", "aortic dissection", "gastroesophageal reflux", "pericarditis"],
+  "expected_actions": [
+    "Immediate 12-lead ECG within 10 minutes",
+    "Continuous cardiac telemetry and venous access",
+    "Loading dose Aspirin (300 mg) orally",
+    "Second antiplatelet (Ticagrelor or Clopidogrel) per local protocol",
+    "Sublingual or spray Nitroglycerin if SBP > 100 mmHg",
+    "Urgent cardiology consultation for early invasive strategy"
+  ],
+  "critical_errors": [
+    "Failing to obtain 12-lead ECG within 10 minutes of presentation",
+    "Administering nitrates when patient is hypotensive or has taken PDE-5 inhibitors",
+    "Failing to initiate loading dose antiplatelet therapy for acute coronary syndrome"
+  ]
+}
+

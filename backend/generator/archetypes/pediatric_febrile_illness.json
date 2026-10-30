@@ -1,0 +1,81 @@
+{
+  "archetype_id": "pediatric_febrile_illness",
+  "title": "Pediatric Severe Febrile Illness with Danger Signs",
+  "specialty": "Pediatrics / Emergency Medicine",
+  "guidelines": ["WHO Integrated Management of Childhood Illness (IMCI)", "NICE Guideline NG143: Fever in under 5s"],
+  "pathophysiology": "Acute systemic pediatric infection with dehydration and physiological compromise.",
+  "demographics_supported": ["black-male", "white-male", "black-female", "white-female"],
+  "typical_age_range": [1, 5],
+  "baseline_vitals_rules": {
+    "temp": 39.4,
+    "hr": 162,
+    "rr": 48,
+    "sbp": 82,
+    "dbp": 50,
+    "spo2": 93
+  },
+  "facts": {
+    "onset": "The caregiver reports the 2-year-old child developed high fever yesterday, became irritable, and refused to drink milk or water this morning.",
+    "symptoms": "Vomiting everything taken, high pitch crying, poor urine output (dry diaper for 8 hours).",
+    "history": "Child is 2 years old, weight 12 kg. Immunizations up to date. No known drug allergies.",
+    "risk": "Lethargic, drowsy, difficult to wake up, breathing fast.",
+    "exam": "Child is irritable, drowsy, with sunken eyes and dry mucous membranes. Capillary refill time is 4 seconds. Mild subcostal indrawing. No stiff neck or petechial rash."
+  },
+  "investigations_template": {
+    "blood-glucose": {
+      "name": "Point-of-care Blood Glucose",
+      "result": "Blood glucose 3.2 mmol/L (borderline low).",
+      "interpretation": "Risk of pediatric hypoglycemia secondary to poor oral intake and high metabolic demand.",
+      "appropriate": true,
+      "why": "Immediate rule-out of hypoglycemia in any lethargic or unwell pediatric patient."
+    },
+    "blood-culture": {
+      "name": "Pediatric Blood Culture",
+      "result": "Sample collected before parenteral antimicrobials; pending incubation.",
+      "interpretation": "Essential baseline to identify bacteremia or invasive bacterial disease.",
+      "appropriate": true,
+      "why": "Identify bloodstream infection before starting empiric antibiotics."
+    },
+    "fbc": {
+      "name": "Full Blood Count (Micro-sample)",
+      "result": "WBC 22.8 x 10^9/L with left shift (neutrophils 82%); Platelets 260 x 10^9/L; Hb 11.4 g/dL.",
+      "interpretation": "Marked leukocytosis supporting invasive bacterial infection.",
+      "appropriate": true,
+      "why": "Assess systemic inflammatory response in severe pediatric febrile illness."
+    },
+    "lumbar-puncture": {
+      "name": "Lumbar Puncture (CSF analysis)",
+      "result": "Deferred until clinical stabilization; no immediate signs of raised intracranial pressure, but child must be resuscitated first.",
+      "interpretation": "Indicated if meningitis suspected once airway and hemodynamics are secure.",
+      "appropriate": true,
+      "why": "Investigate central nervous system infection once stable."
+    },
+    "ct-head": {
+      "name": "CT Head",
+      "result": "Not performed; child has no focal neurological signs, open fontanelle considerations, or trauma history.",
+      "interpretation": "Unnecessary ionizing radiation in a 2-year-old without focal neurological indications.",
+      "appropriate": false,
+      "why": "Avoid pediatric radiation hazard; bedside stabilization and infectious workup take priority."
+    }
+  },
+  "expected_differentials": [
+    "severe pediatric sepsis",
+    "bacterial meningitis",
+    "severe pneumonia",
+    "severe dehydration with gastroenteritis",
+    "urinary tract infection with bacteremia"
+  ],
+  "expected_actions": [
+    "Immediate assessment of pediatric ABCDE and danger signs (inability to drink, vomiting everything, convulsions, lethargy)",
+    "Targeted IV/IO access and weight-based fluid bolus (10-20 mL/kg isotonic crystalloid) over 15-30 minutes",
+    "Immediate IV broad-spectrum antimicrobials (e.g., Ceftriaxone 80 mg/kg or Cefotaxime)",
+    "Monitor capillary blood glucose and correct hypoglycemia if < 3.0 mmol/L",
+    "Urgent escalation to Pediatric Consultant / Senior Pediatric Emergency Team"
+  ],
+  "critical_errors": [
+    "Administering adult drug doses without precise weight-based calculation in a pediatric patient",
+    "Missing pediatric general danger signs (lethargy, inability to drink, persistent vomiting)",
+    "Delaying resuscitation to perform imaging or lumbar puncture in an unstable child"
+  ]
+}
+

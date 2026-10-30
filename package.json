@@ -7,13 +7,15 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:unit": "node --test src/vr/clinical/adapter.test.js src/vr/audio/voice.test.js"
   },
   "dependencies": {
     "@vitejs/plugin-react": "4.3.4",
-    "vite": "5.4.14",
     "react": "18.3.1",
-    "react-dom": "18.3.1"
+    "react-dom": "18.3.1",
+    "three": "0.169.0",
+    "vite": "5.4.14"
   },
   "devDependencies": {
     "@playwright/test": "^1.55.0"

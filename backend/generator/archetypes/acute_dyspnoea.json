@@ -1,0 +1,75 @@
+{
+  "archetype_id": "acute_dyspnoea",
+  "title": "Acute Severe Asthma / Bronchospasm Exacerbation",
+  "specialty": "Respiratory Medicine / Emergency Medicine",
+  "guidelines": ["BTS/SIGN British Guideline on the Management of Asthma 2019", "GINA Global Strategy for Asthma Management 2023"],
+  "pathophysiology": "Acute inflammatory bronchoconstriction, airway mucosal edema, and mucus plugging causing severe expiratory airflow limitation.",
+  "demographics_supported": ["black-male", "white-male", "black-female", "white-female"],
+  "typical_age_range": [18, 55],
+  "baseline_vitals_rules": {
+    "temp": 37.1,
+    "hr": 116,
+    "rr": 30,
+    "sbp": 134,
+    "dbp": 84,
+    "spo2": 91
+  },
+  "facts": {
+    "onset": "My chest started getting tight last night and my blue inhaler stopped giving me relief two hours ago.",
+    "symptoms": "I can only speak two or three words at a time. I am wheezing and my chest feels like it is clamped shut.",
+    "history": "I have had asthma since childhood. I take a salbutamol reliever and a beclometasone inhaler, but I ran out of preventer last month. No drug allergies.",
+    "risk": "I was hospitalized two years ago for a severe asthma attack in the intensive care unit.",
+    "exam": "Patient is sitting upright in tripod position, speaking in monosyllables. Accessory muscle use visible. Extensive bilateral expiratory polyphonic wheeze. Heart rate 116 bpm, respiratory rate 30/min."
+  },
+  "investigations_template": {
+    "peak-flow": {
+      "name": "Bedside Peak Expiratory Flow (PEF)",
+      "result": "Peak flow 180 L/min (predicted 520 L/min, ~35% of predicted/personal best).",
+      "interpretation": "Severe airflow limitation (< 50% predicted); fulfills criteria for acute severe asthma.",
+      "appropriate": true,
+      "why": "Immediate objective quantification of airflow obstruction severity."
+    },
+    "blood-gas": {
+      "name": "Arterial Blood Gas (ABG)",
+      "result": "pH 7.43, PaCO2 32 mmHg, HCO3 21 mmol/L, PaO2 62 mmHg (on room air).",
+      "interpretation": "Type 1 respiratory failure with acute respiratory alkalosis secondary to tachypnea; any rise in PaCO2 signifies impending respiratory muscle exhaustion.",
+      "appropriate": true,
+      "why": "Assess ventilation, oxygenation, and monitor for hypercapnic exhaustion in acute severe asthma."
+    },
+    "chest-xray": {
+      "name": "Portable Chest X-ray",
+      "result": "Hyperinflated lung fields; no pneumothorax, consolidation, or pneumomediastinum detected.",
+      "interpretation": "Consistent with air-trapping in asthma; excludes secondary pneumothorax complication.",
+      "appropriate": true,
+      "why": "Check for complications (e.g., pneumothorax) if presentation is severe or deteriorating."
+    },
+    "ct-chest": {
+      "name": "CT Chest",
+      "result": "Not performed; high radiation risk without acute indication.",
+      "interpretation": "Not indicated in initial management of acute asthma exacerbation.",
+      "appropriate": false,
+      "why": "Acute bedside bronchodilation and oxygenation take precedence; CT is contraindicated without suspecting specific structural complications."
+    }
+  },
+  "expected_differentials": [
+    "acute severe asthma",
+    "anaphylaxis",
+    "foreign body aspiration",
+    "pulmonary embolism",
+    "acute congestive heart failure"
+  ],
+  "expected_actions": [
+    "High-flow oxygen titrated to target SpO2 93-95%",
+    "Nebulized high-dose beta-2 agonist (Salbutamol 5mg) driven by oxygen",
+    "Add nebulized Ipratropium bromide (0.5mg) for severe features",
+    "Early systemic corticosteroids (Oral Prednisolone 40-50mg or IV Hydrocortisone 100mg)",
+    "Measure serial Peak Expiratory Flow (PEF)",
+    "Urgent escalation to Senior Physician or ICU if no rapid improvement"
+  ],
+  "critical_errors": [
+    "Administering sedative or anxiolytic drugs during an acute asthma exacerbation (causes fatal respiratory depression)",
+    "Delaying systemic corticosteroid administration beyond 1 hour of presentation",
+    "Failing to recognize life-threatening signs (normalizing or rising PaCO2, silent chest, exhaustion)"
+  ]
+}
+

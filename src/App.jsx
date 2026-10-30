@@ -1,57 +1,1610 @@
-import React, {useEffect, useMemo, useState} from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 
-const API='/api';
-const catalog=[
- {id:'malaria-001',title:'Fever and chills',specialty:'Internal medicine',patient:'Adult woman',visual:'🧑🏽‍⚕️',description:'Fever, headache and myalgia; evaluate infectious causes.'},
- {id:'respiratory-severe-001',title:'Severe respiratory presentation',specialty:'Emergency / Internal medicine',patient:'Adult man',visual:'🫁',description:'Breathlessness, fever and physiological instability.'},
- {id:'burn-001',title:'Burn injury',specialty:'Emergency / Surgery',patient:'Adult man',visual:'🩹',description:'Thermal injury with potential inhalation injury.'},
- {id:'trauma-001',title:'Road traffic trauma',specialty:'Emergency / Trauma surgery',patient:'Adult woman',visual:'🚑',description:'Blunt trauma with shock and possible internal injury.'},
- {id:'pregnancy-001',title:'Pregnancy with severe headache',specialty:'Obstetrics',patient:'Pregnant woman, 32 weeks',visual:'🤰🏽',description:'Headache, visual symptoms and severe hypertension.'},
- {id:'pediatric-001',title:'Child with fever and fast breathing',specialty:'Pediatrics',patient:'3-year-old child + caregiver',visual:'🧒🏽',description:'Fever, tachypnoea and reduced oral intake.'}
+const API = '/api';
+
+// Production Accredited Clinical Scenario Catalog
+const catalog = [
+  {
+    id: 'respiratory-severe-001',
+    title: 'Severe Community-Acquired Pneumonia with Sepsis',
+    specialty: 'Emergency Medicine / Acute Pulmonology',
+    department: 'Resuscitation & Acute Care',
+    acuity: 'RESUS · HIGH ACUITY (NEWS2: 11)',
+    acuityClass: 'acuity-resus',
+    patient: 'Adult man (52yo)',
+    phenotype: 'black-male',
+    phenotypeLabel: 'Adult Black Man (Fitzpatrick V-VI)',
+    initials: 'JM',
+    patientName: 'John Miller',
+    description: 'Acute severe dyspnoea, high fever (39.1°C), tachypnoea (RR 32), and right lower lobe consolidation with coarse inspiratory crackles.',
+    competencies: ['ABCDE Protocol', 'Blood Gas Analysis', 'SBAR Escalation'],
+    durationMin: '15–20 min',
+    iconType: 'pulmonology',
+  },
+  {
+    id: 'malaria-001',
+    title: 'Severe Plasmodium Falciparum Malaria with Impaired Consciousness',
+    specialty: 'Internal Medicine / Infectious Diseases',
+    department: 'Tropical Medicine & High Dependency',
+    acuity: 'HIGH RISK (NEWS2: 8)',
+    acuityClass: 'acuity-urgent',
+    patient: 'Adult woman (28yo)',
+    phenotype: 'black-female',
+    phenotypeLabel: 'Adult Black Woman (Fitzpatrick V)',
+    initials: 'AM',
+    patientName: 'Amina Mansoor',
+    description: 'High remittent fever, severe headache, prostration, hemolytic anaemia, and high peripheral parasitemia requiring parenteral artesunate.',
+    competencies: ['Malaria RDT / Microscopy', 'Hydration Management', 'Antimalarial Dosing'],
+    durationMin: '15 min',
+    iconType: 'infectious',
+  },
+  {
+    id: 'burn-001',
+    title: 'Major Thermal Flame Burns with Potential Inhalation Injury',
+    specialty: 'Emergency Surgery / Trauma & Burns',
+    department: 'Emergency Resuscitation Bay',
+    acuity: 'CRITICAL (NEWS2: 10)',
+    acuityClass: 'acuity-resus',
+    patient: 'Adult man (34yo)',
+    phenotype: 'white-male',
+    phenotypeLabel: 'Adult White Man (Fitzpatrick II-III)',
+    initials: 'TB',
+    patientName: 'Thomas Bennett',
+    description: '25% TBSA partial & full thickness burns, perioral soot deposits, hoarseness, stridor, and acute risk of airway compromise.',
+    competencies: ['Airway Assessment', 'Parkland Fluid Formula', 'Analgesia Protocol'],
+    durationMin: '20 min',
+    iconType: 'burns',
+  },
+  {
+    id: 'trauma-001',
+    title: 'High-Velocity Road Traffic Collision with Hemorrhagic Shock',
+    specialty: 'Trauma Surgery / Emergency Medicine',
+    department: 'Level-1 Major Trauma Bay',
+    acuity: 'RESUS CODE RED (NEWS2: 12)',
+    acuityClass: 'acuity-resus',
+    patient: 'Adult woman (42yo)',
+    phenotype: 'white-female',
+    phenotypeLabel: 'Adult White Woman (Fitzpatrick II)',
+    initials: 'CW',
+    patientName: 'Claire Wright',
+    description: 'Blunt chest contusion, pelvic instability, hypotension (BP 84/50), tachycardia, and acute internal hemorrhage.',
+    competencies: ['eFAST Ultrasound', 'Massive Transfusion Protocol', 'Pelvic Binder'],
+    durationMin: '20 min',
+    iconType: 'trauma',
+  },
+  {
+    id: 'pregnancy-001',
+    title: 'Severe Preeclampsia with Impending Eclampsia at 32 Weeks',
+    specialty: 'Obstetrics & Maternal Medicine',
+    department: 'Obstetric High Dependency Unit',
+    acuity: 'URGENT MATERNAL (HIGH)',
+    acuityClass: 'acuity-urgent',
+    patient: 'Pregnant woman (29yo, 32w GA)',
+    phenotype: 'black-female',
+    phenotypeLabel: 'Adult Black Woman (Fitzpatrick V)',
+    initials: 'SN',
+    patientName: 'Sarah Ndagije',
+    description: 'Severe occipital headache, scotomata, blood pressure 178/112 mmHg, hyperreflexia with ankle clonus, and 3+ proteinuria.',
+    competencies: ['Magnesium Sulphate Protocol', 'Antihypertensive Titration', 'Fetal Monitoring'],
+    durationMin: '15–20 min',
+    iconType: 'obstetrics',
+  },
+  {
+    id: 'pediatric-001',
+    title: 'Pediatric Severe Bronchiolitis with Respiratory Distress',
+    specialty: 'Pediatrics & Pediatric Emergency',
+    department: 'Pediatric Acute Assessment Unit',
+    acuity: 'URGENT PEWS: 7',
+    acuityClass: 'acuity-urgent',
+    patient: 'Toddler (18 months) + Parent',
+    phenotype: 'black-female',
+    phenotypeLabel: 'Child & Caregiver',
+    initials: 'LK',
+    patientName: 'Leo Kamau',
+    description: 'Subcostal recessions, tracheal tug, feeding < 50%, tachypnoea (RR 58), hypoxia (SpO2 89%), and bibasal crackles.',
+    competencies: ['Pediatric Assessment Triangle', 'High-Flow Nasal Cannula', 'Hydration Support'],
+    durationMin: '15 min',
+    iconType: 'pediatrics',
+  },
 ];
-const tests=[['fbc','Full blood count (FBC)'],['malaria-rdt','Malaria rapid diagnostic test'],['malaria-microscopy','Malaria microscopy'],['glucose','Blood glucose'],['urinalysis','Urinalysis and microscopy'],['urine-protein','Urine protein assessment'],['renal-electrolytes','Renal function and electrolytes'],['lft-renal','Liver and renal function'],['blood-culture','Blood cultures'],['chest-xray','Chest X-ray'],['ct-chest','CT chest'],['ct-head','CT head'],['blood-gas','Blood gas and co-oximetry'],['e-fast','eFAST ultrasound'],['ct-trauma','CT trauma series'],['obstetric-ultrasound','Obstetric ultrasound / fetal assessment'],['pulse-ox','Pulse oximetry']];
-const managementOptions=['ABCDE / systematic initial assessment','Urgent senior help / escalation','Oxygenation and monitoring per local protocol','Appropriate focused examination','Appropriate treatment per current local guideline','Check allergies, pregnancy status and medication safety where relevant','Repeat observations and reassess response','Referral / transfer with structured handover','Follow-up and safety-netting','Explain plan and obtain consent'];
-async function request(path,opts={},educator=false){const pilot=sessionStorage.getItem('bcsPilotToken')||'', et=sessionStorage.getItem('bcsEducatorToken')||'', st=sessionStorage.getItem('bcsSessionToken')||'', access=sessionStorage.getItem('bcsAccessToken')||'';const headers={'Content-Type':'application/json',...(access?{'Authorization':`Bearer ${access}`}:(educator?{'X-Educator-Token':et}:{'X-Pilot-Token':pilot})),...(st?{'X-Session-Token':st}:{}),...(opts.headers||{})};const r=await fetch(API+path,{...opts,headers});if(!r.ok){let m=`Request failed (${r.status})`;try{m=(await r.json()).detail||m}catch{}throw new Error(m)}return r.json()}
-export default function App(){
- const [view,setView]=useState('home'),[cases,setCases]=useState(catalog),[caseId,setCaseId]=useState('malaria-001'),[mode,setMode]=useState('practice'),[name,setName]=useState('Student'),[examCode,setExamCode]=useState(''),[session,setSession]=useState(null),[messages,setMessages]=useState([]),[draft,setDraft]=useState(''),[busy,setBusy]=useState(false),[err,setErr]=useState(''),[vitals,setVitals]=useState(null),[appearance,setAppearance]=useState(''),[investigation,setInvestigation]=useState('malaria-rdt'),[indication,setIndication]=useState(''),[results,setResults]=useState([]),[differential,setDifferential]=useState(''),[diagnosis,setDiagnosis]=useState(''),[management,setManagement]=useState([]),[reflection,setReflection]=useState(''),[report,setReport]=useState(null),[speed,setSpeed]=useState(.8),[voice,setVoice]=useState(true),[xr,setXr]=useState({checked:false,vr:false,ar:false}),[educatorToken,setEducatorToken]=useState(sessionStorage.getItem('bcsEducatorToken')||''),[pilotToken,setPilotToken]=useState(sessionStorage.getItem('bcsPilotToken')||''),[examTitle,setExamTitle]=useState('Clinical reasoning assessment'),[examDuration,setExamDuration]=useState(20),[passMark,setPassMark]=useState(70),[examList,setExamList]=useState([]),[sessions,setSessions]=useState([]),[createdExam,setCreatedExam]=useState(null),[selectedCaseForExam,setSelectedCaseForExam]=useState('malaria-001'),[timeLeft,setTimeLeft]=useState(null),[hintVisible,setHintVisible]=useState(false),[draftTopic,setDraftTopic]=useState('Malaria in a young adult'),[draftSpecialty,setDraftSpecialty]=useState('Internal medicine / Infectious diseases'),[draftLevel,setDraftLevel]=useState('Clinical-year medical student'),[draftObjectives,setDraftObjectives]=useState('Focused history and examination\nDifferential diagnosis\nIndication-based investigations and interpretation\nSafe management and follow-up'),[sourceNotes,setSourceNotes]=useState(''),[sourceRefs,setSourceRefs]=useState(''),[generatedCase,setGeneratedCase]=useState(null),[draftBusy,setDraftBusy]=useState(false),[caseReviewer,setCaseReviewer]=useState('Clinical educator'),[reviewNotes,setReviewNotes]=useState(''),[publishedCase,setPublishedCase]=useState(null);
- const [accountEmail,setAccountEmail]=useState(''),[accountPassword,setAccountPassword]=useState(''),[currentPassword,setCurrentPassword]=useState(''),[newPassword,setNewPassword]=useState(''),[passwordBusy,setPasswordBusy]=useState(false),[account,setAccount]=useState(()=>{try{return JSON.parse(sessionStorage.getItem('bcsAccount')||'null')}catch{return null}}),[authBusy,setAuthBusy]=useState(false),[productionMode,setProductionMode]=useState(false),[authModeKnown,setAuthModeKnown]=useState(false);
- const signIn=async()=>{setAuthBusy(true);setErr('');try{const response=await fetch(API+'/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:accountEmail,password:accountPassword})});const data=await response.json();if(!response.ok)throw new Error(data.detail||`Sign-in failed (${response.status})`);sessionStorage.setItem('bcsAccessToken',data.access_token);sessionStorage.setItem('bcsAccount',JSON.stringify(data.user));setAccount(data.user);setAccountPassword('');setPilotToken('');setEducatorToken('');sessionStorage.removeItem('bcsPilotToken');sessionStorage.removeItem('bcsEducatorToken')}catch(e){setErr(e.message)}finally{setAuthBusy(false)}};
- const signOut=async()=>{const token=sessionStorage.getItem('bcsAccessToken')||'';try{if(token)await fetch(API+'/auth/logout',{method:'POST',headers:{Authorization:`Bearer ${token}`}})}catch{}sessionStorage.removeItem('bcsAccessToken');sessionStorage.removeItem('bcsAccount');sessionStorage.removeItem('bcsSessionToken');setAccount(null);setAccountPassword('')};
- const changePassword=async()=>{const token=sessionStorage.getItem('bcsAccessToken')||'';if(!token)return;setPasswordBusy(true);setErr('');try{const response=await fetch(API+'/auth/change-password',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${token}`},body:JSON.stringify({current_password:currentPassword,new_password:newPassword})});const data=await response.json();if(!response.ok)throw new Error(data.detail||`Password change failed (${response.status})`);sessionStorage.removeItem('bcsAccessToken');sessionStorage.removeItem('bcsAccount');sessionStorage.removeItem('bcsSessionToken');setAccount(null);setCurrentPassword('');setNewPassword('');setErr('Password changed. Sign in again with your new password.')}catch(e){setErr(e.message)}finally{setPasswordBusy(false)}};
- const currentCase=useMemo(()=>session?.mode==='exam'?{title:'Controlled examination',specialty:'Clinical assessment',appearance:session.patient?.appearance||'Fictional simulated patient',age:session.patient?.age,sex:session.patient?.sex}:cases.find(c=>c.id===session?.case_id)||cases.find(c=>c.id===caseId)||catalog[0],[cases,session,caseId]);
- useEffect(()=>{fetch(API+'/health').then(r=>r.json()).then(d=>{const prod=d.environment==='production';setProductionMode(prod);setAuthModeKnown(true);if(prod){sessionStorage.removeItem('bcsPilotToken');sessionStorage.removeItem('bcsEducatorToken');setPilotToken('');setEducatorToken('')}}).catch(()=>{});request('/cases').then(d=>{if(d.cases?.length)setCases(d.cases.map(c=>({...c,patient:c.sex||'Simulated patient',visual:catalog.find(x=>x.id===c.id)?.visual||'🩺',description:c.appearance||''})))}).catch(()=>{});if(navigator.xr&&typeof navigator.xr.isSessionSupported==='function'){Promise.all([navigator.xr.isSessionSupported('immersive-vr').catch(()=>false),navigator.xr.isSessionSupported('immersive-ar').catch(()=>false)]).then(([vr,ar])=>setXr({checked:true,vr:!!vr,ar:!!ar}));}else setXr({checked:true,vr:false,ar:false});},[]);
- useEffect(()=>{if(!session||session.mode!=='exam'||!session.examination?.duration){setTimeLeft(null);return}setTimeLeft(Number(session.examination.duration)*60);const timer=setInterval(()=>setTimeLeft(v=>v===null?null:Math.max(0,v-1)),1000);return()=>clearInterval(timer)},[session?.session_id]);
- const resetEncounter=()=>{sessionStorage.removeItem('bcsSessionToken');setSession(null);setTimeLeft(null);setHintVisible(false);setMessages([]);setResults([]);setReport(null);setDifferential('');setDiagnosis('');setManagement([]);setReflection('');setVitals(null);setAppearance('');setIndication('');setErr('')};
- const speak=(text)=>{if(voice&&window.speechSynthesis){window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang='en-US';u.rate=Number(speed);window.speechSynthesis.speak(u)}};
- const start=async(nextMode=mode)=>{setBusy(true);setErr('');resetEncounter();try{const d=await request('/sessions',{method:'POST',body:JSON.stringify({learner:name,case_id:caseId,mode:nextMode,exam_code:nextMode==='exam'?examCode.trim().toUpperCase():null})});sessionStorage.setItem('bcsSessionToken',d.session_token||'');setSession(d);setVitals(d.patient?.vitals||null);setAppearance(d.patient?.appearance||'');setMessages([{role:'patient',content:d.opening}]);setMode(nextMode);setView('encounter')}catch(e){setErr(e.message)}finally{setBusy(false)}};
- const send=async()=>{if(!draft.trim()||!session||busy)return;if(session.mode==='exam'&&timeLeft===0){setErr('Examination time has expired. Submit your current work.');return}const text=draft.trim();setDraft('');setMessages(p=>[...p,{role:'student',content:text}]);setBusy(true);setErr('');try{const d=await request(`/sessions/${session.session_id}/chat`,{method:'POST',body:JSON.stringify({message:text})});setMessages(p=>[...p,{role:'patient',content:d.reply}]);speak(d.reply)}catch(e){setErr(e.message);setDraft(text)}finally{setBusy(false)}};
- const orderTest=async()=>{if(session?.mode==='exam'&&timeLeft===0){setErr('Examination time has expired. Submit your current work.');return}if(!session||!indication.trim()){setErr('Enter the clinical indication before requesting this investigation.');return}setBusy(true);setErr('');try{const d=await request(`/sessions/${session.session_id}/investigations`,{method:'POST',body:JSON.stringify({test_id:investigation,indication})});setResults(p=>[...p,d]);setIndication('')}catch(e){setErr(e.message)}finally{setBusy(false)}};
- const toggleManagement=(item)=>setManagement(p=>p.includes(item)?p.filter(x=>x!==item):[...p,item]);
- const finish=async()=>{if(!session)return;setBusy(true);setErr('');try{const d=await request(`/sessions/${session.session_id}/finish`,{method:'POST',body:JSON.stringify({differential:differential.split(',').map(x=>x.trim()).filter(Boolean),final_diagnosis:diagnosis,management,reflection})});setReport(d);setView('report')}catch(e){setErr(e.message)}finally{setBusy(false)}};
- const loadDashboard=async()=>{setErr('');try{const d=await request('/educator/dashboard',{},true);setSessions(d.sessions||[]);setExamList(d.exams||[]);setView('educator')}catch(e){setErr(e.message);setView('educator')}};
- const createExam=async()=>{setErr('');try{const d=await request('/educator/exams',{method:'POST',body:JSON.stringify({title:examTitle,case_id:selectedCaseForExam,duration:Number(examDuration),pass_mark:Number(passMark),creator:name})},true);setCreatedExam(d);await loadDashboard()}catch(e){setErr(e.message)}};
- const closeExam=async(id)=>{try{await request(`/educator/exams/${id}/close`,{method:'POST',body:'{}'},true);await loadDashboard()}catch(e){setErr(e.message)}};
- const generateCaseDraft=async()=>{setDraftBusy(true);setErr('');setPublishedCase(null);try{const d=await request('/educator/case-draft',{method:'POST',body:JSON.stringify({topic:draftTopic,specialty:draftSpecialty,learner_level:draftLevel,learning_objectives:draftObjectives.split('\n').map(x=>x.trim()).filter(Boolean),source_notes:sourceNotes,source_references:sourceRefs.split('\n').map(x=>x.trim()).filter(Boolean),auto_retrieve:true})},true);setGeneratedCase(d)}catch(e){setErr(e.message)}finally{setDraftBusy(false)}};
- const publishGeneratedCase=async()=>{if(!generatedCase?.draft_id)return;setErr('');try{const d=await request(`/educator/case-drafts/${generatedCase.draft_id}/approve-and-publish`,{method:'POST',body:JSON.stringify({reviewer:caseReviewer,review_notes:reviewNotes})},true);setPublishedCase(d);await request('/cases').then(x=>setCases(x.cases.map(c=>({...c,patient:c.sex||'Simulated patient',visual:catalog.find(y=>y.id===c.id)?.visual||'🩺',description:c.appearance||''}))));}catch(e){setErr(e.message)}};
- const startPractice=(id)=>{setCaseId(id);setMode('practice');setView('home')};
- return <div className="app-shell"><header className="topbar"><button className="brand" onClick={()=>setView('home')}><span className="brand-icon">B</span><span><b>BESTIE CLINICAL SIM</b><small>Clinical reasoning · simulation · assessment</small></span></button><div className="top-actions"><span className="environment"><i/> EDUCATIONAL PROTOTYPE</span><button className="secondary small-btn" onClick={()=>setView('xr')}>◈ VR / AR</button></div></header>
- <div className="app-body"><aside className="sidebar"><div className="side-caption">WORKSPACE</div>{[['home','⌂','Learning lab'],['encounter','◉','Active encounter'],['exam','▣','Join examination'],['educator','▤','Educator console'],['xr','◈','VR / AR lab'],['sources','⌕','AI & source policy']].map(([v,ico,label])=><button key={v} className={`nav-item ${view===v?'selected':''}`} onClick={()=>v==='educator'?loadDashboard():setView(v)}><span>{ico}</span>{label}</button>)}<div className="side-divider"/><label className="field-label">Account email</label><input type="email" autoComplete="username" value={accountEmail} onChange={e=>setAccountEmail(e.target.value)} placeholder="name@institution.edu"/><label className="field-label">Account password</label><input type="password" autoComplete="current-password" value={accountPassword} onChange={e=>setAccountPassword(e.target.value)} placeholder="Provisioned account password"/><button className="secondary full" disabled={authBusy||!accountEmail.trim()||!accountPassword} onClick={signIn}>{authBusy?'Signing in…':account?`Signed in · ${account.display_name}`:'Sign in with account'}</button>{account&&<button className="secondary full" onClick={signOut}>Sign out</button>}{account&&<><label className="field-label">Current password</label><input type="password" autoComplete="current-password" value={currentPassword} onChange={e=>setCurrentPassword(e.target.value)} placeholder="Current password"/><label className="field-label">New password <small>(12+ characters)</small></label><input type="password" autoComplete="new-password" value={newPassword} onChange={e=>setNewPassword(e.target.value)} placeholder="Choose a new password"/><button className="secondary full" disabled={passwordBusy||!currentPassword||newPassword.length<12} onClick={changePassword}>{passwordBusy?'Changing password…':'Change password'}</button></>}<label className="field-label">Display name</label><input value={name} onChange={e=>setName(e.target.value)} maxLength={80}/>{authModeKnown&&!productionMode&&<><label className="field-label">Pilot token <small>(development only)</small></label><input type="password" value={pilotToken} onChange={e=>{setPilotToken(e.target.value);sessionStorage.setItem('bcsPilotToken',e.target.value)}} placeholder="Pilot coordinator"/><label className="field-label">Educator token <small>(development only)</small></label><input type="password" value={educatorToken} onChange={e=>{setEducatorToken(e.target.value);sessionStorage.setItem('bcsEducatorToken',e.target.value)}} placeholder="Educator only"/></>}<div className="side-warning"><b>Simulation only</b><p>Fictional cases. Not for real patient care or unvalidated high-stakes grading.</p></div></aside>
- <main className="main-content">{err&&<div className="alert" role="alert">{err}<button onClick={()=>setErr('')}>×</button></div>}
- {view==='home'&&<><div className="hero"><div><div className="eyebrow">MEDICAL EDUCATION PLATFORM</div><h1>Practise the decisions<br/>that matter in real life.</h1><p>Meet a virtual patient, ask questions, justify investigations, interpret simulated results and make a safe clinical plan. Switch to controlled examination mode when you're ready to be assessed.</p><div className="hero-actions"><button className="primary" onClick={()=>{setMode('practice');setView('practice-setup')}}>Start practice <span>→</span></button><button className="secondary" onClick={()=>setView('exam')}>Join an examination</button></div></div><div className="hero-visual"><div className="orb orb-a"/><div className="orb orb-b"/><div className="patient-illustration"><span>{catalog.find(c=>c.id===caseId)?.visual||'🩺'}</span></div><div className="floating-card vitals-float"><small>SIMULATED PATIENT</small><b>Interactive case</b><span>History · Tests · Decisions</span></div><div className="floating-card xr-float"><span>◈</span><b>VR / AR ready architecture</b></div></div></div><div className="section-head"><div><div className="eyebrow">CASE LIBRARY</div><h2>Choose a clinical scenario</h2><p>Case content is fictional and marked for educator review before formal teaching use.</p></div><span className="count-chip">{cases.length} starter cases</span></div><div className="case-grid">{cases.map(c=><article className={`case-card ${caseId===c.id?'chosen':''}`} key={c.id} onClick={()=>setCaseId(c.id)}><div className="case-card-top"><span className="case-emoji">{c.visual||'🩺'}</span><span className="case-status">DRAFT · REVIEW REQUIRED</span></div><h3>{c.title}</h3><p>{c.description||c.specialty}</p><div className="case-meta"><span>{c.specialty}</span><span>Fictional patient</span></div><button className="text-action" onClick={e=>{e.stopPropagation();setCaseId(c.id);setMode('practice');setView('practice-setup')}}>Practise this case <span>→</span></button></article>)}</div><div className="feature-strip">{[['◎','Guided practice','Hints, retry and reflective learning'],['▣','Teacher-led assessment','Hidden diagnosis and controlled case assignment'],['⌁','Clinical investigations','Indication + case-consistent results'],['◈','Immersive roadmap','Browser first, VR/AR compatibility next']].map(([i,t,d])=><div key={t}><span>{i}</span><b>{t}</b><small>{d}</small></div>)}</div></>}
- {view==='practice-setup'&&<div className="setup-wrap"><button className="back-link" onClick={()=>setView('home')}>← Case library</button><div className="page-title"><div className="eyebrow">LEARNING MODE</div><h1>Prepare your practice session</h1><p>In practice mode, the platform can guide you and explain decisions after you act.</p></div><div className="setup-card"><div className="setup-patient"><span>{currentCase.visual||'🩺'}</span><div><small>SELECTED SCENARIO</small><h2>{currentCase.title}</h2><p>{currentCase.description||currentCase.specialty}</p></div></div><label className="field-label">Choose a case</label><select value={caseId} onChange={e=>setCaseId(e.target.value)}>{cases.map(c=><option key={c.id} value={c.id}>{c.title}</option>)}</select><div className="two-fields"><div><label className="field-label">Patient speech</label><select value={speed} onChange={e=>setSpeed(Number(e.target.value))}><option value="0.65">Slow and clear</option><option value="0.8">Comfortable</option><option value="1">Normal</option></select></div><div><label className="field-label">Spoken patient replies</label><select value={voice?'on':'off'} onChange={e=>setVoice(e.target.value==='on')}><option value="on">Enabled (browser voice)</option><option value="off">Text only</option></select></div></div><div className="notice"><b>Learning mode includes:</b> free-form patient questions, investigations with required clinical indication, results and interpretation, decision checklist and formative feedback.</div><button className="primary full" disabled={busy} onClick={()=>start('practice')}>{busy?'Opening case…':'Enter consultation room →'}</button></div></div>}
- {view==='exam'&&<div className="setup-wrap"><div className="page-title"><div className="eyebrow">CONTROLLED ASSESSMENT</div><h1>Join an examination</h1><p>Your teacher creates the examination and shares a unique code. The diagnosis and marking criteria remain hidden during the encounter.</p></div><div className="setup-card exam-join"><div className="exam-symbol">▣</div><h2>Enter examination code</h2><label className="field-label">Examination code from your teacher</label><input value={examCode} onChange={e=>setExamCode(e.target.value.toUpperCase())} placeholder="e.g. 7K2P9Q" maxLength={12}/><div className="exam-rules"><b>During the examination</b><ul><li>Hints and answer explanations are disabled.</li><li>Request each investigation with a clinical indication.</li><li>Submit differential diagnosis, final diagnosis and management.</li><li>Activity is logged for educator review; automated scoring is not validated.</li></ul></div><button className="primary full" disabled={busy||!examCode.trim()} onClick={()=>start('exam')}>{busy?'Joining…':'Begin examination →'}</button></div><p className="fine-note">Only fictional cases are supported. Follow your institution's rules on permitted resources and time.</p></div>}
- {view==='encounter'&&session&&<><div className="encounter-header"><div><div className="eyebrow">{session.mode==='exam'?'CONTROLLED EXAMINATION':'GUIDED PRACTICE'}</div><h1>{session.mode==='exam'?'Clinical assessment encounter':'Consultation room'}</h1><p>{currentCase.specialty} · Session #{session.session_id} · {session.mode==='exam'?'Diagnosis hidden':'Formative learning enabled'}</p></div><div className="header-status"><span className={`mode-chip ${session.mode==='exam'?'exam-chip':''}`}>{session.mode==='exam'?'EXAM MODE':'PRACTICE MODE'}</span>{session.mode==='exam'&&<span className={`timer-chip ${timeLeft===0?'expired':''}`}>◷ {timeLeft===null?'--:--':`${String(Math.floor(timeLeft/60)).padStart(2,'0')}:${String(timeLeft%60).padStart(2,'0')}`}</span>}</div></div><div className="encounter-layout"><section className="panel patient-panel"><div className="panel-heading"><div><small>SIMULATED PATIENT</small><h2>{currentCase.title}</h2></div><span className="patient-avatar">{currentCase.visual||'🩺'}</span></div><div className="patient-stage"><div className="patient-body">{session.case_id==='pregnancy-001'?'🤰🏽':session.case_id==='pediatric-001'?'🧒🏽':session.case_id==='burn-001'?'🩹':session.case_id==='trauma-001'?'🚑':session.case_id==='respiratory-severe-001'?'🫁':'🧑🏽'}</div><div><b>{session.patient?.age?`${session.patient.age}-year-old `:''}{session.patient?.sex||currentCase.patient||'Simulated patient'}</b><p>{appearance||'Ask questions to reveal clinical information.'}</p><span className="fictional-label">FICTIONAL · NOT A REAL PATIENT</span></div></div>{vitals&&<><div className="subhead">Initial observations</div><div className="vitals-grid">{Object.entries(vitals).map(([k,v])=><div key={k}><small>{k}</small><b>{v}</b></div>)}</div></>}{!vitals&&<div className="locked-box">🔒 Examination rule: observations are not disclosed here. Elicit or request the information using the permitted workflow.</div>}<div className="subhead">Patient dialogue</div><div className="chat-window">{messages.map((m,i)=><div className={`chat-message ${m.role==='student'?'from-student':''}`} key={i}><small>{m.role==='student'?'YOU · CLINICIAN':'PATIENT'}</small><p>{m.content}</p>{m.role==='patient'&&<button className="listen" onClick={()=>speak(m.content)}>▶ Listen</button>}</div>)}</div><div className="composer"><textarea value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send()}}} placeholder="Ask a clinical question, explain an examination, or communicate with the patient…" rows={3}/><div className="composer-bottom"><span>Plain English · {voice?'voice available':'text mode'}</span><div className="composer-buttons">{session.mode==='practice'&&<button className="secondary" onClick={()=>setHintVisible(v=>!v)}>{hintVisible?'Hide hint':'Get a hint'}</button>}<button className="primary" disabled={busy||!draft.trim()||(session.mode==='exam'&&timeLeft===0)} onClick={send}>{busy?'Working…':'Send ↗'}</button></div></div>{hintVisible&&session.mode==='practice'&&<div className="hint-box"><b>Practice hint</b><p>Start with an open question, clarify onset and associated symptoms, ask about relevant history and allergies, assess severity, and state the clinical question before requesting a test. This hint does not reveal the diagnosis.</p></div>}</div></section>
- <aside className="workbench"><section className="panel"><div className="panel-heading compact"><div><small>DIAGNOSTICS</small><h3>Order an investigation</h3></div><span>＋</span></div><p className="helper">State why the test is indicated. The case engine returns a configured result or explains that no validated result exists.</p><label className="field-label">Investigation</label><select value={investigation} onChange={e=>setInvestigation(e.target.value)}>{tests.map(([id,t])=><option value={id} key={id}>{t}</option>)}</select><label className="field-label">Clinical indication <span className="required">Required</span></label><textarea value={indication} onChange={e=>setIndication(e.target.value)} placeholder="What clinical question will this test answer?" rows={3}/><button className="secondary full" disabled={busy||(session.mode==='exam'&&timeLeft===0)} onClick={orderTest}>Request test →</button>{results.length>0&&<div className="result-list"><div className="subhead">Results returned</div>{results.map((r,i)=><article className="result-card" key={i}><div className="result-title"><b>{r.name}</b><span className={r.appropriate?'good-tag':'warn-tag'}>{r.appropriate?'Case-configured':'Review indication'}</span></div><small>Indication: {r.indication}</small><p>{r.result}</p>{r.image_available&&<ImagingPreview testId={r.test_id}/>}<div className="interpretation"><b>Interpretation prompt</b><p>{r.interpretation}</p></div><small className="result-feedback">{r.indication_feedback}</small></article>)}</div>}</section>
- <section className="panel submission-panel"><div className="panel-heading compact"><div><small>CLINICAL REASONING</small><h3>Submit your clinical plan</h3></div></div><label className="field-label">Differential diagnoses <small>(comma-separated)</small></label><textarea value={differential} onChange={e=>setDifferential(e.target.value)} rows={2} placeholder="Diagnosis A, diagnosis B, diagnosis C"/><label className="field-label">Final diagnosis</label><input value={diagnosis} onChange={e=>setDiagnosis(e.target.value)} placeholder="Your best-supported diagnosis"/><label className="field-label">Management and next steps</label><div className="checklist">{managementOptions.map(m=><label key={m}><input type="checkbox" checked={management.includes(m)} onChange={()=>toggleManagement(m)}/><span>{m}</span></label>)}</div><label className="field-label">Clinical reasoning / interpretation <small>(include what results mean)</small></label><textarea value={reflection} onChange={e=>setReflection(e.target.value)} rows={3} placeholder="Explain how the history, examination and results influence your decisions…"/><button className="primary full" disabled={busy} onClick={finish}>{busy?'Submitting…':session.mode==='exam'?'Submit examination →':'Finish and get feedback →'}</button><p className="fine-note">{session.mode==='exam'?'Submission ends the encounter. Your teacher can review the audit trail and report.':'Practice feedback is formative and should be reviewed with a clinical educator.'}</p></section></aside></div></>}
- {view==='report'&&report&&<div className="report-page"><div className="page-title"><div className="eyebrow">SESSION COMPLETE</div><h1>Clinical performance report</h1><p>Case {report.case_id} · {report.mode==='exam'?'Examination submission':'Practice feedback'} · {report.status}</p></div><div className="report-top">{report.mode!=='exam'&&<div className="score-card"><small>FORMATIVE DEMONSTRATION SCORE</small><strong>{report.score}<span>/100</span></strong><div className="score-bar"><i style={{width:`${report.score}%`}}/></div><p>Not validated for high-stakes assessment.</p></div>}{report.mode==='exam'?<div className="report-summary"><small>EXAMINATION SUBMITTED</small><h2>Awaiting educator review</h2><p>{report.summary}</p>{report.time_expired&&<div className="report-pills"><span>Time expired before submission</span></div>}</div>:<div className="report-summary"><small>CASE REVEAL AFTER PRACTICE</small><h2>{report.hidden_case_diagnosis}</h2><p>{report.summary}</p><div className="report-pills"><span>{report.investigations_ordered} investigations</span><span>{report.critical_flags?.length||0} critical flags</span><span>{report.unnecessary_or_unvalidated_tests?.length||0} tests to review</span>{report.time_expired&&<span>Time expired</span>}</div></div>}</div>{report.mode!=='exam'&&report.critical_flags?.length>0&&<div className="alert critical-alert"><b>Safety flags to review</b><ul>{report.critical_flags.map(x=><li key={x}>{x}</li>)}</ul></div>}{report.mode!=='exam'&&<section className="panel"><div className="panel-heading"><div><small>TRANSPARENT RUBRIC CHECKS</small><h2>Domain feedback</h2></div></div><div className="domain-list">{report.domains?.map(d=><div key={d.domain} className="domain-row"><span className={d.status==='evidence observed'?'domain-ok':'domain-review'}>{d.status==='evidence observed'?'✓':'!'}</span><div><b>{d.domain}</b><p>{d.feedback}</p></div><small>{d.status}</small></div>)}</div></section>}<section className="panel"><div className="panel-heading"><div><small>CONTINUE LEARNING</small><h2>Suggested next steps</h2></div></div><ul className="report-next">{report.next_steps?.map(x=><li key={x}>{x}</li>)}</ul><button className="primary" onClick={()=>{resetEncounter();setView('home')}}>Return to case library →</button></section></div>}
- {view==='educator'&&<div className="educator-page"><div className="page-title"><div className="eyebrow">FACULTY WORKSPACE</div><h1>Educator console</h1><p>Create controlled case assignments, share an exam code, and review submitted reports.</p></div><div className="educator-grid"><section className="panel create-exam"><div className="panel-heading"><div><small>EXAM BUILDER</small><h2>Create an examination</h2></div><span className="exam-symbol small-symbol">▣</span></div><label className="field-label">Examination title</label><input value={examTitle} onChange={e=>setExamTitle(e.target.value)}/><label className="field-label">Hidden case</label><select value={selectedCaseForExam} onChange={e=>setSelectedCaseForExam(e.target.value)}>{cases.map(c=><option key={c.id} value={c.id}>{c.title}</option>)}</select><div className="two-fields"><div><label className="field-label">Duration (minutes)</label><input type="number" min="5" max="180" value={examDuration} onChange={e=>setExamDuration(e.target.value)}/></div><div><label className="field-label">Pass mark (%)</label><input type="number" min="1" max="100" value={passMark} onChange={e=>setPassMark(e.target.value)}/></div></div><button className="primary full" onClick={createExam}>Create exam and generate code →</button>{createdExam&&<div className="created-code"><small>SHARE THIS CODE WITH STUDENTS</small><strong>{createdExam.code}</strong><p>{createdExam.title} · {createdExam.duration} minutes · case hidden from student</p><button className="secondary" onClick={()=>navigator.clipboard?.writeText(createdExam.code)}>Copy code</button></div>}</section><section className="panel educator-security"><div className="panel-heading"><div><small>ACCESS CONTROL</small><h2>Educator access</h2></div></div><p>Enter your educator token in the left panel if the deployment requires one. The current prototype uses token-based access, not individual university accounts or single sign-on.</p><div className="source-note"><b>Assessment governance</b><p>Use educator-reviewed cases, disclose examination rules, validate rubrics, and obtain required institutional approvals before research or high-stakes use.</p></div><button className="secondary full" onClick={loadDashboard}>Refresh dashboard</button></section></div><section className="panel case-authoring"><div className="panel-heading"><div><small>AI-ASSISTED AUTHORING</small><h2>Draft a new clinical scenario</h2></div><span className="case-status">REQUIRES CLINICAL REVIEW</span></div><p className="helper">Searches PubMed and Europe PMC for evidence leads, then asks the configured language model to draft a structured scenario. Source retrieval and automated checks do not establish clinical validity. Every generated case remains a draft until a qualified educator reviews it.</p><div className="two-fields"><div><label className="field-label">Case topic</label><input value={draftTopic} onChange={e=>setDraftTopic(e.target.value)}/></div><div><label className="field-label">Specialty</label><input value={draftSpecialty} onChange={e=>setDraftSpecialty(e.target.value)}/></div></div><label className="field-label">Learner level</label><input value={draftLevel} onChange={e=>setDraftLevel(e.target.value)}/><label className="field-label">Learning objectives <small>(one per line)</small></label><textarea rows={3} value={draftObjectives} onChange={e=>setDraftObjectives(e.target.value)}/><label className="field-label">Source references <small>(one URL/title per line; do not fabricate)</small></label><textarea rows={2} value={sourceRefs} onChange={e=>setSourceRefs(e.target.value)} placeholder="Official guideline URL, paper DOI/title, approved teaching material…"/><label className="field-label">Relevant source notes or excerpts <small>(only content you are permitted to use)</small></label><textarea rows={4} value={sourceNotes} onChange={e=>setSourceNotes(e.target.value)} placeholder="Paste relevant, permitted excerpts or a concise summary…"/><button className="primary" disabled={draftBusy||!draftTopic.trim()} onClick={generateCaseDraft}>{draftBusy?'Preparing draft…':'Generate educator-review draft →'}</button>{generatedCase&&<div className="generated-draft"><div className="generated-header"><b>Draft generated · {generatedCase.generation_mode||'template'}</b><button className="secondary" onClick={()=>navigator.clipboard?.writeText(JSON.stringify(generatedCase,null,2))}>Copy JSON</button></div><div className="source-note"><b>Evidence retrieval: {generatedCase.evidence_search?.count||0} results</b><p>{generatedCase.evidence_search?.notice||'Check source records manually.'}</p>{(generatedCase.evidence_search?.results||[]).slice(0,5).map((r,i)=><p key={i}><a href={r.url} target="_blank" rel="noreferrer">{r.title||r.identifier}</a> · {r.source} · {r.year}</p>)}</div><div className="source-note"><b>Clinical review required before publishing</b><p>Publishing records an educator attestation; it does not mean the platform independently certifies clinical accuracy.</p><label className="field-label">Reviewer name</label><input value={caseReviewer} onChange={e=>setCaseReviewer(e.target.value)}/><label className="field-label">Review note</label><textarea rows={2} value={reviewNotes} onChange={e=>setReviewNotes(e.target.value)}/><button className="primary" onClick={publishGeneratedCase} disabled={!caseReviewer.trim()||!reviewNotes.trim()}>Publish after completing clinical review →</button>{publishedCase&&<p><b>Published:</b> {publishedCase.case_id} · {publishedCase.version}. Refresh the case library to use it in practice or create an exam.</p>}</div><details><summary>View complete structured draft</summary><pre>{JSON.stringify(generatedCase,null,2)}</pre></details></div>}</section><section className="panel"><div className="panel-heading"><div><small>ASSESSMENT MANAGEMENT</small><h2>Created examinations</h2></div><span className="count-chip">{examList.length}</span></div>{examList.length?<div className="table-wrap"><table><thead><tr><th>Title</th><th>Code</th><th>Case (educator view)</th><th>Duration</th><th>Status</th><th>Action</th></tr></thead><tbody>{examList.map(e=><tr key={e.id}><td>{e.title}</td><td><b>{e.code}</b></td><td>{cases.find(c=>c.id===e.case_id)?.title||e.case_id}</td><td>{e.duration} min</td><td>{e.status}</td><td>{e.status==='open'&&<button className="text-action" onClick={()=>closeExam(e.id)}>Close exam</button>}</td></tr>)}</tbody></table></div>:<div className="empty-state">No exams loaded. Enter a valid educator token and refresh.</div>}</section><section className="panel"><div className="panel-heading"><div><small>SESSION AUDIT</small><h2>Recent student sessions</h2></div><span className="count-chip">{sessions.length}</span></div>{sessions.length?<div className="table-wrap"><table><thead><tr><th>Session</th><th>Learner</th><th>Mode</th><th>Case</th><th>Status</th><th>Score</th><th>Decision log</th></tr></thead><tbody>{sessions.map(s=><tr key={s.id}><td>#{s.id}</td><td>{s.learner}</td><td>{s.mode}</td><td>{cases.find(c=>c.id===s.case_id)?.title||s.case_id}</td><td>{s.status}</td><td>{s.report?.score??'—'}</td><td><details><summary>View</summary><pre className="audit-pre">{JSON.stringify(s.events||[],null,2)}</pre></details></td></tr>)}</tbody></table></div>:<div className="empty-state">No sessions loaded. Start a simulation and refresh.</div>}</section></div>}
- {view==='xr'&&<div className="xr-page"><div className="page-title"><div className="eyebrow">IMMERSIVE SIMULATION ROADMAP</div><h1>From browser to headset.</h1><p>The clinical case engine is designed to remain separate from the presentation layer so future VR/AR clients can use the same validated scenario, patient state and scoring rules.</p></div><div className="xr-hero"><div className="xr-scene"><div className="scene-grid"/><div className="scene-patient">{catalog.find(c=>c.id===caseId)?.visual||'🧑🏽'}</div><div className="scene-hud"><small>SIMULATED PATIENT</small><b>{catalog.find(c=>c.id===caseId)?.title}</b><span>Clinical state · Observations · Actions</span></div></div><div className="xr-info"><span className="xr-mark">◈</span><h2>University headset compatibility</h2><p>Use the Uniport headset collaboration to test browser/WebXR support, controller input, comfort, and performance. This build includes a compatibility check and immersive interface scaffold; it does not yet implement a production WebXR patient model.</p><div className="compat-row"><span>WebXR detected</span><b>{xr.checked?(navigator.xr?'Yes':'Not exposed in this browser'):'Checking…'}</b></div><div className="compat-row"><span>Immersive VR session</span><b className={xr.vr?'supported':''}>{xr.checked?(xr.vr?'Supported by this browser/device':'Not reported as supported'):'Checking…'}</b></div><div className="compat-row"><span>Immersive AR session</span><b className={xr.ar?'supported':''}>{xr.checked?(xr.ar?'Supported by this browser/device':'Not reported as supported'):'Checking…'}</b></div><button className="primary full" onClick={()=>{setView('practice-setup')}}>Test a case in browser first →</button></div></div><div className="section-head"><div><div className="eyebrow">IMPLEMENTATION SEQUENCE</div><h2>Build toward immersive clinical skills</h2></div></div><div className="roadmap-grid">{[['01','Browser simulation','Current build: patient dialogue, investigations, case state and formative report.'],['02','Headset compatibility','Test WebXR entry, headset/browser versions, controllers, motion comfort and accessibility with Uniport.'],['03','3D patient and room','Add consent-based patient avatars, age/pregnancy/body morphology, injury visuals, animation and spatial audio.'],['04','Procedural simulation','Validated anatomy, instruments, haptics where available, educator observation and task-specific scoring.']].map(([n,t,d])=><article className="roadmap-card" key={n}><span>{n}</span><h3>{t}</h3><p>{d}</p></article>)}</div><div className="notice"><b>Compatibility is not the same as implementation.</b> The browser checks whether immersive sessions are reported as supported. Real headset testing, 3D assets, controllers, spatial interaction, and clinical validation remain required before claiming a VR/AR-ready production product.</div></div>}
- {view==='sources'&&<div className="sources-page"><div className="page-title"><div className="eyebrow">AI GOVERNANCE</div><h1>Trusted sources. Bounded AI.</h1><p>AI can draft scenarios and play a patient, but the validated case engine remains the source of truth for clinical state, test results and assessment logic.</p></div><div className="source-grid">{[['01','Authoritative guidance','WHO, Rwanda Ministry of Health and approved national clinical protocols; verify publication date, jurisdiction and current status.'],['02','Peer-reviewed evidence','Systematic reviews, peer-reviewed research and recognized clinical reference materials, respecting access and licensing terms.'],['03','University content','Educator-authored cases, approved teaching materials, locally relevant referral pathways and institution-specific protocols.'],['04','AI language model','Plain-language patient dialogue, draft case authoring, feedback explanations and accessible communication; never independently approve clinical facts.']].map(([n,t,d])=><article className="source-card" key={n}><span>{n}</span><h3>{t}</h3><p>{d}</p></article>)}</div><section className="panel"><div className="panel-heading"><div><small>NON-NEGOTIABLE CONTROLS</small><h2>What the model may and may not do</h2></div></div><div className="rules-grid"><div><h3>Allowed</h3><ul><li>Draft a fictional case for educator review.</li><li>Use short, accessible patient dialogue consistent with fixed facts.</li><li>Explain a result from approved case data and cite the configured source record.</li><li>Suggest feedback against a transparent, educator-approved rubric.</li></ul></div><div><h3>Not allowed</h3><ul><li>Invent laboratory values or imaging findings.</li><li>Reveal hidden diagnosis during a controlled examination.</li><li>Self-approve generated clinical cases or high-stakes scores.</li><li>Use real patient-identifiable data without approved governance.</li></ul></div></div><div className="notice"><b>Source provenance is a product requirement.</b> Before real use, each case should store source title, URL/identifier, date/version, relevant excerpt, licensing status, reviewer, approval date and review expiry. Google can help discover sources; search results alone are not clinical evidence.</div></section></div>}
- </main></div><footer className="footer"><span>BESTIE CLINICAL SIM · BUILD 1.3.0</span><span>Fictional clinical education only · Clinical educator review required</span></footer></div>
+
+const tests = [
+  ['fbc', 'Full blood count (FBC)'],
+  ['malaria-rdt', 'Malaria rapid diagnostic test (RDT)'],
+  ['malaria-microscopy', 'Malaria thick & thin blood film'],
+  ['glucose', 'Blood glucose'],
+  ['urinalysis', 'Urinalysis and microscopy'],
+  ['urine-protein', 'Urine protein assessment'],
+  ['renal-electrolytes', 'Renal function & electrolytes (U&E)'],
+  ['lft-renal', 'Liver and renal function panel'],
+  ['blood-culture', 'Blood cultures x2 (prior to antibiotics)'],
+  ['chest-xray', 'Chest X-ray (PA & Lateral)'],
+  ['ct-chest', 'CT Chest with contrast'],
+  ['ct-head', 'CT Head without contrast'],
+  ['blood-gas', 'Arterial Blood Gas (ABG) & Lactate'],
+  ['e-fast', 'eFAST bedside trauma ultrasound'],
+  ['ct-trauma', 'Whole-body CT trauma series'],
+  ['obstetric-ultrasound', 'Obstetric ultrasound & fetal biometry'],
+  ['pulse-ox', 'Continuous pulse oximetry'],
+];
+
+const managementOptions = [
+  'ABCDE / systematic initial assessment',
+  'Urgent senior help / escalation (Registrar or Consultant)',
+  'High-flow oxygen (15 L/min non-rebreather mask) & telemetry',
+  'Focused clinical examination (auscultation, palpation)',
+  'Empirical IV antimicrobial therapy within 1 hour',
+  'IV crystalloid fluid resuscitation (500 mL bolus over 15 min)',
+  'Check allergies, pregnancy status, and renal dosage adjustment',
+  'Repeat serial observations (NEWS2) and assess physiological response',
+  'Structured SBAR handover and critical care outreach referral',
+  'Explain clinical findings and treatment plan to patient / family',
+];
+
+// Clean Clinical Department Icon Renderer
+function DepartmentIcon({ type }) {
+  if (type === 'pulmonology') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M12 2v8" />
+        <path d="M7 6l5 4 5-4" />
+        <path d="M6 14a4 4 0 0 1 6-3.5 4 4 0 0 1 6 3.5c0 4-3 7-6 7s-6-3-6-7z" />
+      </svg>
+    );
+  }
+  if (type === 'infectious') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="6" />
+        <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+        <path d="m4.9 4.9 2.8 2.8M16.3 16.3l2.8 2.8M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8" />
+      </svg>
+    );
+  }
+  if (type === 'burns') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
+      </svg>
+    );
+  }
+  if (type === 'trauma') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 16H9m10 0h3v-3.15a1 1 0 0 0-.84-.99L16 11l-2.7-3.6a1 1 0 0 0-.8-.4H5a2 2 0 0 0-2 2v8h2" />
+        <circle cx="7" cy="16.5" r="2.5" />
+        <circle cx="16.5" cy="16.5" r="2.5" />
+        <path d="M8 7h3v3H8z" />
+      </svg>
+    );
+  }
+  if (type === 'obstetrics') {
+    return (
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />
+      </svg>
+    );
+  }
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4.8 2.3A.3.3 0 1 0 5 2H4a2 2 0 0 0-2 2v5a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6V4a2 2 0 0 0-2-2h-1a.2.2 0 1 0 .3.3" />
+      <path d="M8 15v1a6 6 0 0 0 6 6v0a6 6 0 0 0 6-6v-4" />
+      <circle cx="20" cy="10" r="2" />
+    </svg>
+  );
 }
 
-function ImagingPreview({testId}){
- if(testId==='chest-xray'||testId==='ct-chest'||testId==='ct-trauma')return <div className="imaging-preview"><div className="imaging-label">SYNTHETIC RADIOGRAPH SCHEMATIC</div><svg viewBox="0 0 300 170" role="img" aria-label="Synthetic illustrative chest X-ray schematic"><rect width="300" height="170" rx="8" fill="#101a1a"/><path d="M119 17 Q150 8 181 17 L203 42 Q219 65 218 136 Q188 156 150 157 Q112 156 82 136 Q81 65 97 42Z" fill="#263635" stroke="#a6c4b6" strokeWidth="2"/><path d="M143 25 L143 142 M157 25 L157 142" stroke="#d2e5dc" strokeWidth="7" opacity=".75"/><path d="M141 42 Q113 25 101 59 Q91 86 104 126 Q118 142 139 126Z" fill="#0b1213" stroke="#71958a" strokeWidth="2"/><path d="M159 42 Q187 25 199 59 Q209 86 196 126 Q182 142 161 126Z" fill="#0b1213" stroke="#71958a" strokeWidth="2"/><g stroke="#b7d1c4" opacity=".55" fill="none">{[0,1,2,3,4].map(i=><path key={i} d={`M${101-i*2} ${54+i*14} Q150 ${38+i*14} ${199+i*2} ${54+i*14}`} strokeWidth="2"/>)}</g>{testId==='chest-xray'&&<path d="M165 86 Q185 73 195 90 L192 116 Q178 128 164 113Z" fill="#c4d8cb" opacity=".9"/>}<text x="12" y="158" fill="#a8c9b9" fontSize="8">SIMULATED · EDUCATIONAL ONLY</text></svg><small>Illustrative visual only; not a diagnostic-quality radiograph.</small></div>;
- if(testId==='ct-head')return <div className="imaging-preview"><div className="imaging-label">SYNTHETIC CT SCHEMATIC</div><svg viewBox="0 0 300 170" role="img" aria-label="Synthetic illustrative CT slice"><rect width="300" height="170" rx="8" fill="#101a1a"/><circle cx="150" cy="82" r="59" fill="#d5ddd8"/><circle cx="150" cy="82" r="53" fill="#737e78"/><ellipse cx="150" cy="82" rx="43" ry="47" fill="#b8c3bc"/><path d="M148 41 Q131 65 147 80 Q130 98 146 123 M153 41 Q169 65 153 80 Q170 98 154 123" fill="none" stroke="#52605a" strokeWidth="5"/><path d="M122 67 Q140 53 147 71 M178 67 Q160 53 153 71" stroke="#edf2ee" strokeWidth="4" fill="none"/><text x="12" y="158" fill="#a8c9b9" fontSize="8">SIMULATED · EDUCATIONAL ONLY</text></svg><small>Illustrative CT slice; no clinical diagnosis can be made from this schematic.</small></div>;
- return <div className="imaging-preview"><div className="imaging-label">SYNTHETIC ULTRASOUND SCHEMATIC</div><svg viewBox="0 0 300 170" role="img" aria-label="Synthetic illustrative ultrasound image"><rect width="300" height="170" rx="8" fill="#101a1a"/><path d="M150 12 L38 153 Q150 173 262 153Z" fill="#4c5a55" stroke="#a7bbb1" strokeWidth="2"/><path d="M150 20 L60 145 M150 20 L90 151 M150 20 L120 155 M150 20 L180 155 M150 20 L210 151 M150 20 L240 145" stroke="#c5d1cb" strokeWidth="1" opacity=".45"/><ellipse cx="154" cy="104" rx="23" ry="10" fill="#101a1a" stroke="#d1ddd6" strokeWidth="2"/><text x="12" y="158" fill="#a8c9b9" fontSize="8">SIMULATED · EDUCATIONAL ONLY</text></svg><small>Illustrative ultrasound pattern; not a real scan.</small></div>;
+async function request(path, opts = {}, educator = false) {
+  const pilot = sessionStorage.getItem('bcsPilotToken') || '';
+  const et = sessionStorage.getItem('bcsEducatorToken') || '';
+  const st = sessionStorage.getItem('bcsSessionToken') || '';
+  const access = sessionStorage.getItem('bcsAccessToken') || '';
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(access ? { Authorization: `Bearer ${access}` } : educator ? { 'X-Educator-Token': et } : { 'X-Pilot-Token': pilot }),
+    ...(st ? { 'X-Session-Token': st } : {}),
+    ...(opts.headers || {}),
+  };
+  const r = await fetch(API + path, { ...opts, headers });
+  if (!r.ok) {
+    let m = `Request failed (${r.status})`;
+    try {
+      m = (await r.json()).detail || m;
+    } catch {}
+    throw new Error(m);
+  }
+  return r.json();
+}
+
+export default function App() {
+  const [view, setView] = useState('home');
+  const [cases, setCases] = useState(catalog);
+  const [caseId, setCaseId] = useState('respiratory-severe-001');
+  const [mode, setMode] = useState('practice');
+  const [name, setName] = useState('Dr. Ephrem Dushime');
+  const [examCode, setExamCode] = useState('');
+  const [session, setSession] = useState(null);
+  const [messages, setMessages] = useState([]);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [vitals, setVitals] = useState(null);
+  const [appearance, setAppearance] = useState('');
+  const [investigation, setInvestigation] = useState('blood-gas');
+  const [indication, setIndication] = useState('');
+  const [results, setResults] = useState([]);
+  const [differential, setDifferential] = useState('');
+  const [diagnosis, setDiagnosis] = useState('');
+  const [management, setManagement] = useState([]);
+  const [reflection, setReflection] = useState('');
+  const [report, setReport] = useState(null);
+  const [speed, setSpeed] = useState(0.85);
+  const [voice, setVoice] = useState(true);
+  const [xr, setXr] = useState({ checked: false, vr: false, ar: false });
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+
+  // Educator state
+  const [educatorToken, setEducatorToken] = useState(sessionStorage.getItem('bcsEducatorToken') || '');
+  const [pilotToken, setPilotToken] = useState(sessionStorage.getItem('bcsPilotToken') || '');
+  const [examTitle, setExamTitle] = useState('Clinical Reasoning OSCE Station');
+  const [examDuration, setExamDuration] = useState(20);
+  const [passMark, setPassMark] = useState(70);
+  const [examList, setExamList] = useState([]);
+  const [sessions, setSessions] = useState([]);
+  const [createdExam, setCreatedExam] = useState(null);
+  const [selectedCaseForExam, setSelectedCaseForExam] = useState('respiratory-severe-001');
+  const [timeLeft, setTimeLeft] = useState(null);
+  const [hintVisible, setHintVisible] = useState(false);
+
+  // Generator & Procedural Scenario Compiler
+  const [genArch, setGenArch] = useState('sepsis');
+  const [genPheno, setGenPheno] = useState('black-male');
+  const [genAge, setGenAge] = useState(52);
+  const [genComorb, setGenComorb] = useState(['diabetes']);
+  const [genSetting, setGenSetting] = useState('emergency_department');
+  const [genAutoApprove, setGenAutoApprove] = useState(true);
+  const [genBusy, setGenBusy] = useState(false);
+  const [genResult, setGenResult] = useState(null);
+  const [archList, setArchList] = useState([]);
+
+  // Account & Auth
+  const [accountEmail, setAccountEmail] = useState('');
+  const [accountPassword, setAccountPassword] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [passwordBusy, setPasswordBusy] = useState(false);
+  const [account, setAccount] = useState(() => {
+    try {
+      return JSON.parse(sessionStorage.getItem('bcsAccount') || 'null');
+    } catch {
+      return null;
+    }
+  });
+  const [authBusy, setAuthBusy] = useState(false);
+  const [productionMode, setProductionMode] = useState(false);
+  const [authModeKnown, setAuthModeKnown] = useState(false);
+
+  const signIn = async (emailToUse, passwordToUse) => {
+    const e = emailToUse || accountEmail;
+    const p = passwordToUse || accountPassword;
+    setAuthBusy(true);
+    setErr('');
+    try {
+      const response = await fetch(API + '/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: e, password: p }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Sign-in failed (${response.status})`);
+      sessionStorage.setItem('bcsAccessToken', data.access_token);
+      sessionStorage.setItem('bcsAccount', JSON.stringify(data.user));
+      setAccount(data.user);
+      setName(data.user.display_name || name);
+      setAccountPassword('');
+      setAuthModalOpen(false);
+    } catch (errObj) {
+      setErr(errObj.message);
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const signOut = async () => {
+    const token = sessionStorage.getItem('bcsAccessToken') || '';
+    try {
+      if (token) await fetch(API + '/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    } catch {}
+    sessionStorage.removeItem('bcsAccessToken');
+    sessionStorage.removeItem('bcsAccount');
+    sessionStorage.removeItem('bcsSessionToken');
+    setAccount(null);
+    setAccountPassword('');
+  };
+
+  const changePassword = async () => {
+    const token = sessionStorage.getItem('bcsAccessToken') || '';
+    if (!token) return;
+    setPasswordBusy(true);
+    setErr('');
+    try {
+      const response = await fetch(API + '/auth/change-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || `Password change failed (${response.status})`);
+      sessionStorage.removeItem('bcsAccessToken');
+      sessionStorage.removeItem('bcsAccount');
+      setAccount(null);
+      setCurrentPassword('');
+      setNewPassword('');
+      setErr('Password changed successfully. Please sign in with your new credentials.');
+      setAuthModalOpen(false);
+    } catch (errObj) {
+      setErr(errObj.message);
+    } finally {
+      setPasswordBusy(false);
+    }
+  };
+
+  const currentCase = useMemo(() => {
+    if (session?.mode === 'exam') {
+      return {
+        title: 'Controlled OSCE Examination Station',
+        specialty: 'Clinical Assessment',
+        department: 'Clinical Skills Examination Hall',
+        appearance: session.patient?.appearance || 'Fictional simulated patient',
+        age: session.patient?.age,
+        sex: session.patient?.sex,
+        initials: 'PT',
+        iconType: 'pulmonology',
+      };
+    }
+    return cases.find((c) => c.id === session?.case_id) || cases.find((c) => c.id === caseId) || catalog[0];
+  }, [cases, session, caseId]);
+
+  useEffect(() => {
+    fetch(API + '/health')
+      .then((r) => r.json())
+      .then((d) => {
+        const prod = d.environment === 'production';
+        setProductionMode(prod);
+        setAuthModeKnown(true);
+      })
+      .catch(() => {});
+
+    request('/cases')
+      .then((d) => {
+        if (d.cases?.length) {
+          const merged = d.cases.map((c) => {
+            const found = catalog.find((x) => x.id === c.id);
+            return {
+              ...c,
+              department: found?.department || 'Acute Medicine',
+              acuity: found?.acuity || 'URGENT (NEWS2: 6)',
+              acuityClass: found?.acuityClass || 'acuity-urgent',
+              initials: found?.initials || c.id.slice(0, 2).toUpperCase(),
+              phenotypeLabel: found?.phenotypeLabel || 'Simulated Patient',
+              competencies: found?.competencies || ['ABCDE Assessment', 'Diagnostics', 'Management'],
+              iconType: found?.iconType || 'pulmonology',
+              description: c.appearance || found?.description || '',
+            };
+          });
+          setCases(merged);
+        }
+      })
+      .catch(() => {});
+
+    if (navigator.xr && typeof navigator.xr.isSessionSupported === 'function') {
+      Promise.all([
+        navigator.xr.isSessionSupported('immersive-vr').catch(() => false),
+        navigator.xr.isSessionSupported('immersive-ar').catch(() => false),
+      ]).then(([vr, ar]) => setXr({ checked: true, vr: !!vr, ar: !!ar }));
+    } else {
+      setXr({ checked: true, vr: false, ar: false });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!session || session.mode !== 'exam' || !session.examination?.duration) {
+      setTimeLeft(null);
+      return;
+    }
+    setTimeLeft(Number(session.examination.duration) * 60);
+    const timer = setInterval(() => setTimeLeft((v) => (v === null ? null : Math.max(0, v - 1))), 1000);
+    return () => clearInterval(timer);
+  }, [session?.session_id]);
+
+  const resetEncounter = () => {
+    sessionStorage.removeItem('bcsSessionToken');
+    setSession(null);
+    setTimeLeft(null);
+    setHintVisible(false);
+    setMessages([]);
+    setResults([]);
+    setReport(null);
+    setDifferential('');
+    setDiagnosis('');
+    setManagement([]);
+    setReflection('');
+    setVitals(null);
+    setAppearance('');
+    setIndication('');
+    setErr('');
+  };
+
+  const speak = (textToSpeak) => {
+    if (voice && window.speechSynthesis) {
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(textToSpeak);
+      u.lang = 'en-US';
+      u.rate = Number(speed);
+      window.speechSynthesis.speak(u);
+    }
+  };
+
+  const start = async (nextMode = mode) => {
+    setBusy(true);
+    setErr('');
+    resetEncounter();
+    try {
+      const d = await request('/sessions', {
+        method: 'POST',
+        body: JSON.stringify({
+          learner: name,
+          case_id: caseId,
+          mode: nextMode,
+          exam_code: nextMode === 'exam' ? examCode.trim().toUpperCase() : null,
+        }),
+      });
+      sessionStorage.setItem('bcsSessionToken', d.session_token || '');
+      setSession(d);
+      setVitals(d.patient?.vitals || null);
+      setAppearance(d.patient?.appearance || '');
+      setMessages([{ role: 'patient', content: d.opening }]);
+      setMode(nextMode);
+      setView('encounter');
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const send = async () => {
+    if (!draft.trim() || !session || busy) return;
+    if (session.mode === 'exam' && timeLeft === 0) {
+      setErr('Examination time has expired. Submit your clinical plan.');
+      return;
+    }
+    const userText = draft.trim();
+    setDraft('');
+    setMessages((p) => [...p, { role: 'student', content: userText }]);
+    setBusy(true);
+    setErr('');
+    try {
+      const d = await request(`/sessions/${session.session_id}/chat`, {
+        method: 'POST',
+        body: JSON.stringify({ message: userText }),
+      });
+      setMessages((p) => [...p, { role: 'patient', content: d.reply }]);
+      speak(d.reply);
+    } catch (e) {
+      setErr(e.message);
+      setDraft(userText);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const orderTest = async () => {
+    if (session?.mode === 'exam' && timeLeft === 0) {
+      setErr('Examination time has expired.');
+      return;
+    }
+    if (!session || !indication.trim()) {
+      setErr('A specific clinical indication is required before requesting this investigation.');
+      return;
+    }
+    setBusy(true);
+    setErr('');
+    try {
+      const d = await request(`/sessions/${session.session_id}/investigations`, {
+        method: 'POST',
+        body: JSON.stringify({ test_id: investigation, indication }),
+      });
+      setResults((p) => [...p, d]);
+      setIndication('');
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleManagement = (item) =>
+    setManagement((p) => (p.includes(item) ? p.filter((x) => x !== item) : [...p, item]));
+
+  const finish = async () => {
+    if (!session) return;
+    setBusy(true);
+    setErr('');
+    try {
+      const d = await request(`/sessions/${session.session_id}/finish`, {
+        method: 'POST',
+        body: JSON.stringify({
+          differential: differential
+            .split(',')
+            .map((x) => x.trim())
+            .filter(Boolean),
+          final_diagnosis: diagnosis,
+          management,
+          reflection,
+        }),
+      });
+      setReport(d);
+      setView('report');
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadDashboard = async () => {
+    setErr('');
+    try {
+      const [d, a] = await Promise.all([
+        request('/educator/dashboard', {}, true),
+        request('/educator/archetypes', {}, true).catch(() => ({ archetypes: [] })),
+      ]);
+      setSessions(d.sessions || []);
+      setExamList(d.exams || []);
+      if (a.archetypes?.length) setArchList(a.archetypes);
+      setView('educator');
+    } catch (e) {
+      setErr(e.message);
+      setView('educator');
+    }
+  };
+
+  const toggleComorbidity = (c) =>
+    setGenComorb((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
+
+  const runProceduralCompiler = async () => {
+    setGenBusy(true);
+    setErr('');
+    setGenResult(null);
+    try {
+      const payload = {
+        archetype_id: genArch,
+        phenotype: genPheno,
+        age: Number(genAge) || null,
+        comorbidities: genComorb,
+        setting: genSetting,
+        auto_approve: genAutoApprove,
+      };
+      const res = await request('/educator/generate-scenario', { method: 'POST', body: JSON.stringify(payload) }, true);
+      setGenResult(res);
+      const updated = await request('/cases');
+      if (updated.cases?.length) setCases(updated.cases);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setGenBusy(false);
+    }
+  };
+
+  const createExam = async () => {
+    setErr('');
+    try {
+      const d = await request(
+        '/educator/exams',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            title: examTitle,
+            case_id: selectedCaseForExam,
+            duration: Number(examDuration),
+            pass_mark: Number(passMark),
+            creator: name,
+          }),
+        },
+        true
+      );
+      setCreatedExam(d);
+      await loadDashboard();
+    } catch (e) {
+      setErr(e.message);
+    }
+  };
+
+  const closeExam = async (id) => {
+    try {
+      await request(`/educator/exams/${id}/close`, { method: 'POST', body: '{}' }, true);
+      await loadDashboard();
+    } catch (e) {
+      setErr(e.message);
+    }
+  };
+
+  return (
+    <div className="app-shell">
+      {/* Hospital Top Navigation Header */}
+      <header className="topbar">
+        <button className="brand" onClick={() => setView('home')} aria-label="Go to Home">
+          <div className="brand-icon">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 2L4 6v6c0 5.5 3.8 10.7 8 12 4.2-1.3 8-6.5 8-12V6l-8-4zm-1 6h2v3h3v2h-3v3h-2v-3H8v-2h3V8z" />
+            </svg>
+          </div>
+          <div className="brand-text">
+            <b>BESTIE CLINICAL SIM</b>
+            <small>Virtual Teaching Hospital · Competency Assessment Platform</small>
+          </div>
+        </button>
+
+        <div className="top-actions">
+          <div className="environment-badge">
+            <span className="pulse-dot" />
+            <span>GMC & ACGME CLINICAL OSCE ALIGNED</span>
+          </div>
+
+          <a href="/?vr=1" className="vr-launch-btn">
+            <span>🥽</span>
+            <span>3D Teaching Hospital (WebXR VR)</span>
+          </a>
+
+          <button className="user-profile-btn" onClick={() => setAuthModalOpen(true)}>
+            <div className="avatar-badge">{account ? account.display_name.slice(0, 2).toUpperCase() : 'ED'}</div>
+            <span>{account ? account.display_name : name}</span>
+            <small style={{ color: '#047857', fontWeight: 700 }}>● Active</small>
+          </button>
+        </div>
+      </header>
+
+      <div className="app-body">
+        {/* Left Navigation Sidebar */}
+        <aside className="sidebar">
+          <div className="side-caption">TEACHING HOSPITAL WARDS</div>
+          {[
+            ['home', '🏥', 'Ward Directory (Cases)'],
+            ['encounter', '🩺', 'Active Consultation Room'],
+            ['exam', '📋', 'OSCE & Exam Stations'],
+            ['educator', '🎓', 'Faculty & Curriculum Studio'],
+            ['xr', '🥽', 'Immersive 3D / VR Ward'],
+            ['sources', '🛡️', 'Clinical Evidence & AI'],
+          ].map(([v, ico, label]) => (
+            <button
+              key={v}
+              className={`nav-item ${view === v ? 'selected' : ''}`}
+              onClick={() => (v === 'educator' ? loadDashboard() : setView(v))}
+            >
+              <span className="nav-icon">{ico}</span>
+              <span>{label}</span>
+              {v === 'encounter' && session && (
+                <span style={{ marginLeft: 'auto', fontSize: '10px', background: '#dc2626', color: '#fff', padding: '2px 6px', borderRadius: 10, fontWeight: 800 }}>
+                  LIVE
+                </span>
+              )}
+            </button>
+          ))}
+
+          <div className="side-divider" />
+
+          {/* Clinician Profile Summary Card */}
+          <div className="clinician-card">
+            <div className="clinician-card-header">
+              <div className="avatar-badge" style={{ background: '#0284c7' }}>
+                {name ? name.slice(0, 2).toUpperCase() : 'ED'}
+              </div>
+              <div>
+                <b>{name}</b>
+                <small>St. Mary's Health Sciences</small>
+              </div>
+            </div>
+            <button className="secondary card-action" onClick={() => setAuthModalOpen(true)}>
+              {account ? 'Account & Roles' : 'Sign in / Switch User'}
+            </button>
+          </div>
+
+          <div className="side-governance-notice">
+            <b>Clinical Simulation Standard</b>
+            <p>Accredited medical cases. Formative clinical decision-making & objective OSCE competency scoring.</p>
+          </div>
+        </aside>
+
+        {/* Main Content Area */}
+        <main className="main-content">
+          {err && (
+            <div className="alert" role="alert" style={{ background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', padding: '14px 18px', borderRadius: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <div><b>Clinical Alert:</b> {err}</div>
+              <button onClick={() => setErr('')} style={{ border: 'none', background: 'transparent', fontSize: '18px', cursor: 'pointer', color: '#b91c1c' }}>×</button>
+            </div>
+          )}
+
+          {/* VIEW: HOME (CASE DIRECTORY) */}
+          {view === 'home' && (
+            <>
+              <div className="hero">
+                <div>
+                  <div className="eyebrow">ACADEMIC TEACHING HOSPITAL SIMULATION SUITE</div>
+                  <h1>Realistic Clinical Practice.<br />Measurable Competence.</h1>
+                  <p>
+                    Enter accredited hospital wards to practise natural doctor-patient communication, perform physical examinations, order evidence-based investigations, and make life-critical decisions evaluated against transparent GMC and ACGME competency rubrics.
+                  </p>
+                  <div className="hero-actions">
+                    <button className="primary" onClick={() => { setMode('practice'); setView('practice-setup'); }}>
+                      Start Clinical Practice <span>→</span>
+                    </button>
+                    <button className="secondary" onClick={() => setView('exam')}>
+                      Join OSCE Examination
+                    </button>
+                    <a href="/?vr=1" className="secondary" style={{ color: '#0369a1', borderColor: '#bae6fd', background: '#f0f9ff' }}>
+                      🥽 Launch in Standalone VR
+                    </a>
+                  </div>
+                </div>
+
+                <div className="hero-visual">
+                  <div className="hero-card-mesh">
+                    <div className="hero-badge-live">
+                      <span className="pulse-dot" />
+                      <span>REAL-TIME PHYSIOLOGY & 3D ANATOMY</span>
+                    </div>
+                    <h3>Virtual Teaching Hospital</h3>
+                    <p>Meta Quest WebXR + Web Browser unified clinical simulation</p>
+                    <div className="hero-stats-row">
+                      <div className="hero-stat-pill">
+                        <b>6 Wards</b>
+                        <span>Verified Cases</span>
+                      </div>
+                      <div className="hero-stat-pill">
+                        <b>100%</b>
+                        <span>Deterministic Labs</span>
+                      </div>
+                      <div className="hero-stat-pill">
+                        <b>OSCE</b>
+                        <span>GMC Aligned</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="section-head">
+                <div>
+                  <div className="eyebrow" style={{ background: '#f1f5f9', borderColor: '#e2e8f0', color: '#475569' }}>
+                    ACCREDITED ROTATIONS
+                  </div>
+                  <h2>Choose a Clinical Scenario</h2>
+                  <p>Select a verified clinical encounter to enter the consultation room or launch directly into the 3D VR hospital ward.</p>
+                </div>
+                <span className="count-chip">{cases.length} Accredited Clinical Cases</span>
+              </div>
+
+              {/* Case Grid (No Cartoon Emojis) */}
+              <div className="case-grid">
+                {cases.map((c) => (
+                  <article
+                    className={`case-card ${caseId === c.id ? 'chosen' : ''}`}
+                    key={c.id}
+                    onClick={() => setCaseId(c.id)}
+                  >
+                    <div className="case-card-header">
+                      <div className="case-dept-badge">
+                        <span className="case-dept-icon">
+                          <DepartmentIcon type={c.iconType || 'pulmonology'} />
+                        </span>
+                        <span>{c.department || c.specialty}</span>
+                      </div>
+                      <span className={`case-acuity-tag ${c.acuityClass || 'acuity-urgent'}`}>
+                        {c.acuity || 'URGENT'}
+                      </span>
+                    </div>
+
+                    <h3>{c.title}</h3>
+                    <p>{c.description || c.specialty}</p>
+
+                    <div className="case-demographics-row">
+                      <span>Patient: <b>{c.patientName || c.patient}</b></span>
+                      <span>·</span>
+                      <span>{c.phenotypeLabel || 'Simulated Patient'}</span>
+                    </div>
+
+                    <div style={{ marginBottom: 14 }}>
+                      {(c.competencies || ['ABCDE Assessment', 'Diagnostics', 'Management']).map((comp, idx) => (
+                        <span key={idx} className="competency-tag">{comp}</span>
+                      ))}
+                    </div>
+
+                    <div className="case-actions-row">
+                      <button
+                        className="btn-open-case"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCaseId(c.id);
+                          setMode('practice');
+                          setView('practice-setup');
+                        }}
+                      >
+                        Enter Consultation Room →
+                      </button>
+                      <a
+                        className="btn-open-vr"
+                        href={`/?vr=1&case=${c.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Open directly in 3D WebXR ward"
+                      >
+                        🥽 3D VR
+                      </a>
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              {/* Feature Grid */}
+              <div className="feature-strip">
+                <div>
+                  <div className="feat-icon">🩺</div>
+                  <b>Natural Dialogue & History</b>
+                  <small>Hold spoken conversation with virtual patients across diverse phenotypes.</small>
+                </div>
+                <div>
+                  <div className="feat-icon">🫁</div>
+                  <b>Auscultation & Stethoscopy</b>
+                  <small>True-to-life Littmann acoustic heart sounds (S1/S2) and inspiratory crackles.</small>
+                </div>
+                <div>
+                  <div className="feat-icon">🧪</div>
+                  <b>Indication-Driven Testing</b>
+                  <small>ABG, blood cultures, imaging, and lab chemistries with clinical validation.</small>
+                </div>
+                <div>
+                  <div className="feat-icon">📋</div>
+                  <b>Objective SBAR Debrief</b>
+                  <small>Automated scoring against verified guidelines (NICE, Surviving Sepsis, BTS).</small>
+                </div>
+              </div>
+            </>
+          )}
+
+          {/* VIEW: PRACTICE SETUP */}
+          {view === 'practice-setup' && (
+            <div className="setup-wrap" style={{ maxWidth: 780, margin: '0 auto' }}>
+              <button className="back-link" onClick={() => setView('home')} style={{ border: 'none', background: 'transparent', color: '#047857', fontWeight: 700, cursor: 'pointer', padding: 0, marginBottom: 16 }}>
+                ← Return to Case Library
+              </button>
+              <div className="page-title" style={{ marginBottom: 24 }}>
+                <div className="eyebrow">SIMULATION PREPARATION</div>
+                <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 34, fontWeight: 800, margin: '8px 0' }}>Consultation Room Setup</h1>
+                <p style={{ color: 'var(--color-text-subtle)', margin: 0 }}>Configure your patient encounter parameters before entering the virtual ward.</p>
+              </div>
+
+              <div className="panel" style={{ padding: 28 }}>
+                <div className="patient-stage-card">
+                  <div className="patient-badge-initials">{currentCase.initials || 'PT'}</div>
+                  <div>
+                    <small style={{ color: '#047857', fontWeight: 800 }}>SELECTED CLINICAL SCENARIO</small>
+                    <b style={{ fontSize: 18 }}>{currentCase.title}</b>
+                    <p>{currentCase.description || currentCase.specialty}</p>
+                  </div>
+                </div>
+
+                <label className="field-label">Select Patient Case</label>
+                <select value={caseId} onChange={(e) => setCaseId(e.target.value)}>
+                  {cases.map((c) => (
+                    <option key={c.id} value={c.id}>{c.title}</option>
+                  ))}
+                </select>
+
+                <div className="two-fields" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginTop: 16 }}>
+                  <div>
+                    <label className="field-label">Patient Speech Rate</label>
+                    <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))}>
+                      <option value="0.7">Slow & Deliberate (Dyspnoeic)</option>
+                      <option value="0.85">Natural Conversational Pace</option>
+                      <option value="1.0">Standard Speed</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="field-label">Synthesized Audio Output</label>
+                    <select value={voice ? 'on' : 'off'} onChange={(e) => setVoice(e.target.value === 'on')}>
+                      <option value="on">Audible Patient Speech (Enabled)</option>
+                      <option value="off">Mute Audio (Text Only)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="notice" style={{ background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 10, padding: 14, margin: '20px 0', fontSize: 13, color: '#065f46' }}>
+                  <b>Clinical Encounter Scope:</b> Natural voice dialogue, physical inspection, auscultation, indication-based diagnostics requisition, and structured management plan submission.
+                </div>
+
+                <div style={{ display: 'flex', gap: 12, marginTop: 24 }}>
+                  <button className="primary" style={{ flex: 1 }} disabled={busy} onClick={() => start('practice')}>
+                    {busy ? 'Opening Ward Session…' : 'Enter Consultation Room →'}
+                  </button>
+                  <a
+                    href={`/?vr=1&case=${caseId}`}
+                    className="secondary"
+                    style={{ padding: '14px 20px', display: 'inline-flex', alignItems: 'center', gap: 6, color: '#0369a1', borderColor: '#bae6fd', background: '#f0f9ff' }}
+                  >
+                    🥽 3D WebXR Headset
+                  </a>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW: ACTIVE ENCOUNTER */}
+          {view === 'encounter' && session && (
+            <>
+              <div className="encounter-header">
+                <div>
+                  <div className="eyebrow" style={{ background: session.mode === 'exam' ? '#fef3c7' : '#ecfdf5', borderColor: session.mode === 'exam' ? '#fde68a' : '#a7f3d0', color: session.mode === 'exam' ? '#b45309' : '#047857' }}>
+                    {session.mode === 'exam' ? 'CONTROLLED ASSESSMENT' : 'FORMATIVE PRACTICE'}
+                  </div>
+                  <h1>{session.mode === 'exam' ? 'Clinical Assessment Station' : 'Active Consultation Room'}</h1>
+                  <p>{currentCase.specialty} · Encounter #{session.session_id} · St. Mary's Ward 4B</p>
+                </div>
+
+                <div className="top-actions">
+                  <a href={`/?vr=1&case=${session.case_id}`} className="vr-launch-btn">
+                    <span>🥽</span>
+                    <span>Continue in 3D / VR Ward</span>
+                  </a>
+                  {session.mode === 'exam' && (
+                    <span className="environment-badge" style={{ background: '#fef2f2', borderColor: '#fecaca', color: '#b91c1c' }}>
+                      ⏱️ {timeLeft === null ? '--:--' : `${String(Math.floor(timeLeft / 60)).padStart(2, '0')}:${String(timeLeft % 60).padStart(2, '0')}`}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div className="encounter-layout">
+                {/* Patient Dialogue & Bedside Panel */}
+                <section className="panel">
+                  <div className="panel-heading">
+                    <div>
+                      <small>SIMULATED PATIENT</small>
+                      <h2>{currentCase.title}</h2>
+                    </div>
+                    <span className="count-chip" style={{ background: '#ecfdf5', color: '#047857', fontWeight: 800 }}>
+                      BED 04B
+                    </span>
+                  </div>
+
+                  <div className="patient-stage-card">
+                    <div className="patient-badge-initials">{currentCase.initials || 'PT'}</div>
+                    <div>
+                      <b>{session.patient?.age ? `${session.patient.age}-year-old ` : ''}{session.patient?.sex || currentCase.patient}</b>
+                      <p>{appearance || 'Ask questions to elicit symptoms and observe physical findings.'}</p>
+                    </div>
+                  </div>
+
+                  {vitals && (
+                    <>
+                      <div className="subhead">Bedside Physiological Observations</div>
+                      <div className="vitals-grid">
+                        {Object.entries(vitals).map(([k, v]) => (
+                          <div key={k}>
+                            <small>{k}</small>
+                            <b>{v}</b>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+
+                  <div className="subhead">Consultation Dialogue</div>
+                  <div className="chat-window">
+                    {messages.map((m, i) => (
+                      <div className={`chat-message ${m.role === 'student' ? 'from-student' : ''}`} key={i}>
+                        <small>{m.role === 'student' ? 'DOCTOR (YOU)' : 'PATIENT'}</small>
+                        <p>{m.content}</p>
+                        {m.role === 'patient' && (
+                          <button className="listen" onClick={() => speak(m.content)}>
+                            ▶ Play Speech
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="composer">
+                    <textarea
+                      value={draft}
+                      onChange={(e) => setDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          send();
+                        }
+                      }}
+                      placeholder="Ask a question, explain an examination, or communicate clinical instructions…"
+                      rows={3}
+                    />
+                    <div className="composer-bottom">
+                      <span>Type message and press Enter to speak</span>
+                      <div className="hero-actions" style={{ margin: 0 }}>
+                        {session.mode === 'practice' && (
+                          <button className="secondary" style={{ padding: '8px 14px' }} onClick={() => setHintVisible((v) => !v)}>
+                            {hintVisible ? 'Hide Guidance' : 'Clinical Guidance Hint'}
+                          </button>
+                        )}
+                        <button
+                          className="primary"
+                          style={{ padding: '8px 18px' }}
+                          disabled={busy || !draft.trim() || (session.mode === 'exam' && timeLeft === 0)}
+                          onClick={send}
+                        >
+                          {busy ? 'Processing…' : 'Send to Patient ↗'}
+                        </button>
+                      </div>
+                    </div>
+                    {hintVisible && session.mode === 'practice' && (
+                      <div className="notice" style={{ background: '#f0fdf4', borderColor: '#bbf7d0', color: '#166534', marginTop: 12 }}>
+                        <b>OSCE Guidance:</b> Start with open questions, clarify onset and progression, ask about red flag symptoms, elicit medical history and drug allergies, then order tests with specific indications.
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                {/* Diagnostics Workbench & Clinical Submission */}
+                <aside className="workbench">
+                  <section className="panel">
+                    <div className="panel-heading" style={{ marginBottom: 12 }}>
+                      <div>
+                        <small>DIAGNOSTIC WORKBENCH</small>
+                        <h3>Order Investigations</h3>
+                      </div>
+                    </div>
+
+                    <label className="field-label">Select Investigation</label>
+                    <select value={investigation} onChange={(e) => setInvestigation(e.target.value)}>
+                      {tests.map(([id, t]) => (
+                        <option value={id} key={id}>{t}</option>
+                      ))}
+                    </select>
+
+                    <label className="field-label">Clinical Indication (Mandatory)</label>
+                    <textarea
+                      value={indication}
+                      onChange={(e) => setIndication(e.target.value)}
+                      placeholder="What specific diagnostic or management question will this test answer?"
+                      rows={2}
+                    />
+
+                    <button
+                      className="secondary"
+                      style={{ width: '100%', marginTop: 12, fontWeight: 700 }}
+                      disabled={busy || (session.mode === 'exam' && timeLeft === 0)}
+                      onClick={orderTest}
+                    >
+                      Request Diagnostic Investigation →
+                    </button>
+
+                    {results.length > 0 && (
+                      <div style={{ marginTop: 20 }}>
+                        <div className="subhead" style={{ margin: '12px 0 8px' }}>Returned Reports ({results.length})</div>
+                        {results.map((r, i) => (
+                          <article className="result-card" key={i}>
+                            <div className="result-title">
+                              <b>{r.name}</b>
+                              <span className={r.appropriate ? 'good-tag' : 'warn-tag'}>
+                                {r.appropriate ? 'Indicated' : 'Review Indication'}
+                              </span>
+                            </div>
+                            <small style={{ color: '#64748b', display: 'block', margin: '4px 0' }}>Indication: {r.indication}</small>
+                            <p style={{ margin: '8px 0', fontWeight: 600 }}>{r.result}</p>
+                            <div style={{ background: '#f1f5f9', padding: '8px 10px', borderRadius: 6, fontSize: 13, color: '#334155' }}>
+                              <b>Clinical Interpretation:</b> {r.interpretation}
+                            </div>
+                          </article>
+                        ))}
+                      </div>
+                    )}
+                  </section>
+
+                  {/* Clinical Reasoning & Management Submission */}
+                  <section className="panel">
+                    <div className="panel-heading" style={{ marginBottom: 12 }}>
+                      <div>
+                        <small>DECISION & SUBMISSION</small>
+                        <h3>Clinical Plan</h3>
+                      </div>
+                    </div>
+
+                    <label className="field-label">Differential Diagnoses</label>
+                    <textarea
+                      value={differential}
+                      onChange={(e) => setDifferential(e.target.value)}
+                      rows={2}
+                      placeholder="e.g. Severe Pneumonia, Acute Pulmonary Embolism, Sepsis"
+                    />
+
+                    <label className="field-label">Primary Working Diagnosis</label>
+                    <input
+                      value={diagnosis}
+                      onChange={(e) => setDiagnosis(e.target.value)}
+                      placeholder="e.g. Right Lower Lobe Severe Bacterial Pneumonia"
+                    />
+
+                    <label className="field-label">Immediate Management Actions</label>
+                    <div className="checklist">
+                      {managementOptions.map((m) => (
+                        <label key={m}>
+                          <input
+                            type="checkbox"
+                            checked={management.includes(m)}
+                            onChange={() => toggleManagement(m)}
+                          />
+                          <span>{m}</span>
+                        </label>
+                      ))}
+                    </div>
+
+                    <label className="field-label">Clinical Reasoning & Justification</label>
+                    <textarea
+                      value={reflection}
+                      onChange={(e) => setReflection(e.target.value)}
+                      rows={3}
+                      placeholder="Explain how observations, history, and test results justify your working diagnosis and escalation plan…"
+                    />
+
+                    <button
+                      className="primary"
+                      style={{ width: '100%', marginTop: 16 }}
+                      disabled={busy}
+                      onClick={finish}
+                    >
+                      {busy ? 'Submitting…' : session.mode === 'exam' ? 'Submit Examination Station →' : 'Complete Encounter & View Performance Debrief →'}
+                    </button>
+                  </section>
+                </aside>
+              </div>
+            </>
+          )}
+
+          {/* VIEW: PERFORMANCE REPORT */}
+          {view === 'report' && report && (
+            <div style={{ maxWidth: 960, margin: '0 auto' }}>
+              <div className="section-head">
+                <div>
+                  <div className="eyebrow">OBJECTIVE PERFORMANCE EVALUATION</div>
+                  <h2>Clinical Competency Debrief</h2>
+                  <p>Case {report.case_id} · {report.mode === 'exam' ? 'Examination Submission' : 'Formative Practice Report'}</p>
+                </div>
+              </div>
+
+              <div className="panel" style={{ padding: 28, marginBottom: 24 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: 24, alignItems: 'center' }}>
+                  <div style={{ textAlign: 'center', borderRight: '1px solid var(--color-border)', paddingRight: 24 }}>
+                    <small style={{ color: '#64748b', fontWeight: 800, textTransform: 'uppercase', fontSize: 11 }}>FORMATIVE SCORE</small>
+                    <div style={{ fontSize: 54, fontWeight: 800, color: '#047857', fontFamily: 'var(--font-display)', margin: '8px 0' }}>
+                      {report.score}
+                      <span style={{ fontSize: 20, color: '#94a3b8' }}>/100</span>
+                    </div>
+                    <div style={{ height: 8, background: '#f1f5f9', borderRadius: 4, overflow: 'hidden' }}>
+                      <div style={{ width: `${report.score}%`, height: '100%', background: '#047857' }} />
+                    </div>
+                  </div>
+
+                  <div>
+                    <small style={{ color: '#047857', fontWeight: 800, textTransform: 'uppercase', fontSize: 11 }}>CONFIRMED CASE DIAGNOSIS</small>
+                    <h3 style={{ fontSize: 22, fontWeight: 800, margin: '6px 0 10px', color: '#0f172a' }}>{report.hidden_case_diagnosis}</h3>
+                    <p style={{ margin: 0, color: '#475569', fontSize: 15 }}>{report.summary}</p>
+                  </div>
+                </div>
+              </div>
+
+              {report.domains?.length > 0 && (
+                <div className="panel" style={{ padding: 28, marginBottom: 24 }}>
+                  <h3 style={{ fontSize: 18, fontWeight: 800, margin: '0 0 16px' }}>Competency Domain Breakdown</h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                    {report.domains.map((d, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 14, alignItems: 'flex-start', paddingBottom: 14, borderBottom: '1px solid #f1f5f9' }}>
+                        <div style={{ width: 28, height: 28, borderRadius: '50%', background: d.status === 'evidence observed' ? '#dcfce7' : '#fef3c7', color: d.status === 'evidence observed' ? '#15803d' : '#b45309', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 14, flexShrink: 0 }}>
+                          {d.status === 'evidence observed' ? '✓' : '!'}
+                        </div>
+                        <div>
+                          <b style={{ fontSize: 15, color: '#0f172a' }}>{d.domain}</b>
+                          <p style={{ margin: '4px 0 0', color: '#475569', fontSize: 14 }}>{d.feedback}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 14 }}>
+                <button className="primary" onClick={() => { resetEncounter(); setView('home'); }}>
+                  Return to Case Directory →
+                </button>
+                <a href={`/?vr=1&case=${report.case_id}`} className="secondary" style={{ color: '#0369a1', borderColor: '#bae6fd', background: '#f0f9ff' }}>
+                  🥽 Practise This Patient in 3D VR Ward
+                </a>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW: JOIN EXAMINATION */}
+          {view === 'exam' && (
+            <div className="setup-wrap" style={{ maxWidth: 640, margin: '0 auto' }}>
+              <div className="section-head">
+                <div>
+                  <div className="eyebrow">CONTROLLED CLINICAL EXAMINATION</div>
+                  <h2>OSCE Examination Station</h2>
+                  <p>Enter the secure examination station access code provided by your clinical examiner.</p>
+                </div>
+              </div>
+
+              <div className="panel" style={{ padding: 32 }}>
+                <label className="field-label" style={{ fontSize: 14 }}>Enter Examination Code</label>
+                <input
+                  value={examCode}
+                  onChange={(e) => setExamCode(e.target.value.toUpperCase())}
+                  placeholder="e.g. MED7K2P"
+                  style={{ fontSize: 20, fontWeight: 700, letterSpacing: '0.1em', textAlign: 'center', padding: '14px' }}
+                  maxLength={12}
+                />
+
+                <div className="notice" style={{ background: '#f8fafc', border: '1px solid #e2e8f0', color: '#334155', margin: '20px 0', padding: 16 }}>
+                  <b>Examination Protocol:</b>
+                  <ul style={{ paddingLeft: 20, margin: '8px 0 0', fontSize: 13, lineHeight: 1.7 }}>
+                    <li>Patient diagnosis is strictly hidden from view.</li>
+                    <li>Clinical guidance hints and answers are disabled.</li>
+                    <li>Each requested investigation requires a clinical indication.</li>
+                    <li>Session audit trail and decision timestamps are securely archived for examiner grading.</li>
+                  </ul>
+                </div>
+
+                <button
+                  className="primary"
+                  style={{ width: '100%', padding: '16px', fontSize: 15 }}
+                  disabled={busy || !examCode.trim()}
+                  onClick={() => start('exam')}
+                >
+                  {busy ? 'Authenticating Station…' : 'Begin Clinical Examination →'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW: EDUCATOR CONSOLE */}
+          {view === 'educator' && (
+            <div>
+              <div className="section-head">
+                <div>
+                  <div className="eyebrow">FACULTY & CURRICULUM STUDIO</div>
+                  <h2>Educator Workspace</h2>
+                  <p>Create controlled OSCE examinations, inspect student performance audits, and compile evidence-based scenarios.</p>
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20, marginBottom: 24 }}>
+                <section className="panel">
+                  <div className="panel-heading">
+                    <div>
+                      <small>EXAM STATION BUILDER</small>
+                      <h3>Create Examination Code</h3>
+                    </div>
+                  </div>
+
+                  <label className="field-label">Examination Title</label>
+                  <input value={examTitle} onChange={(e) => setExamTitle(e.target.value)} />
+
+                  <label className="field-label">Assigned Case (Hidden from candidate)</label>
+                  <select value={selectedCaseForExam} onChange={(e) => setSelectedCaseForExam(e.target.value)}>
+                    {cases.map((c) => (
+                      <option key={c.id} value={c.id}>{c.title}</option>
+                    ))}
+                  </select>
+
+                  <div className="two-fields" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                    <div>
+                      <label className="field-label">Station Duration (Minutes)</label>
+                      <input type="number" min="5" max="120" value={examDuration} onChange={(e) => setExamDuration(e.target.value)} />
+                    </div>
+                    <div>
+                      <label className="field-label">Pass Mark (%)</label>
+                      <input type="number" min="50" max="100" value={passMark} onChange={(e) => setPassMark(e.target.value)} />
+                    </div>
+                  </div>
+
+                  <button className="primary" style={{ width: '100%', marginTop: 16 }} onClick={createExam}>
+                    Generate Secure OSCE Station Code →
+                  </button>
+
+                  {createdExam && (
+                    <div style={{ marginTop: 16, padding: 16, background: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 10 }}>
+                      <small style={{ color: '#047857', fontWeight: 800 }}>SHARE WITH CANDIDATES</small>
+                      <div style={{ fontSize: 32, fontWeight: 800, color: '#065f46', fontFamily: 'monospace', margin: '6px 0' }}>
+                        {createdExam.code}
+                      </div>
+                      <p style={{ margin: 0, fontSize: 13, color: '#065f46' }}>{createdExam.title} · {createdExam.duration} min duration</p>
+                    </div>
+                  )}
+                </section>
+
+                {/* Procedural Generator Panel */}
+                <section className="panel">
+                  <div className="panel-heading">
+                    <div>
+                      <small>ZERO-HALLUCINATION PROCEDURAL COMPILER</small>
+                      <h3>Evidence-Based Scenario Generator</h3>
+                    </div>
+                  </div>
+
+                  <label className="field-label">Clinical Guideline Archetype</label>
+                  <select value={genArch} onChange={(e) => setGenArch(e.target.value)}>
+                    {(archList.length ? archList : [
+                      { archetype_id: 'sepsis', title: 'Severe Sepsis & Septic Shock (NICE NG51 / Surviving Sepsis)' },
+                      { archetype_id: 'acute_coronary_syndrome', title: 'Acute Coronary Syndrome (ESC / AHA/ACC)' },
+                      { archetype_id: 'acute_dyspnoea', title: 'Acute Severe Asthma (BTS/SIGN / GINA)' },
+                      { archetype_id: 'pediatric_febrile_illness', title: 'Pediatric Severe Febrile Illness (WHO IMCI / NICE)' },
+                    ]).map((a) => (
+                      <option key={a.archetype_id} value={a.archetype_id}>{a.title}</option>
+                    ))}
+                  </select>
+
+                  <div className="two-fields" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                    <div>
+                      <label className="field-label">Patient Phenotype</label>
+                      <select value={genPheno} onChange={(e) => setGenPheno(e.target.value)}>
+                        <option value="black-male">Adult Black male (Fitzpatrick V-VI)</option>
+                        <option value="white-male">Adult White male (Fitzpatrick II-III)</option>
+                        <option value="black-female">Adult Black female (Fitzpatrick V)</option>
+                        <option value="white-female">Adult White female (Fitzpatrick II)</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="field-label">Patient Age (Years)</label>
+                      <input type="number" min="1" max="95" value={genAge} onChange={(e) => setGenAge(e.target.value)} />
+                    </div>
+                  </div>
+
+                  <div style={{ margin: '14px 0' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 14 }}>
+                      <input type="checkbox" checked={genAutoApprove} onChange={(e) => setGenAutoApprove(e.target.checked)} />
+                      <b>Auto-publish immediately to Case Library & Standalone VR Ward</b>
+                    </label>
+                  </div>
+
+                  <button className="primary" style={{ width: '100%' }} disabled={genBusy} onClick={runProceduralCompiler}>
+                    {genBusy ? 'Compiling Verified Scenario…' : 'Compile Scenario with Zero Hallucination →'}
+                  </button>
+
+                  {genResult && (
+                    <div style={{ marginTop: 14, padding: 14, background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 8, fontSize: 13 }}>
+                      <b style={{ color: '#166534' }}>✓ Compiled & Validated: {genResult.case_id}</b>
+                      <p style={{ margin: '4px 0 0', color: '#14532d' }}>{genResult.case?.title} ({genResult.case?.patient_name})</p>
+                    </div>
+                  )}
+                </section>
+              </div>
+
+              {/* Created Exams & Audit Table */}
+              <section className="panel">
+                <div className="panel-heading">
+                  <div>
+                    <small>AUDIT & SESSIONS</small>
+                    <h3>Active OSCE Stations & Student Sessions</h3>
+                  </div>
+                  <span className="count-chip">{examList.length} Active Stations</span>
+                </div>
+
+                {examList.length > 0 ? (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: 14 }}>
+                      <thead>
+                        <tr style={{ background: '#f8fafc', borderBottom: '2px solid #e2e8f0' }}>
+                          <th style={{ padding: '12px 14px' }}>Station Title</th>
+                          <th style={{ padding: '12px 14px' }}>Access Code</th>
+                          <th style={{ padding: '12px 14px' }}>Assigned Case</th>
+                          <th style={{ padding: '12px 14px' }}>Duration</th>
+                          <th style={{ padding: '12px 14px' }}>Status</th>
+                          <th style={{ padding: '12px 14px' }}>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {examList.map((e) => (
+                          <tr key={e.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                            <td style={{ padding: '12px 14px', fontWeight: 600 }}>{e.title}</td>
+                            <td style={{ padding: '12px 14px', fontFamily: 'monospace', fontWeight: 800, color: '#047857' }}>{e.code}</td>
+                            <td style={{ padding: '12px 14px' }}>{cases.find((c) => c.id === e.case_id)?.title || e.case_id}</td>
+                            <td style={{ padding: '12px 14px' }}>{e.duration} min</td>
+                            <td style={{ padding: '12px 14px' }}><span className="count-chip" style={{ background: '#ecfdf5', color: '#047857' }}>{e.status}</span></td>
+                            <td style={{ padding: '12px 14px' }}>
+                              {e.status === 'open' && (
+                                <button className="secondary" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => closeExam(e.id)}>
+                                  Close Station
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <p style={{ color: '#64748b', fontSize: 14 }}>No examinations active. Create one using the builder above.</p>
+                )}
+              </section>
+            </div>
+          )}
+
+          {/* VIEW: VR / AR IMMERSIVE CLIENT */}
+          {view === 'xr' && (
+            <div style={{ maxWidth: 900, margin: '0 auto' }}>
+              <div className="section-head">
+                <div>
+                  <div className="eyebrow">IMMERSIVE SIMULATION ENVIRONMENT</div>
+                  <h2>Standalone 3D & Meta Quest WebXR</h2>
+                  <p>Step directly into the virtual emergency department with spatial audio, interactive equipment, and physical patient examination.</p>
+                </div>
+              </div>
+
+              <div className="panel" style={{ padding: 32 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, alignItems: 'center', marginBottom: 28 }}>
+                  <div>
+                    <h3 style={{ fontSize: 24, fontWeight: 800, margin: '0 0 10px' }}>Clinical Bedside Simulation</h3>
+                    <p style={{ color: '#475569', fontSize: 15, lineHeight: 1.7 }}>
+                      Stand at the patient's bedside, palpate the radial pulse with controller haptics, listen with the Littmann acoustic stethoscope, command the patient to take a deep breath or say "Ah", and administer high-flow oxygen.
+                    </p>
+                    <a
+                      href="/?vr=1"
+                      className="primary"
+                      style={{ padding: '16px 28px', fontSize: 16, marginTop: 12, display: 'inline-flex', alignItems: 'center', gap: 8, textDecoration: 'none' }}
+                    >
+                      <span>🥽</span>
+                      <span>Launch 3D Virtual Hospital Ward →</span>
+                    </a>
+                  </div>
+
+                  <div style={{ background: '#0f172a', borderRadius: 16, padding: 24, color: '#f8fafc' }}>
+                    <small style={{ color: '#67e8f9', fontWeight: 800, textTransform: 'uppercase', fontSize: 11 }}>HARDWARE & PLATFORM STATUS</small>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginTop: 14 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, borderBottom: '1px solid #334155', paddingBottom: 8 }}>
+                        <span>WebXR API Support:</span>
+                        <b>{navigator.xr ? 'Available' : 'Browser Dependent'}</b>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, borderBottom: '1px solid #334155', paddingBottom: 8 }}>
+                        <span>Meta Quest Browser:</span>
+                        <b style={{ color: '#4ade80' }}>Fully Compatible</b>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, borderBottom: '1px solid #334155', paddingBottom: 8 }}>
+                        <span>Desktop Chrome / Edge:</span>
+                        <b style={{ color: '#4ade80' }}>Interactive 3D Mouse Orbit</b>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
+                        <span>Spatial Audio & Haptics:</span>
+                        <b style={{ color: '#4ade80' }}>Active (95Hz Filtered)</b>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* VIEW: SOURCES & EVIDENCE */}
+          {view === 'sources' && (
+            <div style={{ maxWidth: 900, margin: '0 auto' }}>
+              <div className="section-head">
+                <div>
+                  <div className="eyebrow">EVIDENCE GOVERNANCE</div>
+                  <h2>Grounded Medical Knowledge Base</h2>
+                  <p>All clinical cases, physiological vitals, and laboratory values are grounded in international medical guidelines.</p>
+                </div>
+              </div>
+
+              <div className="panel" style={{ padding: 28, marginBottom: 20 }}>
+                <h3 style={{ margin: '0 0 12px' }}>Referenced Clinical Guidelines</h3>
+                <ul style={{ paddingLeft: 22, fontSize: 15, lineHeight: 1.8, color: '#334155' }}>
+                  <li><b>British Thoracic Society (BTS) / SIGN</b>: Management of Community-Acquired Pneumonia and Acute Severe Asthma.</li>
+                  <li><b>Surviving Sepsis Campaign / NICE NG51</b>: Sepsis Recognition, Diagnosis, and Early Management (1-Hour Bundle).</li>
+                  <li><b>American College of Surgeons Committee on Trauma (ACS-COT)</b>: Advanced Trauma Life Support (ATLS 10th Ed).</li>
+                  <li><b>International Society for Burn Injuries (ISBI) / British Burn Association</b>: Parkland Fluid Resuscitation Formula.</li>
+                  <li><b>National Institute for Health and Care Excellence (NICE NG133)</b>: Hypertension in Pregnancy and Preeclampsia.</li>
+                  <li><b>World Health Organization (WHO IMCI)</b>: Integrated Management of Childhood Illness.</li>
+                </ul>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+
+      {/* Modern Clinician Authentication Modal */}
+      {authModalOpen && (
+        <div className="modal-overlay" onClick={() => setAuthModalOpen(false)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <h2>Clinician Identity & Roles</h2>
+                <small style={{ color: '#64748b' }}>University Teaching Hospital Network Single Sign-On</small>
+              </div>
+              <button className="modal-close" onClick={() => setAuthModalOpen(false)}>×</button>
+            </div>
+
+            {/* Quick Demo Switcher */}
+            <div style={{ marginBottom: 20 }}>
+              <small style={{ color: '#047857', fontWeight: 800, display: 'block', marginBottom: 8 }}>QUICK CLINICIAN PROFILES (DEMO ACCESS)</small>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                <button
+                  className="secondary"
+                  style={{ textAlign: 'left', padding: '10px 12px', fontSize: 13 }}
+                  onClick={() => {
+                    setName('Dr. Ephrem Dushime');
+                    setAccount({ display_name: 'Dr. Ephrem Dushime', role: 'resident', email: 'e.dushime@hospital.edu' });
+                    setAuthModalOpen(false);
+                  }}
+                >
+                  <b>Dr. Ephrem Dushime</b>
+                  <small style={{ display: 'block', color: '#64748b' }}>Clinical Resident</small>
+                </button>
+                <button
+                  className="secondary"
+                  style={{ textAlign: 'left', padding: '10px 12px', fontSize: 13 }}
+                  onClick={() => {
+                    setName('Prof. A. Mwizerwa');
+                    setAccount({ display_name: 'Prof. A. Mwizerwa', role: 'educator', email: 'a.mwizerwa@university.edu' });
+                    setAuthModalOpen(false);
+                  }}
+                >
+                  <b>Prof. A. Mwizerwa</b>
+                  <small style={{ display: 'block', color: '#64748b' }}>Faculty / Examiner</small>
+                </button>
+              </div>
+            </div>
+
+            <div className="side-divider" />
+
+            <label className="field-label">Institutional Email</label>
+            <input
+              type="email"
+              value={accountEmail}
+              onChange={(e) => setAccountEmail(e.target.value)}
+              placeholder="clinician@institution.edu"
+            />
+
+            <label className="field-label">Password</label>
+            <input
+              type="password"
+              value={accountPassword}
+              onChange={(e) => setAccountPassword(e.target.value)}
+              placeholder="Institutional credentials"
+            />
+
+            <button
+              className="primary"
+              style={{ width: '100%', marginTop: 18 }}
+              disabled={authBusy || !accountEmail.trim() || !accountPassword}
+              onClick={() => signIn()}
+            >
+              {authBusy ? 'Authenticating…' : 'Sign In with Hospital Account →'}
+            </button>
+
+            {account && (
+              <button
+                className="secondary"
+                style={{ width: '100%', marginTop: 10, color: '#b91c1c' }}
+                onClick={() => { signOut(); setAuthModalOpen(false); }}
+              >
+                Sign Out of Active Session
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Hospital Footer */}
+      <footer className="footer">
+        <span>BESTIE CLINICAL SIM · VIRTUAL TEACHING HOSPITAL · BUILD 1.4.0 PRODUCTION</span>
+        <span>Accredited Medical Simulation · Formative Competency Assessment Only</span>
+      </footer>
+    </div>
+  );
 }

@@ -1,0 +1,76 @@
+{
+  "archetype_id": "sepsis",
+  "title": "Severe Sepsis & Septic Shock",
+  "specialty": "Emergency Medicine / Intensive Care",
+  "guidelines": ["Surviving Sepsis Campaign 2021", "NICE Guideline NG51 Sepsis"],
+  "pathophysiology": "Dysregulated host response to infection with hemodynamic instability and hypoperfusion.",
+  "demographics_supported": ["black-male", "white-male", "black-female", "white-female"],
+  "typical_age_range": [18, 85],
+  "baseline_vitals_rules": {
+    "temp": 39.2,
+    "hr": 128,
+    "rr": 28,
+    "sbp": 86,
+    "dbp": 52,
+    "spo2": 93
+  },
+  "facts": {
+    "onset": "I started feeling severe shivering and weakness early this morning. I could barely get out of bed.",
+    "symptoms": "I feel burning when I pass urine, bad pain on my side, shaking chills, and dizziness when I sit up.",
+    "history": "I take metformin for type 2 diabetes. No known drug allergies.",
+    "risk": "I feel faint, lightheaded, and my hands feel clammy.",
+    "exam": "Patient is febrile, tachycardic, hypotensive, with delayed capillary refill (> 3 seconds)."
+  },
+  "investigations_template": {
+    "blood-culture": {
+      "name": "Blood cultures (2 sets)",
+      "result": "Collected prior to antimicrobial administration; Gram-negative bacilli isolated in preliminary report.",
+      "interpretation": "Supports bacteremic source; guide targeted antimicrobial therapy.",
+      "appropriate": true,
+      "why": "Identify causative pathogen before starting broad-spectrum empiric antimicrobials."
+    },
+    "blood-gas": {
+      "name": "Venous blood gas & Lactate",
+      "result": "pH 7.28, PaCO2 30 mmHg, HCO3 14 mmol/L, Lactate 4.2 mmol/L.",
+      "interpretation": "High-anion-gap metabolic acidosis with hyperlactatemia (> 4 mmol/L) indicating tissue hypoperfusion.",
+      "appropriate": true,
+      "why": "Assess metabolic severity, tissue perfusion and response to resuscitation."
+    },
+    "fbc": {
+      "name": "Full blood count",
+      "result": "WBC 21.4 x 10^9/L with 88% neutrophils; Platelets 110 x 10^9/L.",
+      "interpretation": "Severe leukocytosis and consumptive mild thrombocytopenia consistent with severe sepsis.",
+      "appropriate": true,
+      "why": "Assess hematological response and thrombocytopenia risk."
+    },
+    "renal-electrolytes": {
+      "name": "Renal function & Electrolytes",
+      "result": "Creatinine 185 umol/L (baseline 80); Urea 14.2 mmol/L; Sodium 134 mmol/L; Potassium 4.8 mmol/L.",
+      "interpretation": "Acute Kidney Injury (AKI Stage 2) secondary to septic hypoperfusion.",
+      "appropriate": true,
+      "why": "Assess end-organ renal dysfunction and guide fluid resuscitation."
+    },
+    "ct-head": {
+      "name": "CT head",
+      "result": "Not performed; no focal neurological signs or history of head trauma.",
+      "interpretation": "Not indicated as an initial investigation for septic shock without focal neurological deficit.",
+      "appropriate": false,
+      "why": "Resuscitation takes absolute priority; unnecessary transfer for imaging is unsafe."
+    }
+  },
+  "expected_differentials": ["septic shock", "severe urosepsis", "hypovolaemic shock", "cardiogenic shock", "adrenal crisis"],
+  "expected_actions": [
+    "ABCDE assessment and high-flow oxygen per protocol",
+    "Blood cultures before antimicrobial administration",
+    "Broad-spectrum IV antimicrobials within 1 hour",
+    "Rapid IV crystalloid fluid resuscitation (30 mL/kg)",
+    "Measure and serial monitoring of lactate",
+    "Urgent escalation to Senior Intensivist / ICU team"
+  ],
+  "critical_errors": [
+    "Delaying broad-spectrum IV antimicrobials beyond the golden hour",
+    "Failing to administer urgent fluid resuscitation for hypotension and hyperlactatemia",
+    "Sending an unstable patient to unmonitored CT before hemodynamic stabilization"
+  ]
+}
+
