@@ -49,9 +49,9 @@ export class VoiceController {
     });
   }
 
-  async respond(text) {
+  async respond(text, phenotype = 'black-male') {
     this._set('responding');
-    try { await this.speak(text); } catch { /* captions remain visible */ }
+    try { await this.speak(text, phenotype); } catch { /* captions remain visible */ }
     if (this.state === 'responding') this._set('idle');
   }
   idle() { this._set('idle'); }
@@ -59,12 +59,42 @@ export class VoiceController {
 }
 
 function defaultStream() { return navigator.mediaDevices.getUserMedia({ audio: true }); }
-function defaultSpeak(text) {
+export function defaultSpeak(text, phenotype = 'black-male') {
   return new Promise((resolve) => {
     if (!globalThis.speechSynthesis) return resolve();
-    const u = new SpeechSynthesisUtterance(text); u.lang = 'en-US'; u.rate = 0.9;
+
+    // Clean text of non-spoken stage directions like *Takes deep breath*
+    const spokenText = text.replace(/\*[^\*]+\*/g, '').trim() || text;
+    const u = new SpeechSynthesisUtterance(spokenText);
+    u.lang = 'en-US';
+
+    const isFemale = phenotype.includes('female');
+    const voices = globalThis.speechSynthesis.getVoices() || [];
+
+    // Intelligent voice matching (anti-bass, removes muddy robotic drone)
+    let selectedVoice = null;
+    if (isFemale) {
+      // Natural female voices (Zira, Jenny, Susan, Hazel, Google UK Female)
+      selectedVoice = voices.find(v => v.lang.startsWith('en') && /zira|jenny|susan|hazel|female|eva|samantha/i.test(v.name))
+        || voices.find(v => v.lang.startsWith('en') && !/david|mark|george|male/i.test(v.name));
+      u.pitch = 1.12;
+      u.rate = 0.94;
+    } else {
+      // For male voices, strictly avoid Microsoft David (muddy drone bass)
+      selectedVoice = voices.find(v => v.lang.startsWith('en') && /mark|george|ryan|natural|google uk english male/i.test(v.name))
+        || voices.find(v => v.lang.startsWith('en') && !/david/i.test(v.name))
+        || voices.find(v => v.lang.startsWith('en'));
+      u.pitch = 1.02; // Clean mid-frequency, crisp clarity
+      u.rate = 0.92;
+    }
+
+    if (selectedVoice) {
+      u.voice = selectedVoice;
+    }
+
     u.onend = u.onerror = () => resolve();
-    globalThis.speechSynthesis.cancel(); globalThis.speechSynthesis.speak(u);
+    globalThis.speechSynthesis.cancel();
+    globalThis.speechSynthesis.speak(u);
   });
 }
 

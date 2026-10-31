@@ -142,6 +142,7 @@ export default function VRApp() {
     sbar: { situation: '', background: '', assessment: '', recommendation: '' },
     report: null,
     inVR: false,
+    telemetrySound: true,
   });
   const [text, setText] = useState('');
   const uiRef = useRef(ui); uiRef.current = ui;
@@ -239,7 +240,7 @@ export default function VRApp() {
     const reply = await eng.current.adapter.ask(q);
     patch({ caption: `Patient: ${reply}` });
     eng.current.room?.patient.setTalking(true);
-    await eng.current.voice.respond(reply);
+    await eng.current.voice.respond(reply, uiRef.current.phenotype);
     eng.current.room?.patient.setTalking(false);
     try {
       const st = await eng.current.adapter.getState();
@@ -269,35 +270,35 @@ export default function VRApp() {
       patch({ caption: 'Doctor: "Take a deep breath in through your mouth."' });
       patient?.takeDeepBreath();
       audio?.playDeepInspiration(2.5);
-      await voice.respond("Taking a deep breath in, doctor...");
+      await voice.respond("Taking a deep breath in, doctor...", uiRef.current.phenotype);
       patch({ caption: 'Patient compliance: Deep inspiration. Bilateral asymmetric chest wall expansion, prolonged expiratory phase, coarse right basal crepitations.' });
     } else if (cmdKey === 'ah') {
       patch({ caption: 'Doctor: "Open your mouth and say \'Ah\'."' });
       patient?.openMouth();
       audio?.playSayAh(2.0);
-      await voice.respond("Aaaaaah...");
+      await voice.respond("Aaaaaah...", uiRef.current.phenotype);
       patch({ caption: 'Oral Cavity: Pharynx moist, tonsils non-hypertrophic, uvula midline, dry coated tongue, airway patent.' });
     } else if (cmdKey === 'turn_head') {
       patch({ caption: 'Doctor: "Can you turn your head to the left?"' });
       patient?.turnHead('left');
-      await voice.respond("Turning to the left, doctor...");
+      await voice.respond("Turning to the left, doctor...", uiRef.current.phenotype);
       patch({ caption: 'Neck Inspection: JVP elevated 3cm above sternal angle at 45°. Rapid carotid upstroke.' });
     } else if (cmdKey === 'sit_forward') {
       patch({ caption: 'Doctor: "Can you sit forward so I can examine your back?"' });
       patient?.sitForward();
       setCameraStance('back-exam');
-      await voice.respond("Yes doctor... leaning forward... ah, taking it slowly...");
+      await voice.respond("Yes doctor... leaning forward... ah, taking it slowly...", uiRef.current.phenotype);
       patch({ caption: 'Patient sits forward: Thoracic spine straight, posterior lung bases exposed. Auscultation available.' });
     } else if (cmdKey === 'lie_back') {
       patch({ caption: 'Doctor: "You can lean back and rest now."' });
       patient?.lieBack();
       setCameraStance('bedside-right');
-      await voice.respond("Thank you doctor, resting back now.");
+      await voice.respond("Thank you doctor, resting back now.", uiRef.current.phenotype);
       patch({ caption: 'Patient reclined back to 45° semi-recumbent posture.' });
     } else if (cmdKey === 'squeeze') {
       patch({ caption: 'Doctor: "Squeeze both of my hands as hard as you can."' });
       patient?.squeezeFingers();
-      await voice.respond("Squeezing now, doctor...");
+      await voice.respond("Squeezing now, doctor...", uiRef.current.phenotype);
       patch({ caption: 'Motor Power: 5/5 bilateral symmetric handgrip strength. Sensation intact.' });
     } else if (cmdKey === 'crt') {
       patch({ caption: 'Doctor: Testing capillary refill on right hand nail bed.' });
@@ -459,8 +460,16 @@ export default function VRApp() {
     }
     eng.current.room?.patient.setBreathing(32);
     eng.current.room?.monitor.draw(d.patient?.vitals || null, 'UNSTABLE', 0.0, false);
+    
+    // Start authentic hospital ward soundscape & telemetry pulse monitor
+    eng.current.stethAudio?.startWardAmbience(uiRef.current.department);
+    if (uiRef.current.telemetrySound) {
+      const hr = parseInt(d.patient?.vitals?.hr || '124', 10);
+      const spo2 = parseInt(d.patient?.vitals?.spo2 || '88', 10);
+      eng.current.stethAudio?.startTelemetryTone(hr, spo2);
+    }
     eng.current.room?.patient.setTalking(true);
-    await eng.current.voice.respond(d.opening);
+    await eng.current.voice.respond(d.opening, uiRef.current.phenotype);
     eng.current.room?.patient.setTalking(false);
   }, () => startEncounter()), [act, patch, setCameraStance, changePhenotype]);
 
@@ -696,6 +705,7 @@ export default function VRApp() {
             patch({ page: 'ehr', caption: 'EHR Chart opened: Review observations, eMAR and SBAR handover.' });
           } else if (actKey === 'oxygen' || actKey === 'tool:oxygen') {
             interveneRef.current('oxygen');
+            eng.current.stethAudio?.startOxygenFlow();
           } else if (actKey.startsWith('auscultate:') || actKey.startsWith('inspect:') || actKey.startsWith('measure:') || actKey.startsWith('palpate:') || actKey.startsWith('test:')) {
             examineRef.current(actKey);
           } else if (actKey === 'staff:nurse') {
@@ -1134,6 +1144,32 @@ export default function VRApp() {
           <span style={{ background: DEPARTMENTS[ui.department]?.badgeColor || '#dc2626', color: '#fff', padding: '3px 8px', borderRadius: 4, fontWeight: 700, letterSpacing: '0.03em' }}>
             {DEPARTMENTS[ui.department]?.badge || 'RESUS · HIGH ACUITY'}
           </span>
+          <button
+            onClick={() => {
+              const next = !ui.telemetrySound;
+              patch({ telemetrySound: next });
+              if (next) {
+                const hr = parseInt(ui.vitals?.hr || '124', 10);
+                const spo2 = parseInt(ui.vitals?.spo2 || '88', 10);
+                eng.current.stethAudio?.startTelemetryTone(hr, spo2);
+              } else {
+                eng.current.stethAudio?.stopTelemetryTone();
+              }
+            }}
+            style={{
+              background: ui.telemetrySound ? 'rgba(34, 197, 94, 0.2)' : '#1e293b',
+              color: ui.telemetrySound ? '#4ade80' : '#94a3b8',
+              border: ui.telemetrySound ? '1px solid #22c55e' : '1px solid #475569',
+              padding: '3px 8px',
+              borderRadius: 4,
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: 600,
+            }}
+            title="Toggle bedside monitor ECG pulse tone"
+          >
+            {ui.telemetrySound ? '🔊 Telemetry Pulse Tone: ON' : '🔈 Telemetry Pulse Tone: MUTE'}
+          </button>
           <span style={{ background: '#1e293b', color: '#94a3b8', padding: '3px 8px', borderRadius: 4, border: '1px solid #334155' }}>
             🖱️ Drag to rotate · Scroll to zoom
           </span>

@@ -418,14 +418,204 @@ def create_session(body:StartSession,request:Request):
  # Never expose the hidden case identifier/title to a controlled-exam participant.
  return {'session_id':sid,'session_token':session_token,'case_id':(case_id if body.mode=='practice' else None),'mode':body.mode,'opening':opening,'examination':({'duration':ex['duration'],'title':'Controlled examination'} if body.mode=='exam' else None),'patient':{'age':pinned_case['age'],'sex':pinned_case['sex'],'appearance':pinned_case['appearance'],'phenotype':pinned_case.get('phenotype',''),'vitals':pinned_case['vitals'] if body.mode=='practice' else None}}
 
-def fallback(case,msg):
- m=msg.lower(); facts=case['facts']
- groups={'onset':['when did','how long','start','duration','began','when start'],'symptoms':['symptom','pain','cough','fever','headache','feel','sick','nausea','breath','hurt'],'history':['history','medicine','medication','allerg','pregnan','medical','illness','previous'],'risk':['danger','risk','seizure','faint','drink','urine','worse','smoke','accident','pregnan'],'exam':['examin','look','find','physical','sign','observe','auscult','chest']}
- for k,keys in groups.items():
-  if any(x in m for x in keys): return facts[k]
- if any(x in m for x in ['vital','pulse','temperature','blood pressure','oxygen','saturation','observation']): return 'Recorded observations: '+ '; '.join(f'{k}: {v}' for k,v in case['vitals'].items())
- if any(x in m for x in ['consent','permission','explain','my name','hello']): return 'Thank you for explaining that. I am worried. Please tell me what you need to do.'
- return 'I am not sure how to answer that. Could you ask me a different way?'
+def fallback(case, msg):
+    """Authentic doctor-patient clinical history dialogue reasoner.
+    Generates realistic, empathetic, case-specific patient responses for medical students."""
+    m = msg.lower().strip()
+    facts = case.get('facts', {})
+    vitals = case.get('vitals', {})
+    case_id = case.get('id', '')
+    age = case.get('age', 48)
+    sex = case.get('sex', 'adult man')
+    
+    # 1. Greetings, Introductions & Patient Identity
+    if any(x in m for x in ['your name', 'who are you', 'called', 'what is your name', "what's your name"]):
+        if 'respiratory' in case_id:
+            return "My name is John Smith, doctor. I am 48 years old."
+        elif 'malaria' in case_id:
+            return "My name is Amina Diallo, doctor. I am 24 years old."
+        elif 'burn' in case_id:
+            return "My name is Michael Vance, doctor. I'm 31 years old."
+        elif 'trauma' in case_id:
+            return "My name is Elena Rostova, doctor. I'm 27 years old."
+        elif 'pregnancy' in case_id:
+            return "My name is Grace Mwangi, doctor. I'm 29 years old, and 32 weeks pregnant."
+        elif 'pediatric' in case_id:
+            return "This is my son Leo, doctor. He is three years old."
+        return f"My name is fictional patient, {age} years old."
+
+    if any(x in m for x in ['how old', 'your age']):
+        return f"I am {age} years old, doctor."
+
+    if any(x in m for x in ['hello', 'hi ', 'good morning', 'good afternoon', 'my name is', "i'm dr", 'i am dr', 'medical student', 'looking after you', 'consent', 'examine you']):
+        return "Hello doctor, thank you for coming to see me. I've been feeling so unwell and frightened. Please help me."
+
+    # 2. Pain Assessment (SOCRATES Framework)
+    if any(x in m for x in ['where does it hurt', 'where is the pain', 'location of pain', 'point to where']):
+        if 'respiratory' in case_id:
+            return "It hurts right here on the lower right side of my chest, doctor, right under my ribs."
+        elif 'burn' in case_id:
+            return "My right forearm and my upper chest are burning agony, doctor, and my throat feels raw and tight."
+        elif 'trauma' in case_id:
+            return "My left chest is throbbing terribly where I got hit, and my left thigh and hip hurt so much I cannot move them."
+        elif 'pregnancy' in case_id:
+            return "The headache is throbbing across my whole forehead and behind my eyes, and I have a constant aching pain in my upper belly."
+        elif 'malaria' in case_id:
+            return "My whole head is pounding like a hammer, and all the muscles and joints in my back and legs ache."
+        return facts.get('symptoms', 'It hurts.')
+
+    if any(x in m for x in ['what does the pain feel like', 'type of pain', 'character of pain', 'sharp', 'dull', 'stabbing', 'burning', 'throbbing', 'describe the pain']):
+        if 'respiratory' in case_id:
+            return "It's a very sharp, stabbing pain, doctor. Every time I take a breath or try to cough, it feels like a knife stabbing into my lung."
+        elif 'burn' in case_id:
+            return "It feels like intense searing heat and blistering burning. My throat feels dry and swollen tight."
+        elif 'trauma' in case_id:
+            return "It's a deep, agonizing crushing pain in my ribs, and it throbs with every heartbeat."
+        elif 'pregnancy' in case_id:
+            return "It's a relentless, pounding pressure behind my eyes that painkillers haven't touched."
+        elif 'malaria' in case_id:
+            return "It's a severe aching and throbbing headache with heavy muscular stiffness throughout my body."
+        return facts.get('symptoms', 'It hurts.')
+
+    if any(x in m for x in ['scale of 1', 'score from 1', 'how severe', 'how bad', 'rate the pain', 'severity of']):
+        if 'respiratory' in case_id:
+            return "Right now it's at least an 8 out of 10, doctor, especially when I try to breathe in deeply."
+        elif 'burn' in case_id:
+            return "It's easily a 9 out of 10, doctor! The burning is intense!"
+        elif 'trauma' in case_id:
+            return "It's an 8 or 9 out of 10... I feel so dizzy and weak from the pain."
+        return "It's about an 8 out of 10, doctor."
+
+    if any(x in m for x in ['breathe in', 'breath in', 'taking a breath', 'pleuritic', 'coughing hurt', 'worse when you breathe']):
+        if 'respiratory' in case_id:
+            return "Yes! Breathing in makes it so much worse. I can only take tiny, shallow breaths because deep breaths trigger agonizing sharp pain."
+        elif 'trauma' in case_id:
+            return "Yes, breathing in hurts my left chest where the handlebars hit me."
+        return "Taking a deep breath is very uncomfortable, doctor."
+
+    if any(x in m for x in ['spread', 'radiat', 'move anywhere', 'travel']):
+        if 'respiratory' in case_id:
+            return "It stays mostly around the right lower chest and goes slightly into my right back, but doesn't go to my arm or jaw."
+        elif 'pregnancy' in case_id:
+            return "The head pain is all over my temples and forehead; the belly pain is right across the top under my ribs."
+        return "It stays mostly in the same area, doctor."
+
+    # 3. Respiratory Symptoms: Sputum, Cough, Dyspnoea
+    if any(x in m for x in ['sputum', 'phlegm', 'coughing up', 'color', 'colour', 'mucus']):
+        if 'respiratory' in case_id:
+            return "Yes, doctor, I've been coughing up thick yellowish-green phlegm since yesterday. It's foul and difficult to bring up."
+        elif 'burn' in case_id:
+            return "I coughed up black soot and dark gray phlegm right after running out of the burning kitchen."
+        elif 'malaria' in case_id:
+            return "No doctor, I haven't had any cough or sputum at all. Just fevers and weakness."
+        return "I have had some coughing with phlegm, doctor."
+
+    if any(x in m for x in ['blood in', 'coughing blood', 'hemoptysis', 'haemoptysis']):
+        if 'respiratory' in case_id:
+            return "I haven't seen bright red fresh blood yet, but the sputum is thick, dark yellow and tinged with brown rust color."
+        elif 'trauma' in case_id:
+            return "I don't think I'm coughing blood, but my chest feels tight and bruised."
+        return "No obvious frank blood that I've noticed, doctor."
+
+    if any(x in m for x in ['breathless', 'short of breath', 'difficulty breathing', 'winded', 'dyspnea', 'dyspnoea', 'suffocat']):
+        if 'respiratory' in case_id:
+            return "Very short of breath, doctor... I feel like I'm suffocating... I can't finish full sentences without gasping for air."
+        elif 'burn' in case_id:
+            return "My breathing feels raspy and tight, and my voice sounds hoarse like my windpipe is swelling up."
+        elif 'trauma' in case_id:
+            return "It's hard to breathe... my left chest hurts when it expands, and I feel lightheaded."
+        return facts.get('symptoms', 'Breathing is difficult.')
+
+    # 4. Systemic Symptoms: Fever, Chills, Sweats, Rigors
+    if any(x in m for x in ['fever', 'temperature', 'hot', 'sweat', 'chills', 'shivering', 'shaking', 'rigor', 'cold sweat']):
+        if 'respiratory' in case_id:
+            return "Yes, I've had burning fevers and terrible cold sweats for the last two days. I was shivering so hard last night my teeth were chattering."
+        elif 'malaria' in case_id:
+            return "Yes, doctor! The shivering rigors are violent—my whole body shakes uncontrollably, then I burn with high fever and break into profuse drenching sweats."
+        return "I have been having high fevers and heavy sweating, doctor."
+
+    # 5. Travel & Endemic Risk
+    if any(x in m for x in ['travel', 'abroad', 'foreign', 'mosquito', 'bed net', 'trip', 'endemic']):
+        if 'malaria' in case_id:
+            return "I live in an area where malaria is common, doctor. I usually try to sleep under a mosquito net, but this past week I was visiting family and didn't have one."
+        return "I haven't traveled abroad recently, doctor."
+
+    # 6. Past Medical History & Comorbidities
+    if any(x in m for x in ['medical condition', 'past medical', 'history', 'hypertension', 'blood pressure', 'asthma', 'copd', 'diabetes', 'heart', 'kidney', 'previous illness']):
+        if 'respiratory' in case_id:
+            return "I have high blood pressure, doctor, diagnosed three years ago. Otherwise I've generally been healthy before this terrible chest infection."
+        elif 'pregnancy' in case_id:
+            return "This is my second baby. In my first pregnancy everything went smoothly, but today my blood pressure feels dangerously high."
+        return facts.get('history', 'No major past medical illnesses.')
+
+    # 7. Medications & Adherence
+    if any(x in m for x in ['medicine', 'medication', 'pill', 'tablet', 'prescription', 'regular medicine', 'inhaler', 'take anything']):
+        if 'respiratory' in case_id:
+            return "I am prescribed amlodipine 5mg once daily for my blood pressure. To be honest, doctor, I sometimes forget to take it when I'm feeling well."
+        elif 'pregnancy' in case_id:
+            return "I only take pregnancy multivitamins and iron tablets. I haven't taken any other drugs."
+        elif 'malaria' in case_id:
+            return "I took two paracetamol tablets earlier today for the headache, but it didn't bring the fever down at all."
+        return facts.get('history', 'I have not taken any special medicines.')
+
+    # 8. Allergies
+    if any(x in m for x in ['allerg', 'penicillin', 'reaction to medicine']):
+        if 'respiratory' in case_id:
+            return "My hospital wristband says penicillin alert, doctor. Years ago my mother said I developed an itchy red skin rash when given amoxicillin as a teenager."
+        return "I don't have any known medicine allergies, doctor."
+
+    # 9. Social History: Smoking, Alcohol, Occupation, Living Situation
+    if any(x in m for x in ['smoke', 'smoking', 'cigarette', 'tobacco', 'vape']):
+        if 'respiratory' in case_id:
+            return "I used to smoke about 10 cigarettes a day, doctor, but I quit completely five years ago when my daughter was born."
+        return "No, I do not smoke, doctor."
+
+    if any(x in m for x in ['alcohol', 'drink', 'beer', 'wine', 'spirits']):
+        return "I only have an occasional beer on the weekend, doctor, nothing heavy."
+
+    if any(x in m for x in ['live with', 'who is at home', 'family', 'occupation', 'job', 'work']):
+        if 'respiratory' in case_id:
+            return "I live with my wife and our 5-year-old daughter. I work as an accountant in an office."
+        return "I live at home with my family, doctor."
+
+    # 10. Patient Concerns & Ideas (ICE)
+    if any(x in m for x in ['worried about', 'what do you think', 'frightened', 'afraid', 'concern', 'help you']):
+        if 'respiratory' in case_id:
+            return "I'm terrified that my lungs are failing, doctor. I can barely get air into my chest and I feel so weak. Please tell me you can treat this."
+        elif 'pregnancy' in case_id:
+            return "I'm terrified for my baby, doctor. She hasn't moved as much today, and with my head pounding and blurry vision, I'm scared I might have a seizure."
+        return "I am very worried about how sick I feel, doctor. Please tell me what we can do."
+
+    # 11. Patient Compliance Commands (Spoken Responses)
+    if any(x in m for x in ['take a deep breath', 'breathe in deeply', 'deep breath']):
+        return "*Takes a slow, deep breath* ...Ahhh, it hurts right here on my right lower chest when I expand fully, doctor."
+
+    if any(x in m for x in ['say ah', 'open your mouth', 'look in your mouth']):
+        return "*Opens mouth wide* ...Aaaaaaaah."
+
+    if any(x in m for x in ['turn your head', 'look to the left', 'check your neck']):
+        return "*Slowly turns head to the left* ...Like this, doctor? My neck feels a bit stiff, but I can turn it."
+
+    if any(x in m for x in ['sit forward', 'lean forward', 'listen to your back']):
+        return "*Slowly sits forward on the edge of the bed* ...Oof, yes doctor... leaning forward now so you can check my back."
+
+    if any(x in m for x in ['lie back', 'rest back', 'relax']):
+        return "*Gently reclines back against the pillows* ...Thank you, doctor. Sitting up makes me quite lightheaded."
+
+    if any(x in m for x in ['squeeze my finger', 'squeeze my hands', 'grip strength']):
+        return "*Grips both your hands firmly* ...I am squeezing with both hands, doctor. Does the grip feel equal?"
+
+    # 12. Vitals & Observations Inquiries
+    if any(x in m for x in ['vital', 'pulse', 'temperature', 'blood pressure', 'oxygen', 'saturation', 'observation']):
+        return 'Recorded bedside observations: ' + '; '.join(f'{k}: {v}' for k, v in vitals.items())
+
+    # Fallback to general facts if available
+    for k, keys in {'onset': ['when did', 'how long', 'start', 'duration', 'began', 'when start'], 'symptoms': ['symptom', 'feel', 'sick', 'nausea'], 'history': ['history', 'medical', 'illness'], 'risk': ['danger', 'risk', 'worse', 'accident']}.items():
+        if any(x in m for x in keys) and k in facts:
+            return facts[k]
+
+    return "I want to explain clearly, doctor. My main problem is how breathless and feverish I feel today, and the pain in my chest. What else would you like me to tell you?"
+
 async def llm_patient(case,msg,history):
  if not llm_configured(): return None
  sys=f'''Role-play only the fictional patient in this medical education case. Do not act as a doctor, diagnose, coach the learner, or reveal the hidden diagnosis. Case facts (fixed, do not contradict): {json.dumps({'age':case['age'],'sex':case['sex'],'facts':case['facts'],'vitals':case['vitals']})}. Speak in short, plain, clear English. Answer only what the patient could know. Never invent lab/imaging results; these are returned only by the investigation API. If asked an unknown fact, say you are unsure. Case is fictional. Hidden diagnosis: do not reveal it.'''

@@ -504,4 +504,137 @@ export class StethoscopeAudio {
     osc.start(now);
     osc.stop(now + 0.035);
   }
+
+  // --------------------------------------------------------------------------
+  // CONTINUOUS HOSPITAL WARD TELEMETRY & AMBIENCE (REAL-WORLD WARD SOUNDS)
+  // --------------------------------------------------------------------------
+
+  // Realistic Philips IntelliVue QRS Heartbeat Pulse Beeper
+  startTelemetryTone(bpm = 124, spo2 = 88) {
+    this._init();
+    this.stopTelemetryTone();
+    this.telemetryActive = true;
+    const ctx = this.ctx;
+
+    // Pitch correlates directly to SpO2 (e.g. 98% -> 916 Hz, 88% -> 696 Hz)
+    const baseFreq = Math.max(520, Math.min(980, 520 + (spo2 - 80) * 18));
+    const intervalMs = (60 / Math.max(40, Math.min(200, bpm))) * 1000;
+
+    const playBeep = () => {
+      if (!this.telemetryActive || !this.ctx) return;
+      const now = this.ctx.currentTime;
+      const osc = this.ctx.createOscillator();
+      const g = this.ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(baseFreq, now);
+
+      // Clean 45ms telemetry pulse beep with soft attack and decay
+      g.gain.setValueAtTime(0.001, now);
+      g.gain.linearRampToValueAtTime(0.08, now + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.045);
+
+      osc.connect(g);
+      g.connect(this.masterGain);
+      osc.start(now);
+      osc.stop(now + 0.050);
+    };
+
+    playBeep();
+    this.telemetryIntervalId = setInterval(playBeep, intervalMs);
+  }
+
+  stopTelemetryTone() {
+    this.telemetryActive = false;
+    if (this.telemetryIntervalId) {
+      clearInterval(this.telemetryIntervalId);
+      this.telemetryIntervalId = null;
+    }
+  }
+
+  // Continuous Enclosing Hospital Room Airflow / HVAC Ambience
+  startWardAmbience(department = 'resus') {
+    this._init();
+    this.stopWardAmbience();
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    // Filtered pink room tone (subtle air ventilation hum at 140 Hz)
+    const bufferSize = ctx.sampleRate * 2.0;
+    const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < bufferSize; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99765 * b0 + white * 0.0555179;
+      b1 = 0.96300 * b1 + white * 0.0750759;
+      b2 = 0.57000 * b2 + white * 0.1538520;
+      output[i] = (b0 + b1 + b2) * 0.025;
+    }
+
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuffer;
+    noise.loop = true;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(160, now);
+
+    this.ambienceGain = ctx.createGain();
+    this.ambienceGain.gain.setValueAtTime(0.035, now);
+
+    noise.connect(filter);
+    filter.connect(this.ambienceGain);
+    this.ambienceGain.connect(this.masterGain);
+    noise.start(now);
+    this.ambienceSource = noise;
+  }
+
+  stopWardAmbience() {
+    if (this.ambienceSource) {
+      try { this.ambienceSource.stop(); } catch { /* ignore */ }
+      this.ambienceSource = null;
+    }
+  }
+
+  // Continuous Oxygen Therapy Flow Hiss (15 L/min non-rebreather gas flow)
+  startOxygenFlow() {
+    this._init();
+    this.stopOxygenFlow();
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+
+    const bufferSize = ctx.sampleRate * 1.5;
+    const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const output = noiseBuffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      output[i] = (Math.random() * 2 - 1) * 0.04;
+    }
+
+    const noise = ctx.createBufferSource();
+    noise.buffer = noiseBuffer;
+    noise.loop = true;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.setValueAtTime(1400, now);
+    filter.Q.setValueAtTime(1.2, now);
+
+    this.o2Gain = ctx.createGain();
+    this.o2Gain.gain.setValueAtTime(0.045, now);
+
+    noise.connect(filter);
+    filter.connect(this.o2Gain);
+    this.o2Gain.connect(this.masterGain);
+    noise.start(now);
+    this.o2Source = noise;
+  }
+
+  stopOxygenFlow() {
+    if (this.o2Source) {
+      try { this.o2Source.stop(); } catch { /* ignore */ }
+      this.o2Source = null;
+    }
+  }
+
 }
