@@ -8,6 +8,10 @@ import { ClinicalAdapter, VR_TESTS, VR_EXAMINATIONS, VR_INTERVENTIONS, VR_MANAGE
 import { VoiceController, transcribeViaServer } from './audio/voice.js';
 import { StethoscopeAudio } from './audio/stethoscopeAudio.js';
 import { PATIENT_PHENOTYPES } from './scene/patientModel.js';
+import { DefibrillatorModal } from './components/DefibrillatorModal.jsx';
+import { AbgModal } from './components/AbgModal.jsx';
+import { Ecg12LeadModal } from './components/Ecg12LeadModal.jsx';
+import { SbarHandoverModal } from './components/SbarHandoverModal.jsx';
 
 const DEFAULT_CASE = new URLSearchParams(location.search).get('case') || 'respiratory-severe-001';
 const DEPARTMENTS = {
@@ -145,6 +149,10 @@ export default function VRApp() {
     telemetrySound: true,
   });
   const [text, setText] = useState('');
+  const [isDefibOpen, setIsDefibOpen] = useState(false);
+  const [isAbgOpen, setIsAbgOpen] = useState(false);
+  const [isEcgOpen, setIsEcgOpen] = useState(false);
+  const [isSbarOpen, setIsSbarOpen] = useState(false);
   const uiRef = useRef(ui); uiRef.current = ui;
   const patch = useCallback((p) => setUi((u) => ({ ...u, ...(typeof p === 'function' ? p(u) : p) })), []);
 
@@ -476,6 +484,9 @@ export default function VRApp() {
   const order = useCallback((id) => act(async () => {
     const r = await eng.current.adapter.order(id, INDICATIONS[uiRef.current.indication]);
     patch({ lastResult: r, caption: `Result: ${r.name} — ${r.result}` });
+    if (id === 'blood-gas') {
+      setIsAbgOpen(true);
+    }
     try {
       const st = await eng.current.adapter.getState();
       syncState(st);
@@ -566,6 +577,10 @@ export default function VRApp() {
     const u = uiRef.current;
     if (id === 'start') return startEncounter();
     if (id === 'exit') return exitVR();
+    if (id === 'tool:defib') { setIsDefibOpen(true); return; }
+    if (id === 'tool:abg') { setIsAbgOpen(true); return; }
+    if (id === 'tool:ecg') { setIsEcgOpen(true); return; }
+    if (id === 'tool:sbar') { setIsSbarOpen(true); return; }
     if (NAV.some(([n]) => n === id)) {
       patch({ page: id });
       if (id === 'obs' || id === 'exam') eng.current.room?.monitor.draw(eng.current.vitals, u.statusLabel, u.clockMin, u.oxygenActive);
@@ -711,6 +726,7 @@ export default function VRApp() {
             patch({ page: 'exam', caption: 'Stethoscope active: Click an auscultation zone on chest or back.' });
           } else if (actKey === 'open:ehr') {
             patch({ page: 'ehr', caption: 'EHR Chart opened: Review observations, eMAR and SBAR handover.' });
+            setIsSbarOpen(true);
           } else if (actKey === 'oxygen' || actKey === 'tool:oxygen') {
             interveneRef.current('oxygen');
             eng.current.stethAudio?.startOxygenFlow();
@@ -721,7 +737,8 @@ export default function VRApp() {
           } else if (actKey === 'staff:student') {
             patch({ caption: 'Dr. David (Student Peer): "I have recorded baseline vitals. SpO2 is 88% on room air with severe tachypnoea. We should prioritize ABCDE stabilization."' });
           } else if (actKey === 'tool:defib') {
-            patch({ caption: 'Crash Cart: Biphasic defibrillator is in standby. Drawers A (Airway), B (Breathing), C (Circulation), and D (Drugs) are stocked and verified.' });
+            patch({ caption: 'Crash Cart: Biphasic defibrillator active. Defibrillator & ALS console opened.' });
+            setIsDefibOpen(true);
           } else if (actKey === 'tool:ventilator') {
             patch({ caption: 'Mechanical Ventilator: SIMV-PC mode active. FiO2 60%, PEEP 8 cmH2O, Ppeak 24 cmH2O. Dual-limb circuit connected.' });
           } else if (actKey === 'tool:ultrasound') {
@@ -1292,6 +1309,39 @@ export default function VRApp() {
           </button>
         </div>
 
+        {/* Priority Emergency Resuscitation & Diagnostic Workstation */}
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4, paddingBottom: 6, borderBottom: '1px solid #334155' }}>
+          <span style={{ fontSize: '13px', color: '#f43f5e', fontWeight: 800 }}>⚡ Resuscitation & Diagnostic Station:</span>
+          <button
+            onClick={() => setIsDefibOpen(true)}
+            style={{ padding: '4px 10px', background: '#dc2626', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
+            title="Interactive Biphasic Defibrillator, Rhythm Recognition (VF/pVT/PEA/Asystole) & 2-Min CPR Cycle"
+          >
+            ⚡ Biphasic Defibrillator & ALS Console
+          </button>
+          <button
+            onClick={() => setIsAbgOpen(true)}
+            style={{ padding: '4px 10px', background: '#0284c7', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
+            title="Point-of-Care Arterial Blood Gas Analyzer (ABL90 Flex) & Acid-Base Simulator"
+          >
+            🩸 Arterial Blood Gas (ABG / VBG)
+          </button>
+          <button
+            onClick={() => setIsEcgOpen(true)}
+            style={{ padding: '4px 10px', background: '#991b1b', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
+            title="Schiller Cardiovit 12-Lead Diagnostic ECG Viewer (STEMI / PE / Rhythm)"
+          >
+            📈 12-Lead Diagnostic ECG
+          </button>
+          <button
+            onClick={() => setIsSbarOpen(true)}
+            style={{ padding: '4px 10px', background: '#059669', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: '12px', fontWeight: 700 }}
+            title="Structured SBAR Clinical Handover with Senior Registrar Voice Feedback"
+          >
+            📋 Structured SBAR Handover (EHR)
+          </button>
+        </div>
+
         {/* Advanced Clinical Equipment & Diagnostic Tools (Phases 3 & 4) */}
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4, paddingBottom: 6, borderBottom: '1px solid #334155' }}>
           <span style={{ fontSize: '13px', color: '#f59e0b', fontWeight: 700 }}>🔬 Diagnostic Instruments:</span>
@@ -1459,6 +1509,44 @@ export default function VRApp() {
           </a>
         </div>
       </section>
+
+      {/* 4 Advanced Clinical Modals */}
+      <DefibrillatorModal
+        isOpen={isDefibOpen}
+        onClose={() => setIsDefibOpen(false)}
+        initialRhythm="sinus_tachy"
+        onShockDelivered={(info) => {
+          if (info.success) {
+            patch({ caption: `ROSC ACHIEVED! ${info.energy}J biphasic shock converted rhythm to Sinus Tachycardia. Resuming 2-min CPR.` });
+          } else {
+            patch({ caption: `INAPPROPRIATE SHOCK on non-shockable rhythm! Continue CPR and administer Adrenaline 1mg IV.` });
+          }
+        }}
+        onLogEvent={(msg) => patch({ caption: msg })}
+      />
+
+      <AbgModal
+        isOpen={isAbgOpen}
+        onClose={() => setIsAbgOpen(false)}
+        oxygenActive={ui.oxygenActive}
+        onLogEvent={(msg) => patch({ caption: msg })}
+      />
+
+      <Ecg12LeadModal
+        isOpen={isEcgOpen}
+        onClose={() => setIsEcgOpen(false)}
+        onLogEvent={(msg) => patch({ caption: msg })}
+      />
+
+      <SbarHandoverModal
+        isOpen={isSbarOpen}
+        onClose={() => setIsSbarOpen(false)}
+        patientData={{ name: 'John Smith', age: 48, memberNo: '492 819 0281' }}
+        vitals={ui.vitals || {}}
+        oxygenActive={ui.oxygenActive}
+        voiceController={eng.current.voice}
+        onLogEvent={(msg) => patch({ caption: msg })}
+      />
     </div>
   );
 }
