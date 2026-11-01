@@ -450,7 +450,12 @@ def fallback(case, msg):
     if any(x in m for x in ['hello', 'hi ', 'good morning', 'good afternoon', 'my name is', "i'm dr", 'i am dr', 'medical student', 'looking after you', 'consent', 'examine you']):
         return "Hello doctor, thank you for coming to see me. I've been feeling so unwell and frightened. Please help me."
 
-    # 2. Pain Assessment (SOCRATES Framework)
+    # 2. Onset, Chronology & Duration (SOCRATES: Onset / Timing)
+    if any(x in m for x in ['when did', 'how long', 'start', 'duration', 'began', 'when start', 'since when', 'how many days', 'how many hours', 'how long have']):
+        if 'onset' in facts:
+            return facts['onset']
+
+    # 3. Pain Assessment (SOCRATES Framework)
     if any(x in m for x in ['where does it hurt', 'where is the pain', 'location of pain', 'point to where']):
         if 'respiratory' in case_id:
             return "It hurts right here on the lower right side of my chest, doctor, right under my ribs."
