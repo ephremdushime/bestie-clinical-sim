@@ -575,3 +575,4 @@ export function Ecg12LeadModal({ isOpen, onClose, onLogEvent }) {
     </div>
   );
 }
+

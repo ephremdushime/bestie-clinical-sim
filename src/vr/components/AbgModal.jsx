@@ -498,3 +498,4 @@ export function AbgModal({ isOpen, onClose, oxygenActive = false, onLogEvent }) 
     </div>
   );
 }
+
