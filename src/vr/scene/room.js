@@ -20,6 +20,7 @@ import {
   createRealisticProcedureMayoStand,
 } from './hospitalTools.js';
 import { createClinicalStaffMember } from './clinicalStaff.js';
+import { loadHospitalAsset } from './assetLoader.js';
 
 const mat = (color, rough = 0.5, metal = 0.2, opts = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, ...opts });
@@ -38,7 +39,8 @@ export function makeCanvasTexture(w, h) {
 
 // --------------------------------------------------------------------------
 // AUTHENTIC MULTI-DEPARTMENT VIRTUAL TEACHING HOSPITAL WARD
-// Supports: 'resus' (Emergency Resuscitation Bay), 'medical' (Acute Medical Ward), 'icu' (Intensive Care)
+// Supports: 'resus' (Emergency Resuscitation Bay), 'medical' (Acute Medical Ward),
+//           'icu' (Intensive Care), 'obs' (Maternal-Fetal), 'rad' (Radiology)
 // --------------------------------------------------------------------------
 export function buildRoom(initialPhenotype = 'black-male', department = 'resus') {
   const root = new THREE.Group();
@@ -73,11 +75,9 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
 
   // 2. HIGH-GLOSS ANTI-MICROBIAL VINYL FLOORING
   const floorTex = makeTexture(1024, 1024, (ctx) => {
-    // Medical vinyl base
     ctx.fillStyle = '#cbd5e1';
     ctx.fillRect(0, 0, 1024, 1024);
 
-    // Fine aggregate safety vinyl flecks
     ctx.fillStyle = '#94a3b8';
     for (let i = 0; i < 6000; i++) {
       ctx.fillRect(Math.random() * 1024, Math.random() * 1024, 2, 2);
@@ -87,7 +87,6 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
       ctx.fillRect(Math.random() * 1024, Math.random() * 1024, 1.5, 1.5);
     }
 
-    // 1m sanitised welded vinyl seam borders
     ctx.strokeStyle = 'rgba(71, 85, 105, 0.3)';
     ctx.lineWidth = 3;
     ctx.strokeRect(0, 0, 1024, 1024);
@@ -100,7 +99,7 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
     new THREE.PlaneGeometry(6.6, 6.6),
     new THREE.MeshStandardMaterial({
       map: floorTex,
-      roughness: 0.18, // High specular gloss reflection of ceiling lights & bed
+      roughness: 0.18,
       metalness: 0.08,
     })
   );
@@ -131,17 +130,16 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
   });
 
   // Physical 3D Extruded Medical Crash Rails (Continuous along walls at 0.95m height)
-  const railBackingM = mat(0x94a3b8, 0.2, 0.8); // Brushed aluminum channel
-  const railBufferM = mat(0x0f766e, 0.4, 0.1);  // Durable antimicrobial teal impact rubber
+  const railBackingM = mat(0x94a3b8, 0.2, 0.8);
+  const railBufferM = mat(0x0f766e, 0.4, 0.1);
 
   function addWallBumperRail(x, z, length, isHorizontal = true) {
     const bumperG = new THREE.Group();
-    // Aluminum backplate
     const backplate = isHorizontal
       ? box(length, 0.14, 0.025, railBackingM)
       : box(0.025, 0.14, length, railBackingM);
     bumperG.add(backplate);
-    // Extruded rubber impact buffer
+
     const rubber = isHorizontal
       ? box(length, 0.08, 0.035, railBufferM)
       : box(0.035, 0.08, length, railBufferM);
@@ -152,28 +150,25 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
     root.add(bumperG);
   }
 
-  addWallBumperRail(0, -3.27, 6.5, true);  // North wall
-  addWallBumperRail(0, 3.27, 6.5, true);   // South wall
-  addWallBumperRail(-3.27, 0, 6.5, false); // West wall
-  addWallBumperRail(3.27, 0, 6.5, false);  // East wall
+  addWallBumperRail(0, -3.27, 6.5, true);
+  addWallBumperRail(0, 3.27, 6.5, true);
+  addWallBumperRail(-3.27, 0, 6.5, false);
+  addWallBumperRail(3.27, 0, 6.5, false);
 
   // 4. ARCHITECTURAL DEEP DOOR FRAME & CORRIDOR VIEW
   const doorGroup = new THREE.Group();
   doorGroup.position.set(-1.4, 0, 3.26);
 
-  // Deep structural door frame jambs
   const frameM = mat(0x475569, 0.3, 0.3);
   const jambL = box(0.08, 2.30, 0.12, frameM); jambL.position.set(-0.74, 1.15, 0); doorGroup.add(jambL);
   const jambR = box(0.08, 2.30, 0.12, frameM); jambR.position.set(0.74, 1.15, 0); doorGroup.add(jambR);
   const jambTop = box(1.56, 0.08, 0.12, frameM); jambTop.position.set(0, 2.26, 0); doorGroup.add(jambTop);
 
-  // Solid hospital door leaf with beveled edge
   const doorLeafM = mat(0xe2e8f0, 0.5, 0.05);
   const doorLeaf = box(1.36, 2.20, 0.045, doorLeafM);
   doorLeaf.position.set(0, 1.10, -0.02);
   doorGroup.add(doorLeaf);
 
-  // Stainless steel push plate & lever handle
   const handleM = mat(0xf1f5f9, 0.1, 0.95);
   const pushPlate = box(0.09, 0.42, 0.015, handleM);
   pushPlate.position.set(0.55, 1.12, -0.045);
@@ -184,12 +179,10 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
   lever.position.set(0.52, 1.05, -0.07);
   doorGroup.add(lever);
 
-  // Stainless kickplate at door base
   const kickPlate = box(1.34, 0.28, 0.008, handleM);
   kickPlate.position.set(0, 0.14, -0.045);
   doorGroup.add(kickPlate);
 
-  // Double-glazed observation vision panel with frosted safety cross
   const glassM = new THREE.MeshStandardMaterial({
     color: 0x93c5fd,
     roughness: 0.1,
@@ -201,7 +194,6 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
   visionGlass.position.set(0.15, 1.42, -0.02);
   doorGroup.add(visionGlass);
 
-  // Door sign badge
   const signTex = makeTexture(256, 128, (ctx) => {
     ctx.fillStyle = '#0f172a';
     ctx.fillRect(0, 0, 256, 128);
@@ -253,7 +245,6 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
     ctx.strokeStyle = '#cbd5e1';
     ctx.lineWidth = 3;
     ctx.strokeRect(0, 0, 512, 512);
-    // Subtle acoustic tile fissures
     ctx.fillStyle = 'rgba(148, 163, 184, 0.12)';
     for (let i = 0; i < 400; i++) {
       ctx.fillRect(Math.random() * 512, Math.random() * 512, 3, 1.5);
@@ -288,7 +279,7 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
   });
 
   // 6. HIGH-FIDELITY MEDICAL HEADWALL (Behind Bed)
-  const headwall = box(2.6, 0.50, 0.10, mat(0xe2e8f0, 0.2, 0.7)); // Anodized aluminum trunking
+  const headwall = box(2.6, 0.50, 0.10, mat(0xe2e8f0, 0.2, 0.7));
   headwall.position.set(0, 1.68, -3.24);
   root.add(headwall);
 
@@ -306,9 +297,11 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
     root.add(outlet);
   });
 
-  // Flowmeter with glass rotameter & bobbin
+  // Flowmeter with glass rotameter & bobbin (Clickable to dial Oxygen)
   const flowmeterBody = box(0.045, 0.18, 0.045, mat(0xf8fafc, 0.2, 0.4));
   flowmeterBody.position.set(-0.30, 1.78, -3.14);
+  flowmeterBody.userData = { action: 'dial:oxygen', label: 'Wall O2 Flowmeter (Adjust Flow 0-15 L/min)' };
+  interactables.push(flowmeterBody);
   root.add(flowmeterBody);
 
   const rotameterGlass = new THREE.Mesh(
@@ -316,6 +309,8 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
     mat(0xe0f2fe, 0.1, 0.1, { transparent: true, opacity: 0.85 })
   );
   rotameterGlass.position.set(-0.30, 1.78, -3.11);
+  rotameterGlass.userData = { action: 'dial:oxygen', label: 'Oxygen Rotameter Bobbin' };
+  interactables.push(rotameterGlass);
   root.add(rotameterGlass);
 
   // Vacuum Suction Regulator & Yellow Fluid Canister
@@ -354,15 +349,13 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
   const bed = new THREE.Group();
   bed.position.set(0, 0, -1.6);
 
-  // Steel chassis frame
   const chassisM = mat(0x334155, 0.3, 0.7);
   const frame = box(1.06, 0.12, 2.15, chassisM);
   frame.position.y = 0.45;
   bed.add(frame);
 
-  // 4 Rubber Swivel Caster Wheels with Chrome Brake Pedals
   const wheelM = mat(0x0f172a, 0.8, 0.1);
-  const pedalM = mat(0xdc2626, 0.3, 0.4); // Red brake pedal
+  const pedalM = mat(0xdc2626, 0.3, 0.4);
   [
     [-0.45, -0.92],
     [0.45, -0.92],
@@ -380,12 +373,10 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
     bed.add(brakePedal);
   });
 
-  // Twin Heavy-Duty Electric Lift Columns
   const columnM = mat(0xe2e8f0, 0.2, 0.9);
   const col1 = box(0.18, 0.32, 0.18, columnM); col1.position.set(0, 0.26, -0.55); bed.add(col1);
   const col2 = box(0.18, 0.32, 0.18, columnM); col2.position.set(0, 0.26, 0.55); bed.add(col2);
 
-  // Contoured Pressure-Relief Anti-Decubitus Mattress (Dark hospital vinyl)
   const mattressM = mat(0x1e3a5f, 0.6, 0.05);
   const mattress = box(0.98, 0.15, 2.05, mattressM);
   mattress.position.y = 0.58;
@@ -397,12 +388,10 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
   backPlatform.rotation.x = -0.55;
   bed.add(backPlatform);
 
-  // Beech laminate headboard
   const headboard = box(1.08, 0.55, 0.04, mat(0x9a3412, 0.5, 0.1));
   headboard.position.set(0, 0.95, -1.08);
   bed.add(headboard);
 
-  // Modern low-profile hospital bed footboard with chrome grip rail
   const footboard = box(1.04, 0.20, 0.04, mat(0x334155, 0.4, 0.6));
   footboard.position.set(0, 0.70, 1.06);
   bed.add(footboard);
@@ -412,17 +401,25 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
   footRail.position.set(0, 0.81, 1.06);
   bed.add(footRail);
 
-  // Split 4-Piece Chrome Safety Side Rails (2 on each side)
+  // Split Chrome Safety Side Rails & Electric Elevation Handset
   [-0.52, 0.52].forEach((rx) => {
-    // Upper head-end rail
     const railHead = box(0.03, 0.28, 0.68, mat(0xe2e8f0, 0.1, 0.95));
     railHead.position.set(rx, 0.86, -0.35);
+    railHead.userData = { action: 'bed:side_rails', label: 'Safety Side Rail (Raise / Lower)' };
+    interactables.push(railHead);
     bed.add(railHead);
-    // Lower foot-end rail
+
     const railFoot = box(0.03, 0.24, 0.64, mat(0xe2e8f0, 0.1, 0.95));
     railFoot.position.set(rx, 0.76, 0.45);
     bed.add(railFoot);
   });
+
+  // Interactive Electric Bed Handset
+  const bedHandset = box(0.08, 0.16, 0.03, mat(0x0f172a, 0.3, 0.3));
+  bedHandset.position.set(0.53, 0.92, -0.15);
+  bedHandset.userData = { action: 'bed:toggle_elevation', label: 'Electric Bed Handset (Fowler Elevation)' };
+  interactables.push(bedHandset);
+  bed.add(bedHandset);
 
   root.add(bed);
 
@@ -537,15 +534,12 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
     },
   };
 
-  // 10. AUTHENTIC MEDICAL EQUIPMENT & TOOLS (PHASES 3 & 4)
-  // Department-Specific High-Poly Medical Suites
+  // 10. AUTHENTIC MEDICAL EQUIPMENT & TOOLS
   if (department === 'resus') {
-    // Overhead surgical scialytic lamp for resuscitation & trauma procedures
     const scialytic = createScialyticSurgicalLamp();
     scialytic.group.position.set(0.25, 0, -1.4);
     root.add(scialytic.group);
 
-    // Resuscitation Crash Cart with active Defibrillator
     const cartM = createRealisticCrashCart();
     cartM.group.position.set(1.4, 0, 0.4);
     cartM.group.rotation.y = -Math.PI / 4;
@@ -555,7 +549,6 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
       interactables.push(cartM.defibScreen);
     }
 
-    // Bedside Mobile Ultrasound / eFAST Console
     const usCart = createRealisticUltrasoundFast();
     usCart.group.position.set(-1.6, 0, 0.4);
     usCart.group.rotation.y = Math.PI / 4;
@@ -564,14 +557,12 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
       interactables.push(usCart.screen);
     }
 
-    // Emergency Surgical Mayo Stand with Chest Drain & Decompression Needle
     const mayoStand = createRealisticProcedureMayoStand();
     mayoStand.group.position.set(-1.3, 0, -1.8);
     root.add(mayoStand.group);
     interactables.push(mayoStand.group);
 
   } else if (department === 'icu') {
-    // Advanced Mechanical Ventilator with patient breathing circuit
     const vent = createRealisticVentilator();
     vent.group.position.set(1.25, 0, -1.7);
     vent.group.rotation.y = -Math.PI / 4;
@@ -581,21 +572,18 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
     }
     root.add(vent.group);
 
-    // Bedside Mobile Ultrasound / eFAST Console for critical line placement
     const usCart = createRealisticUltrasoundFast();
     usCart.group.position.set(-1.6, 0, 0.4);
     usCart.group.rotation.y = Math.PI / 4;
     root.add(usCart.group);
     if (usCart.screen) interactables.push(usCart.screen);
 
-    // Crash cart positioned on standby
     const cartM = createRealisticCrashCart();
     cartM.group.position.set(2.2, 0, -0.2);
     cartM.group.rotation.y = -Math.PI / 2;
     root.add(cartM.group);
 
   } else if (department === 'obs') {
-    // Obstetric & Maternal Ward: CTG Fetal Monitor next to bed
     const ctg = createRealisticCtgMonitor();
     ctg.group.position.set(1.25, 0, -1.7);
     ctg.group.rotation.y = -Math.PI / 4;
@@ -604,21 +592,18 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
       interactables.push(ctg.screen);
     }
 
-    // Neonatal Radiant Infant Warmer Bassinet in maternal room corner
     const infantWarmer = createRealisticInfantWarmer();
     infantWarmer.group.position.set(-1.8, 0, 0.6);
     infantWarmer.group.rotation.y = Math.PI / 3;
     root.add(infantWarmer.group);
     interactables.push(infantWarmer.group);
 
-    // Crash cart positioned on perimeter standby
     const cartM = createRealisticCrashCart();
     cartM.group.position.set(2.2, 0, 0.5);
     cartM.group.rotation.y = -Math.PI / 2;
     root.add(cartM.group);
 
   } else if (department === 'rad') {
-    // Diagnostic Radiology & PACS Workstation Suite
     const pacs = createRealisticPacsWorkstation();
     pacs.group.position.set(1.5, 0, -0.4);
     pacs.group.rotation.y = -Math.PI / 2;
@@ -632,39 +617,36 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
       interactables.push(pacs.rightScreen);
     }
 
-    // Mobile Ultrasound Console in radiology suite
     const usCart = createRealisticUltrasoundFast();
     usCart.group.position.set(-1.5, 0, 0.2);
     usCart.group.rotation.y = Math.PI / 4;
     root.add(usCart.group);
     if (usCart.screen) interactables.push(usCart.screen);
 
-    // Standby crash cart
     const cartM = createRealisticCrashCart();
     cartM.group.position.set(2.2, 0, 1.2);
     cartM.group.rotation.y = -Math.PI / 2;
     root.add(cartM.group);
 
   } else {
-    // Acute Medical Ward: Welch Allyn Wall Diagnostic Set (Otoscope & Ophthalmoscope)
     const wallDiag = createRealisticWallDiagnosticSet();
     wallDiag.group.position.set(1.4, 1.8, -3.24);
     root.add(wallDiag.group);
     interactables.push(wallDiag.group);
 
-    // Acute Medical Ward: Crash cart on perimeter standby
     const cartM = createRealisticCrashCart();
     cartM.group.position.set(2.3, 0, 0.8);
     cartM.group.rotation.y = -Math.PI / 2;
     root.add(cartM.group);
   }
 
-  // IV Pole & Saline Infusion
+  // IV Pole & Saline Infusion (Clickable to start fluids)
   const ivPole = createRealisticIvPole();
   ivPole.group.position.set(0.68, 0, -2.1);
+  ivPole.group.userData = { action: 'treat:fluids', label: '0.9% Normal Saline IV Infusion (Start Fluid Challenge)' };
+  interactables.push(ivPole.group);
   root.add(ivPole.group);
 
-  // Volumetric Infusion Pump on IV Pole for Medical Ward and ICU
   if (department === 'medical' || department === 'icu') {
     const pump = createRealisticInfusionPump();
     pump.group.position.set(0.68, 1.35, -2.1);
@@ -674,7 +656,7 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
   // Overbed Clinical Instrument Trolley
   const trolleyGroup = new THREE.Group();
   trolleyGroup.position.set(-0.95, 0.85, -1.2);
-  const trayTop = box(0.55, 0.03, 0.75, mat(0xe2e8f0, 0.15, 0.95)); // Polished stainless steel
+  const trayTop = box(0.55, 0.03, 0.75, mat(0xe2e8f0, 0.15, 0.95));
   trolleyGroup.add(trayTop);
   const trolleyLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.82, 16), mat(0xe2e8f0, 0.1, 0.95));
   trolleyLeg.position.set(0, -0.42, 0);
@@ -740,5 +722,6 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
     staffMembers.forEach(s => s.update(delta));
   };
 
-  return { root, patient, monitor, interactables, screen, staffMembers, update };
+  return { root, patient, monitor, interactables, screen, staffMembers, update, bed, backPlatform };
 }
+

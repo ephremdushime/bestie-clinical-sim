@@ -675,6 +675,14 @@ export default function VRApp() {
     panel.mesh.rotation.y = -0.45;
     scene.add(panel.mesh);
 
+    if (new URLSearchParams(location.search).has('benchmark')) {
+      import('./scene/profiler.js').then(({ VrProfiler }) => {
+        const profiler = new VrProfiler(renderer);
+        scene.add(profiler.mesh);
+        eng.current.profiler = profiler;
+      }).catch(() => {});
+    }
+
     Object.assign(eng.current, { renderer, room, panel, scene, camera, rig, controls });
 
     const ray = new THREE.Raycaster();
@@ -728,6 +736,27 @@ export default function VRApp() {
             patch({ caption: 'Mayo Surgical Stand: Sterile field prepared with 14G emergency decompression cannula, sterile scalpels, hemostats, and Atrium chest drainage canister.' });
           } else if (actKey === 'tool:infant_warmer') {
             patch({ caption: 'Neonatal Radiant Warmer: Overhead quartz heating unit set to 36.5°C servo-control. Resuscitation neopuff T-piece and suction primed.' });
+          } else if (actKey === 'dial:oxygen') {
+            interveneRef.current('oxygen');
+            eng.current.stethAudio?.startOxygenFlow();
+            patch({ caption: 'Wall Oxygen Flowmeter: Dialed high-flow O2 to 15 L/min via Non-Rebreather Mask.' });
+          } else if (actKey === 'bed:toggle_elevation') {
+            const currentRoom = eng.current.room || room;
+            const isUp = currentRoom.backPlatform && currentRoom.backPlatform.rotation.x < -0.3;
+            if (isUp) {
+              if (currentRoom.backPlatform) currentRoom.backPlatform.rotation.x = -0.1;
+              currentRoom.patient?.lieBack();
+              patch({ caption: 'Electric Bed Handset: Backrest reclined to semi-recumbent posture (30°).' });
+            } else {
+              if (currentRoom.backPlatform) currentRoom.backPlatform.rotation.x = -0.65;
+              currentRoom.patient?.sitForward();
+              patch({ caption: 'Electric Bed Handset: Fowler backrest elevated to 65° upright to ease respiratory effort.' });
+            }
+          } else if (actKey === 'bed:side_rails') {
+            patch({ caption: 'Patient Safety: Hospital bed safety side rails verified and locked.' });
+          } else if (actKey === 'treat:fluids') {
+            patch({ caption: 'Fluid Resuscitation: IV 500 mL 0.9% Normal Saline fluid bolus initiated via 20G cannula.' });
+            try { interveneRef.current('fluids'); } catch {}
           }
         }
       }
@@ -817,6 +846,7 @@ export default function VRApp() {
       const activeRoom = eng.current.room || room;
       activeRoom.patient.update(t);
       if (activeRoom.update) activeRoom.update(0.016);
+      if (eng.current.profiler) eng.current.profiler.update();
       renderer.render(scene, camera);
     });
 
