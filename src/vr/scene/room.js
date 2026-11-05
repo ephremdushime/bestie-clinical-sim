@@ -22,6 +22,15 @@ import {
 import { createClinicalStaffMember } from './clinicalStaff.js';
 import { loadHospitalAsset } from './assetLoader.js';
 
+import { buildHospitalWindowAndVista } from './environmentVista.js';
+import {
+  createHospitalPrivacyCurtains,
+  createWallGloveDispenser,
+  createWallSharpsBin,
+  createWallHandSanitizer,
+  createClinicalPedalBins,
+} from './hospitalProps.js';
+
 const mat = (color, rough = 0.5, metal = 0.2, opts = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness: rough, metalness: metal, ...opts });
 const box = (w, h, d, m) => {
@@ -121,13 +130,45 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
     metalness: 0.02,
   });
 
-  [[0, 1.45, -3.3, 0], [0, 1.45, 3.3, Math.PI], [-3.3, 1.45, 0, Math.PI / 2], [3.3, 1.45, 0, -Math.PI / 2]].forEach(([x, y, z, r]) => {
+  // North, South, and East Perimeter Walls
+  [[0, 1.45, -3.3, 0], [0, 1.45, 3.3, Math.PI], [3.3, 1.45, 0, -Math.PI / 2]].forEach(([x, y, z, r]) => {
     const w = new THREE.Mesh(new THREE.PlaneGeometry(6.6, 2.9), wallM);
     w.position.set(x, y, z);
     w.rotation.y = r;
     w.receiveShadow = true;
     root.add(w);
   });
+
+  // West Wall with Architectural Window Cutout & Panoramic Vista
+  const westLeft = box(0.04, 2.9, 1.5, wallM); westLeft.position.set(-3.28, 1.45, -2.55); root.add(westLeft);
+  const westRight = box(0.04, 2.9, 1.5, wallM); westRight.position.set(-3.28, 1.45, 2.55); root.add(westRight);
+  const westSill = box(0.04, 0.88, 3.6, wallM); westSill.position.set(-3.28, 0.44, 0); root.add(westSill);
+  const westLintel = box(0.04, 0.38, 3.6, wallM); westLintel.position.set(-3.28, 2.71, 0); root.add(westLintel);
+
+  // Mount Grand Hospital Window & Scenic Exterior Vista (Sky, Mountains, Courtyard, Sunbeam)
+  root.add(buildHospitalWindowAndVista());
+
+  // Privacy Curtains around Bed Bay
+  root.add(createHospitalPrivacyCurtains());
+
+  // Wall-Mounted Clinical Accessories
+  const gloveDisp = createWallGloveDispenser();
+  gloveDisp.position.set(3.26, 1.45, -0.6);
+  gloveDisp.rotation.y = -Math.PI / 2;
+  root.add(gloveDisp);
+
+  const sharpsBin = createWallSharpsBin();
+  sharpsBin.position.set(3.26, 1.35, -1.2);
+  sharpsBin.rotation.y = -Math.PI / 2;
+  root.add(sharpsBin);
+
+  const handSan = createWallHandSanitizer();
+  handSan.position.set(-0.72, 1.35, 3.24);
+  handSan.rotation.y = Math.PI;
+  root.add(handSan);
+
+  // Clinical & Domestic Foot-Pedal Waste Bins
+  root.add(createClinicalPedalBins());
 
   // Physical 3D Extruded Medical Crash Rails (Continuous along walls at 0.95m height)
   const railBackingM = mat(0x94a3b8, 0.2, 0.8);
@@ -152,7 +193,8 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
 
   addWallBumperRail(0, -3.27, 6.5, true);
   addWallBumperRail(0, 3.27, 6.5, true);
-  addWallBumperRail(-3.27, 0, 6.5, false);
+  addWallBumperRail(-3.27, -2.55, 1.5, false);
+  addWallBumperRail(-3.27, 2.55, 1.5, false);
   addWallBumperRail(3.27, 0, 6.5, false);
 
   // 4. ARCHITECTURAL DEEP DOOR FRAME & CORRIDOR VIEW
@@ -446,6 +488,11 @@ export function buildRoom(initialPhenotype = 'black-male', department = 'resus')
   bezel.position.z -= 0.025;
   bezel.rotation.y = -0.38;
   root.add(bezel);
+
+  // Dynamic green vital telemetry screen glow
+  const monGlow = new THREE.PointLight(0x22c55e, 0.75, 3.2);
+  monGlow.position.set(0.95, 1.48, -1.75);
+  root.add(monGlow);
 
   let pulseWaveOffset = 0;
   const monitor = {

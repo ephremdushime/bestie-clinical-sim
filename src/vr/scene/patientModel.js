@@ -393,6 +393,192 @@ export function createPatientHeadTexture(phenotypeKey = 'black-male', {
 }
 
 // ----------------------------------------------------------------------------
+
+// Sculpted 3D Human Cephalometric Head Geometry
+function createAnatomicalHeadGeometry() {
+  const geo = new THREE.SphereGeometry(0.124, 64, 48);
+  const pos = geo.attributes.position;
+  const v = new THREE.Vector3();
+
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i);
+
+    // Frontal / facial anterior hemisphere (v.z > 0)
+    if (v.z > 0) {
+      const y = v.y;
+      const x = v.x;
+      const absX = Math.abs(x);
+
+      // 1. Orbital Cavities (Inset Eye Sockets for true 3D depth)
+      if (y > 0.005 && y < 0.045 && absX > 0.018 && absX < 0.058) {
+        const socketDepth = Math.sin((y - 0.005) / 0.04 * Math.PI) * Math.sin((absX - 0.018) / 0.04 * Math.PI);
+        v.z -= socketDepth * 0.016;
+      }
+
+      // 2. Sculpted Nasal Bridge, Dorsum & Tip
+      if (y > -0.032 && y < 0.048 && absX < 0.024) {
+        const noseWidthFactor = Math.max(0, 1 - absX / 0.024);
+        const yFactor = y > -0.015 ? (0.048 - y) / 0.063 : 1 - (-0.015 - y) / 0.017;
+        const projection = Math.max(0, yFactor) * noseWidthFactor * 0.030;
+        v.z += projection;
+        if (y < -0.006 && y > -0.026) {
+          v.y -= 0.004 * noseWidthFactor;
+        }
+      }
+
+      // 3. Zygomatic Cheekbone Prominence
+      if (y > -0.028 && y < 0.018 && absX > 0.036 && absX < 0.086) {
+        const cheekFactor = Math.sin((y - (-0.028)) / 0.046 * Math.PI) * Math.sin((absX - 0.036) / 0.050 * Math.PI);
+        v.z += cheekFactor * 0.014;
+        v.x += Math.sign(x) * cheekFactor * 0.006;
+      }
+
+      // 4. Upper & Lower Lips (Philtrum, Cupid's Bow & Vermilion Curvature)
+      if (y > -0.064 && y < -0.032 && absX < 0.038) {
+        const lipProfile = Math.cos(absX / 0.038 * Math.PI / 2);
+        const isUpper = y > -0.048;
+        const lipProj = isUpper ? 0.014 : 0.016;
+        v.z += lipProfile * lipProj;
+        if (isUpper && absX < 0.007) {
+          v.z -= 0.0035;
+        }
+      }
+
+      // 5. Mental Protuberance (Sculpted Anatomical Chin)
+      if (y > -0.102 && y < -0.062 && absX < 0.042) {
+        const chinFactor = Math.sin((y - (-0.102)) / 0.040 * Math.PI) * Math.cos(absX / 0.042 * Math.PI / 2);
+        v.z += chinFactor * 0.022;
+      }
+    } else {
+      if (v.y < -0.02) {
+        v.z += 0.006;
+      }
+    }
+
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+
+  geo.computeVertexNormals();
+  return geo;
+}
+
+// Sculpted 3D Anatomical Ear
+function createSculptedEar(isRight, earM) {
+  const earG = new THREE.Group();
+  const helix = new THREE.Mesh(
+    new THREE.TorusGeometry(0.022, 0.005, 12, 24, Math.PI * 1.3),
+    earM
+  );
+  helix.rotation.z = isRight ? 0.2 : -0.2;
+  earG.add(helix);
+
+  const concha = new THREE.Mesh(
+    new THREE.SphereGeometry(0.014, 12, 12, 0, Math.PI),
+    earM
+  );
+  concha.rotation.y = Math.PI / 2;
+  concha.scale.set(0.6, 1.2, 0.4);
+  concha.position.set(isRight ? -0.004 : 0.004, 0, 0.002);
+  earG.add(concha);
+
+  const lobule = new THREE.Mesh(
+    new THREE.SphereGeometry(0.009, 12, 12),
+    earM
+  );
+  lobule.scale.set(0.8, 1.3, 0.6);
+  lobule.position.set(isRight ? -0.002 : 0.002, -0.022, 0);
+  earG.add(lobule);
+
+  return earG;
+}
+
+// True 3D Eyeball with Iris, Pupil, Cornea & Upper Blinking Lid
+function createDetailed3DEye(isRight, p, skinMat) {
+  const eyeG = new THREE.Group();
+
+  const scleraM = new THREE.MeshStandardMaterial({
+    color: 0xf8fafc,
+    roughness: 0.15,
+    metalness: 0.05,
+  });
+  const sclera = new THREE.Mesh(new THREE.SphereGeometry(0.015, 24, 16), scleraM);
+  eyeG.add(sclera);
+
+  const irisM = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(p.eyeColor),
+    roughness: 0.3,
+    metalness: 0.1,
+  });
+  const iris = new THREE.Mesh(new THREE.CircleGeometry(0.0075, 24), irisM);
+  iris.position.set(0, 0, 0.0148);
+  eyeG.add(iris);
+
+  const pupilM = new THREE.MeshBasicMaterial({ color: 0x050505 });
+  const pupil = new THREE.Mesh(new THREE.CircleGeometry(0.0038, 20), pupilM);
+  pupil.position.set(0, 0, 0.015);
+  eyeG.add(pupil);
+
+  const corneaM = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.02,
+    metalness: 0.18,
+    transparent: true,
+    opacity: 0.35,
+  });
+  const cornea = new THREE.Mesh(new THREE.SphereGeometry(0.0085, 16, 12), corneaM);
+  cornea.position.set(0, 0, 0.011);
+  eyeG.add(cornea);
+
+  const eyelidM = new THREE.MeshStandardMaterial({
+    color: new THREE.Color(p.skinBase),
+    roughness: 0.65,
+    metalness: 0.05,
+  });
+  const upperLid = new THREE.Mesh(
+    new THREE.SphereGeometry(0.0162, 20, 14, 0, Math.PI * 2, 0, Math.PI * 0.48),
+    eyelidM
+  );
+  upperLid.rotation.x = -Math.PI / 2.3;
+  eyeG.add(upperLid);
+
+  return { eyeG, iris, pupil, upperLid, sclera };
+}
+
+// Precordial 6-Lead ECG Electrodes & Lead Wires on Chest
+function createChestEcgLeads(torsoGroup) {
+  const ecgG = new THREE.Group();
+  const padM = new THREE.MeshStandardMaterial({ color: 0xf8fafc, roughness: 0.4, metalness: 0.1 });
+  const studM = new THREE.MeshStandardMaterial({ color: 0xd4d4d8, roughness: 0.1, metalness: 0.95 });
+
+  const precordial = [
+    { label: 'V1', col: 0xdc2626, x: 0.04, y: 0.14, z: 0.12 },
+    { label: 'V2', col: 0xeab308, x: -0.04, y: 0.14, z: 0.12 },
+    { label: 'V3', col: 0x16a34a, x: -0.09, y: 0.08, z: 0.14 },
+    { label: 'V4', col: 0x2563eb, x: -0.13, y: 0.02, z: 0.15 },
+    { label: 'V5', col: 0xf97316, x: -0.17, y: 0.01, z: 0.12 },
+    { label: 'V6', col: 0x7c3aed, x: -0.19, y: 0.01, z: 0.07 },
+  ];
+
+  precordial.forEach(({ col, x, y, z }) => {
+    const pad = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.003, 16), padM);
+    pad.position.set(x, y, z);
+    pad.rotation.x = Math.PI / 2;
+    ecgG.add(pad);
+
+    const stud = new THREE.Mesh(new THREE.CylinderGeometry(0.004, 0.004, 0.006, 12), studM);
+    stud.position.set(x, y, z + 0.003);
+    stud.rotation.x = Math.PI / 2;
+    ecgG.add(stud);
+
+    const wireMat = new THREE.MeshStandardMaterial({ color: col, roughness: 0.5, metalness: 0.2 });
+    const clamp = new THREE.Mesh(new THREE.BoxGeometry(0.009, 0.009, 0.008), wireMat);
+    clamp.position.set(x, y, z + 0.006);
+    ecgG.add(clamp);
+  });
+
+  torsoGroup.add(ecgG);
+}
+
 // BUILD ANATOMICALLY CONTOURED PATIENT MESH
 // ----------------------------------------------------------------------------
 export function buildRealisticPatient(interactables, initialPhenotype = 'black-male') {
@@ -605,41 +791,42 @@ export function buildRealisticPatient(interactables, initialPhenotype = 'black-m
   makePulseNode('palpate:abdomen', 'Abdominal 4-Quadrant Palpation (Epigastrium & Right Upper Quadrant)', 0, 0.28, 0.55);
 
   g.add(torsoGroup);
+  createChestEcgLeads(torsoGroup);
 
   // 5. CONTINUOUS CONTOURED HEAD, JAW & EYES
   const headGroup = new THREE.Group();
   headGroup.position.set(0, 0.86, -0.05);
 
-  // Contoured Cranium & Facial Mesh
-  const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.124, 32, 24), skinMat);
-  headMesh.scale.set(0.92, 1.05, 1.0);
+  // Anatomically Sculpted Cephalometric Facial Mesh
+  const headMesh = new THREE.Mesh(createAnatomicalHeadGeometry(), skinMat);
+  headMesh.scale.set(0.94, 1.05, 1.0);
   headMesh.rotation.y = -Math.PI / 2;
   headMesh.castShadow = true;
   headGroup.add(headMesh);
   headMesh.userData = { action: 'inspect:general', label: 'Inspect Patient Facial Features, Distress & Pallor' };
   interactables.push(headMesh);
 
-  // Sculpted 3D Nose Bridge & Tip
-  const noseGroup = new THREE.Group();
-  noseGroup.position.set(0, 0, 0.12);
-  const noseBridge = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.046, 0.035), bodySkinMat);
-  noseBridge.position.set(0, 0.015, 0);
-  const noseTip = new THREE.Mesh(new THREE.SphereGeometry(0.015, 12, 12), bodySkinMat);
-  noseTip.position.set(0, -0.010, 0.015);
-  noseGroup.add(noseBridge, noseTip);
-  headGroup.add(noseGroup);
+  // 3D Spherical Eyeballs with Wet Corneas & Blinking Eyelids
+  const eyeLeft = createDetailed3DEye(false, PATIENT_PHENOTYPES[currentPhenotypeKey], skinMat);
+  eyeLeft.eyeG.position.set(-0.038, 0.024, 0.112);
+  headGroup.add(eyeLeft.eyeG);
 
-  // Shaped 3D Ears (Left & Right)
-  const earL = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.046, 0.026), bodySkinMat);
-  earL.position.set(-0.120, 0.01, -0.01);
-  const earR = new THREE.Mesh(new THREE.BoxGeometry(0.014, 0.046, 0.026), bodySkinMat);
-  earR.position.set(0.120, 0.01, -0.01);
+  const eyeRight = createDetailed3DEye(true, PATIENT_PHENOTYPES[currentPhenotypeKey], skinMat);
+  eyeRight.eyeG.position.set(0.038, 0.024, 0.112);
+  headGroup.add(eyeRight.eyeG);
+
+  // Sculpted 3D Anatomical Ears (Helix, Concha & Lobe)
+  const earL = createSculptedEar(false, bodySkinMat);
+  earL.position.set(-0.122, 0.015, -0.01);
+  const earR = createSculptedEar(true, bodySkinMat);
+  earR.position.set(0.122, 0.015, -0.01);
   headGroup.add(earL, earR);
 
-  // Articulated Jaw & Chin
+  // Articulated Jaw & Sculpted Anatomical Chin
   const jawGroup = new THREE.Group();
   jawGroup.position.set(0, -0.07, 0.04);
-  const chinMesh = new THREE.Mesh(new THREE.BoxGeometry(0.088, 0.065, 0.078), bodySkinMat);
+  const chinMesh = new THREE.Mesh(new THREE.SphereGeometry(0.046, 16, 14), bodySkinMat);
+  chinMesh.scale.set(1.15, 0.85, 1.0);
   chinMesh.position.set(0, 0, 0.02);
   chinMesh.castShadow = true;
   jawGroup.add(chinMesh);
@@ -1168,9 +1355,13 @@ export function buildRealisticPatient(interactables, initialPhenotype = 'black-m
       // Direct & Consensual pupillary light reflex: sharp constriction from 11px to 3.5px
       state.pupilRadius = 4.0;
       updateTexture();
+      if (eyeLeft?.pupil) eyeLeft.pupil.scale.set(0.4, 0.4, 1);
+      if (eyeRight?.pupil) eyeRight.pupil.scale.set(0.4, 0.4, 1);
       setTimeout(() => {
         state.pupilRadius = 11.0;
         updateTexture();
+        if (eyeLeft?.pupil) eyeLeft.pupil.scale.set(1.0, 1.0, 1);
+        if (eyeRight?.pupil) eyeRight.pupil.scale.set(1.0, 1.0, 1);
       }, 2400);
     },
 
@@ -1229,15 +1420,23 @@ export function buildRealisticPatient(interactables, initialPhenotype = 'black-m
       const jvpPulse = (Math.sin(t * 12) + Math.sin(t * 24)) * 0.002;
       jvpVein.scale.set(1 + jvpPulse * 20, 1, 1 + jvpPulse * 20);
 
-      // Natural eye blink cycle
+      // Natural 3D anatomical eye blink animation on the GPU
       state.blinkTimer += 0.016;
       if (state.blinkTimer > 3.8 && !state.isBlinking) {
         state.isBlinking = true;
-        updateTexture();
-      } else if (state.blinkTimer > 3.95 && state.isBlinking) {
-        state.isBlinking = false;
-        state.blinkTimer = 0;
-        updateTexture();
+      }
+      if (state.isBlinking) {
+        const blinkProgress = (state.blinkTimer - 3.8) / 0.16;
+        if (blinkProgress <= 1.0) {
+          const closeAngle = -Math.PI / 2.3 + Math.sin(blinkProgress * Math.PI) * 1.15;
+          if (eyeLeft?.upperLid) eyeLeft.upperLid.rotation.x = closeAngle;
+          if (eyeRight?.upperLid) eyeRight.upperLid.rotation.x = closeAngle;
+        } else {
+          state.isBlinking = false;
+          state.blinkTimer = Math.random() * 0.8;
+          if (eyeLeft?.upperLid) eyeLeft.upperLid.rotation.x = -Math.PI / 2.3;
+          if (eyeRight?.upperLid) eyeRight.upperLid.rotation.x = -Math.PI / 2.3;
+        }
       }
     },
   };

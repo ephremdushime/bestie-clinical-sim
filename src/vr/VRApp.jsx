@@ -61,36 +61,36 @@ const STANCES = {
   'bedside-right': {
     cam: [0.72, 1.48, -0.95],
     target: [0.0, 1.15, -1.45],
-    panelPos: [0.28, 1.30, -0.65],
-    panelRot: -0.45,
+    panelPos: [0.95, 1.30, -1.35],
+    panelRot: -0.75,
     label: 'Bedside Right (OSCE Standard Exam)',
   },
   'bedside-left': {
     cam: [-0.72, 1.48, -0.95],
     target: [0.0, 1.15, -1.45],
-    panelPos: [-0.28, 1.30, -0.65],
-    panelRot: 0.45,
+    panelPos: [-0.95, 1.30, -1.35],
+    panelRot: 0.75,
     label: 'Bedside Left',
   },
   'face-airway': {
     cam: [0.18, 1.38, -0.85],
     target: [0.0, 1.25, -1.45],
-    panelPos: [-0.48, 1.30, -0.75],
-    panelRot: 0.45,
+    panelPos: [0.85, 1.30, -1.15],
+    panelRot: -0.85,
     label: 'Close-up Airway & Facial Inspection',
   },
   'foot-of-bed': {
     cam: [0.0, 1.55, 0.55],
     target: [0.0, 1.10, -1.45],
-    panelPos: [-0.45, 1.30, -0.35],
-    panelRot: 0.35,
+    panelPos: [0.85, 1.30, -0.20],
+    panelRot: -0.65,
     label: 'Foot of Bed (Inspection)',
   },
   'back-exam': {
     cam: [0.42, 1.42, -2.05],
     target: [0.0, 1.15, -1.45],
-    panelPos: [0.45, 1.30, -1.15],
-    panelRot: -Math.PI / 2,
+    panelPos: [0.85, 1.30, -1.85],
+    panelRot: -1.2,
     label: 'Posterior Chest (Back Auscultation)',
   },
 };
@@ -577,6 +577,13 @@ export default function VRApp() {
     const u = uiRef.current;
     if (id === 'start') return startEncounter();
     if (id === 'exit') return exitVR();
+    if (id === 'toggle_monitor') {
+      if (eng.current.panel?.mesh) {
+        eng.current.panel.mesh.visible = !eng.current.panel.mesh.visible;
+        patch({ caption: eng.current.panel.mesh.visible ? 'Chart Monitor visible.' : 'Chart Monitor minimized. Tap B/Y on controller or click cart to reopen.' });
+      }
+      return;
+    }
     if (id === 'tool:defib') { setIsDefibOpen(true); return; }
     if (id === 'tool:abg') { setIsAbgOpen(true); return; }
     if (id === 'tool:ecg') { setIsEcgOpen(true); return; }
@@ -684,10 +691,10 @@ export default function VRApp() {
     const room = buildRoom(uiRef.current.phenotype || 'black-male', initialDept);
     scene.add(room.root);
 
-    // In-world UI Panel placed beside the patient
-    const panel = new Panel(1024, 768, 1.35);
-    panel.mesh.position.set(0.28, 1.30, -0.65);
-    panel.mesh.rotation.y = -0.45;
+    // In-world UI Panel placed beside the patient on mobile medical terminal stand
+    const panel = new Panel(1024, 768, 0.95);
+    panel.mesh.position.set(0.95, 1.30, -1.35);
+    panel.mesh.rotation.y = -0.75;
     scene.add(panel.mesh);
 
     if (new URLSearchParams(location.search).has('benchmark')) {
@@ -706,7 +713,7 @@ export default function VRApp() {
     // Raycast hit handler: checks panel first, then 3D interactable clinical equipment & landmarks
     const handlePointerAction = (origin, dir) => {
       ray.set(origin, dir);
-      const panelHits = ray.intersectObject(panel.mesh);
+      const panelHits = panel?.screenMesh ? ray.intersectObject(panel.screenMesh, false) : ray.intersectObject(panel.mesh, true);
       if (panelHits.length > 0) {
         const btn = panel.hit(panelHits[0].uv);
         if (btn) { onRef.current(btn.id); return; }
@@ -779,20 +786,38 @@ export default function VRApp() {
       }
     };
 
-    // VR Controllers
+    // VR Controllers & Physical Styling
     for (let i = 0; i < 2; i++) {
       const c = renderer.xr.getController(i); rig.add(c);
-      const line = new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3(0, 0, -2.5)]),
-        new THREE.LineBasicMaterial({ color: 0x80deea })
-      );
-      c.add(line);
+
+      const controllerG = new THREE.Group();
+      // Ergonomic medical controller stylus handle
+      const handleM = new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.3, metalness: 0.8 });
+      const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.018, 0.12, 16), handleM);
+      handle.rotation.x = -Math.PI / 4;
+      handle.position.set(0, -0.02, 0.03);
+      controllerG.add(handle);
+
+      // Glowing laser pointer line
+      const lineGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -2.5)]);
+      const lineMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.8 });
+      const line = new THREE.Line(lineGeom, lineMat);
+      controllerG.add(line);
+
+      // Glowing target reticle at tip
+      const reticleM = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+      const reticle = new THREE.Mesh(new THREE.SphereGeometry(0.018, 12, 12), reticleM);
+      reticle.position.set(0, 0, -2.5);
+      controllerG.add(reticle);
+
+      c.add(controllerG);
 
       c.addEventListener('selectstart', () => {
         tmpM.identity().extractRotation(c.matrixWorld);
         const origin = new THREE.Vector3().setFromMatrixPosition(c.matrixWorld);
         const dir = new THREE.Vector3(0, 0, -1).applyMatrix4(tmpM);
         handlePointerAction(origin, dir);
+        triggerHapticPulse(0.5, 30);
       });
 
       c.addEventListener('squeezestart', () => {
@@ -810,18 +835,24 @@ export default function VRApp() {
     renderer.xr.addEventListener('sessionstart', () => {
       controls.enabled = false;
       rig.position.set(0.72, 0, -0.95);
+      rig.rotation.set(0, 0, 0);
       camera.position.set(0, 0, 0);
-      patch({ inVR: true });
+      patch({ inVR: true, caption: 'Inside 3D Room. Left Thumbstick: Walk · Right Thumbstick: Turn · Button B/Y: Hide Chart' });
+      // If user enters VR while on start page, auto-launch clinical scenario immediately
+      if (uiRef.current.page === 'start') {
+        startEncounter();
+      }
     });
     renderer.xr.addEventListener('sessionend', () => {
       controls.enabled = true;
       rig.position.set(0, 0, 0);
+      rig.rotation.set(0, 0, 0);
       camera.position.set(0.72, 1.48, -0.95);
       controls.target.set(0.0, 1.15, -1.45);
       controls.update();
       eng.current.voice.cancelSpeech();
       eng.current.stethAudio?.stop();
-      patch({ inVR: false });
+      patch({ inVR: false, caption: 'Returned to desktop browser mode.' });
     });
 
     let downPos = { x: 0, y: 0 };
@@ -854,15 +885,94 @@ export default function VRApp() {
     };
     addEventListener('resize', onResize);
 
+    // WebXR Thumbstick Locomotion & Snap Turning
+    let lastSnapTurnTime = 0;
+    const SNAP_TURN_ANGLE = Math.PI / 6; // 30 degrees
+    const SNAP_TURN_COOLDOWN = 250; // ms
+    const WALK_SPEED = 1.6; // meters/sec
+
+    const updateXRLocomotion = (delta) => {
+      if (!renderer.xr.isPresenting) return;
+      const session = renderer.xr.getSession();
+      if (!session) return;
+
+      const now = performance.now();
+      const inputSources = session.inputSources;
+      if (!inputSources) return;
+
+      for (const source of inputSources) {
+        if (!source.gamepad) continue;
+        const axes = source.gamepad.axes;
+        const handedness = source.handedness;
+
+        const stickX = Math.abs(axes[2] || 0) > 0.15 ? axes[2] : (axes.length >= 2 && Math.abs(axes[0] || 0) > 0.15 ? axes[0] : 0);
+        const stickY = Math.abs(axes[3] || 0) > 0.15 ? axes[3] : (axes.length >= 2 && Math.abs(axes[1] || 0) > 0.15 ? axes[1] : 0);
+
+        // Left Controller: Smooth Walking & Strafing
+        if (handedness === 'left') {
+          if (Math.hypot(stickX, stickY) > 0.15) {
+            const forward = new THREE.Vector3();
+            camera.getWorldDirection(forward);
+            forward.y = 0;
+            forward.normalize();
+
+            const right = new THREE.Vector3();
+            right.crossVectors(camera.up, forward).negate();
+            right.y = 0;
+            right.normalize();
+
+            const moveDir = new THREE.Vector3();
+            moveDir.addScaledVector(forward, -stickY);
+            moveDir.addScaledVector(right, stickX);
+            moveDir.normalize();
+
+            rig.position.addScaledVector(moveDir, WALK_SPEED * delta);
+            // Keep learner inside clinical bay [-2.7, 2.7]
+            rig.position.x = Math.max(-2.7, Math.min(2.7, rig.position.x));
+            rig.position.z = Math.max(-2.7, Math.min(2.7, rig.position.z));
+          }
+        }
+
+        // Right Controller: Snap Turning
+        if (handedness === 'right') {
+          if (Math.abs(stickX) > 0.65 && now - lastSnapTurnTime > SNAP_TURN_COOLDOWN) {
+            const turnDirection = stickX > 0 ? -1 : 1;
+            rig.rotation.y += turnDirection * SNAP_TURN_ANGLE;
+            lastSnapTurnTime = now;
+            triggerHapticPulse(0.35, 20);
+          }
+        }
+
+        // Secondary buttons ('B' / 'Y') = Toggle Chart Monitor visibility
+        const buttons = source.gamepad.buttons;
+        if (buttons && buttons.length > 4) {
+          const toggleBtn = buttons[5] || buttons[4];
+          if (toggleBtn && toggleBtn.pressed && !source.userData?.togglePressed) {
+            source.userData = { ...source.userData, togglePressed: true };
+            if (panel?.mesh) {
+              panel.mesh.visible = !panel.mesh.visible;
+              patch({ caption: panel.mesh.visible ? 'Chart Monitor visible.' : 'Chart Monitor minimized. Tap B or Y on controller to reopen.' });
+              triggerHapticPulse(0.5, 30);
+            }
+          } else if (toggleBtn && !toggleBtn.pressed && source.userData?.togglePressed) {
+            source.userData.togglePressed = false;
+          }
+        }
+      }
+    };
+
     const clock = new THREE.Clock();
     renderer.setAnimationLoop(() => {
+      const delta = Math.min(clock.getDelta(), 0.1);
       const t = clock.getElapsedTime();
       if (!renderer.xr.isPresenting) {
         controls.update();
+      } else {
+        updateXRLocomotion(delta);
       }
       const activeRoom = eng.current.room || room;
       activeRoom.patient.update(t);
-      if (activeRoom.update) activeRoom.update(0.016);
+      if (activeRoom.update) activeRoom.update(delta);
       if (eng.current.profiler) eng.current.profiler.update();
       renderer.render(scene, camera);
     });
@@ -1145,6 +1255,9 @@ export default function VRApp() {
       });
       await eng.current.renderer.xr.setReferenceSpaceType('local-floor');
       await eng.current.renderer.xr.setSession(s);
+      if (uiRef.current.page === 'start') {
+        startEncounter();
+      }
     } catch (e) {
       patch({ error: 'Could not start VR session: ' + e.message });
     }
@@ -1152,6 +1265,55 @@ export default function VRApp() {
 
   return (
     <div style={{ font: '15px system-ui', color: '#eceff1', background: '#0a1017', minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* High-Visibility Meta Quest VR Mode Banner */}
+      {!ui.inVR && (
+        <div style={{
+          background: 'linear-gradient(90deg, #1e3a8a, #0369a1)',
+          color: '#ffffff',
+          padding: '12px 18px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 12,
+          borderBottom: '2px solid #38bdf8',
+          boxShadow: '0 4px 16px rgba(2, 132, 199, 0.4)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: '28px' }}>🥽</span>
+            <div>
+              <div style={{ fontWeight: 800, fontSize: '15px', letterSpacing: '0.04em' }}>
+                META QUEST VR HEADSET DETECTED
+              </div>
+              <div style={{ fontSize: '13px', color: '#bae6fd' }}>
+                You are currently in 2D browser preview. Click the button to step inside the stereoscopic 3D Emergency Room!
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={enterVR}
+            disabled={!xr.vr}
+            style={{
+              background: '#22c55e',
+              color: '#ffffff',
+              border: 'none',
+              borderRadius: 6,
+              padding: '10px 24px',
+              fontSize: '15px',
+              fontWeight: 800,
+              cursor: 'pointer',
+              boxShadow: '0 0 20px rgba(34, 197, 94, 0.85)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              transition: 'all 0.2s ease',
+            }}
+          >
+            <span>➔ ENTER IMMERSIVE 3D VR</span>
+          </button>
+        </div>
+      )}
+
       <header style={{ padding: '8px 16px', background: '#090d16', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
